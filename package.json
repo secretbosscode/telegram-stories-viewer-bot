@@ -14,29 +14,29 @@
     "deploy": "yarn process:stop && yarn process:start"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.43.3",
-    "better-sqlite3": "^9.5.3",
-    "body-parser": "^1.20.3",
-    "dotenv": "^16.4.3",
+    "@supabase/supabase-js": "^2.49.10",
+    "better-sqlite3": "^11.10.0",
+    "body-parser": "^2.2.0",
+    "dotenv": "^16.5.0",
     "effector": "^23.3.0",
     "express": "^5.1.0",
     "patronum": "^2.3.0",
     "stripe": "^18.2.1",
     "telegraf": "^4.16.3",
-    "telegram": "2.19.11"
+    "telegram": "^2.26.22"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.8",
-    "@types/body-parser": "^1.19.4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/body-parser": "^1.19.5",
     "@types/express": "^5.0.2",
-    "@types/node": "^20.12.13",
-    "eslint": "^9.1.0",
-    "eslint-kit": "^9.2.0",
-    "nodemon": "^3.1.0",
-    "prettier": "^3.2.5",
+    "@types/node": "^22.15.29",
+    "eslint": "^9.28.0",
+    "eslint-kit": "^11.39.0",
+    "nodemon": "^3.1.10",
+    "prettier": "^3.5.3",
     "ts-node": "^10.9.2",
-    "tsc-alias": "^1.9.11",
-    "tsconfig-paths": "^4.3.2",
-    "typescript": "^5.4.5"
+    "tsc-alias": "^1.8.16",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.8.3"
   }
 }
