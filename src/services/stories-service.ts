@@ -23,11 +23,12 @@ export interface UserInfo {
   isPremium?: boolean;
 }
 
+// Stores & Events
 const $currentTask = createStore<UserInfo | null>(null);
 const $tasksQueue = createStore<UserInfo[]>([]);
 const $isTaskRunning = createStore(false);
 const $taskStartTime = createStore<Date | null>(null);
-const clearTimeout = createEvent<number>();
+const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20_000 : 240_000);
 
 const newTaskReceived = createEvent<UserInfo>();
@@ -38,12 +39,14 @@ const taskDone = createEvent();
 const checkTasks = createEvent();
 const cleanUpTempMessagesFired = createEvent();
 
+// Timeout effect
 const timeoutList = isDevEnv ? [10_000, 15_000, 20_000] : [240_000, 300_000, 360_000];
 const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
   const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
-  setTimeout(() => clearTimeout(nextTimeout), currentTimeout);
+  setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
 });
 
+// Task restart check
 const MAX_WAIT_TIME = 7;
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   if (task) {
@@ -57,15 +60,17 @@ const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   }
 });
 
-// 🔧 Fix: Declare $taskSource before usage
+// Combine task source values. Note: declared _before_ any sample call uses it.
 const $taskSource = combine({
   currentTask: $currentTask,
   taskStartTime: $taskStartTime,
   taskTimeout: $taskTimeout,
   queue: $tasksQueue,
-  user: $currentTask.map(task => task?.user ?? null) // 🔧 Ensures 'user' is included
+  // Derive a 'user' field from currentTask; this lets downstream code access it.
+  user: $currentTask.map(task => task?.user ?? null)
 });
 
+// Effect to send a waiting message to the user
 const sendWaitMessageFx = createEffect(async ({
   multipleRequests,
   taskStartTime,
@@ -100,12 +105,14 @@ const sendWaitMessageFx = createEffect(async ({
   }
 });
 
+// Cleanup effect for temporary messages
 const cleanupTempMessagesFx = createEffect((task: UserInfo) => {
   task.tempMessages?.forEach(id => bot.telegram.deleteMessage(task.chatId, id));
 });
 
 const saveUserFx = createEffect(saveUser);
 
+// Queue management
 $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
   const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
   const alreadyExist = tasks.some(x => x.chatId === newTask.chatId);
@@ -118,6 +125,7 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
+// Save user effect – no "clock" property is used inside our fn object literal.
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -144,6 +152,7 @@ sample({
   target: sendWaitMessageFx,
 });
 
+// Send stories effects depending on link type
 sample({
   clock: taskStarted,
   source: $currentTask,
@@ -157,6 +166,7 @@ sample({
   target: getAllStoriesFx,
 });
 
+// Complete task on sending stories
 sample({
   clock: sendStoriesFx.done,
   target: taskDone,
@@ -169,7 +179,12 @@ sample({
   target: cleanupTempMessagesFx,
 });
 
-sample({ clock: cleanUpTempMessagesFired, source: $currentTask, filter: task => task !== null, target: cleanupTempMessagesFx });
+sample({
+  clock: cleanUpTempMessagesFired,
+  source: $currentTask,
+  filter: task => task !== null,
+  target: cleanupTempMessagesFx,
+});
 
 export {
   tempMessageSent,
