@@ -46,6 +46,7 @@ const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
   setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
 });
 
+// Restart check effect
 const MAX_WAIT_TIME = 7;
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   if (task) {
@@ -59,7 +60,7 @@ const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   }
 });
 
-// Combine task source values.
+// Combine task source values
 const $taskSource = combine({
   currentTask: $currentTask,
   taskStartTime: $taskStartTime,
@@ -123,15 +124,15 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
-// Sample: Save user effect
+// Save user effect
 sample({
   clock: newTaskReceived,
   source: $taskSource,
-  fn: ({ user }) => user!,
+  fn: (task) => task.user!,
   target: saveUserFx,
 });
 
-// Sample: Send wait message effect
+// Send wait message effect
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -151,57 +152,99 @@ sample({
   target: sendWaitMessageFx,
 });
 
-// Sample: Get stories based on link type
+// Task queue execution
+sample({
+  clock: checkTasks,
+  filter: and(not($isTaskRunning), not($taskStartTime), $tasksQueue.map(q => q.length > 0)),
+  target: taskInitiated,
+});
+
+sample({
+  clock: taskInitiated,
+  source: $tasksQueue,
+  fn: (tasks) => tasks[0],
+  target: [$currentTask, taskStarted],
+});
+sample({ clock: taskInitiated, fn: () => new Date(), target: $taskStartTime });
+sample({ clock: taskInitiated, source: $taskTimeout, target: clearTimeoutWithDelayFx });
+$taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
+sample({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
+
+// Story fetching logic
 sample({
   clock: taskStarted,
   source: $currentTask,
-  filter: (task): task is UserInfo => !!task && task.linkType === 'link',
-  fn: task => task,
+  filter: task => task?.linkType === 'link',
   target: getParticularStoryFx,
 });
 sample({
   clock: taskStarted,
   source: $currentTask,
-  filter: (task): task is UserInfo => !!task && task.linkType === 'username',
-  fn: task => task,
+  filter: task => task?.linkType === 'username',
   target: getAllStoriesFx,
 });
 
-// Sample: Mark task as done when stories are sent
+// Handle story fetch results (errors)
 sample({
-  clock: sendStoriesFx.done,
-  target: taskDone,
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task, result): task is UserInfo => typeof result === 'string' && !!task,
+  fn: (task, result) => ({ task, message: result as string }),
+  target: [sendErrorMessageFx, taskDone],
+});
+sample({
+  clock: getParticularStoryFx.doneData,
+  source: $currentTask,
+  filter: (task, result): task is UserInfo => typeof result === 'string' && !!task,
+  fn: (task, result) => ({ task, message: result as string }),
+  target: [sendErrorMessageFx, taskDone],
 });
 
-// Sample: Cleanup temporary messages (type-safe!)
+// Handle story fetch results (success)
+sample({
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task, result): task is UserInfo => typeof result === 'object' && !!task,
+  fn: (task, result) => ({
+    task,
+    ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] })
+  }),
+  target: sendStoriesFx,
+});
+sample({
+  clock: getParticularStoryFx.doneData,
+  source: $currentTask,
+  filter: (task, result): task is UserInfo => typeof result === 'object' && !!task,
+  fn: (task, result) => ({
+    task,
+    ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] })
+  }),
+  target: sendStoriesFx,
+});
+
+// Mark done after sending stories
+sample({ clock: sendStoriesFx.done, target: taskDone });
+
+// Clean up temp messages
 sample({
   clock: taskDone,
   source: $currentTask,
   filter: (task): task is UserInfo => task !== null,
-  fn: task => task,
   target: cleanupTempMessagesFx,
 });
 sample({
   clock: cleanUpTempMessagesFired,
   source: $currentTask,
   filter: (task): task is UserInfo => task !== null,
-  fn: task => task,
   target: cleanupTempMessagesFx,
 });
 
-// Sample: Check tasks
-sample({ clock: [newTaskReceived, taskDone], target: checkTasks });
-
-// Add to temp messages
-$currentTask.on(tempMessageSent, (prev, msgId) =>
-  prev ? { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] } : prev
-);
-$currentTask.on(cleanupTempMessagesFx.done, (prev) =>
-  prev ? { ...prev, tempMessages: [] } : prev
-);
+// Temp message & current task state management
+$currentTask.on(tempMessageSent, (prev, msgId) => ({ ...prev!, tempMessages: [...(prev?.tempMessages ?? []), msgId] }));
+$currentTask.on(cleanupTempMessagesFx.done, (prev) => ({ ...prev!, tempMessages: [] }));
 $currentTask.on(taskDone, () => null);
 
-// Periodic stuck task check
+// Interval-based task timeout check
 const intervalHasPassed = createEvent();
 sample({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
 setInterval(() => intervalHasPassed(), 30_000);
