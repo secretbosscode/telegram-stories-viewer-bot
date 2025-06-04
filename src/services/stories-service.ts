@@ -169,3 +169,10 @@ sample({ clock: cleanUpTempMessagesFired, source: $currentTask, filter: task => 
 const intervalHasPassed = createEvent();
 sample({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
 setInterval(intervalHasPassed, 30_000);
+
+export {
+  tempMessageSent,
+  cleanUpTempMessagesFired,
+  newTaskReceived,
+};
+
