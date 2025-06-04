@@ -1,17 +1,30 @@
+# Dockerfile for Telegram Bot with Stripe & SQLite support
+
+# Use official Node.js runtime as base
 FROM node:18
 
+# Create app directory
 WORKDIR /app
 
-# Install only production dependencies
-COPY package*.json yarn.lock ./
-RUN yarn install
+# Copy package.json and yarn.lock
+COPY package.json yarn.lock ./
 
-# Copy rest of the app and build
+# Install dependencies
+RUN yarn install --frozen-lockfile
+
+# Copy the rest of the application
 COPY . .
+
+# Ensure SQLite is available
+RUN apt-get update && \
+    apt-get install -y sqlite3 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build the app if using TypeScript
 RUN yarn build
 
-# Hardcode production environment
+# Set environment variables (override in docker-compose or CLI)
 ENV NODE_ENV=production
 
-# Run the bot
+# Start the application
 CMD ["node", "dist/index.js"]
