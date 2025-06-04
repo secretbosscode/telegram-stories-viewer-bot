@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install only production dependencies
 COPY package*.json yarn.lock ./
-RUN yarn install --production
+RUN yarn install
 
 # Copy rest of the app and build
 COPY . .
