@@ -1,4 +1,5 @@
 import { Userbot } from 'config/userbot';
+import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
 import { chunkMediafiles } from 'lib';
 import {
@@ -14,17 +15,16 @@ import { SendStoriesArgs } from './types';
 
 export async function sendPinnedStories({ stories, task }: SendStoriesArgs) {
   let mapped = mapStories(stories);
+  const isAdmin = task.chatId === BOT_ADMIN_ID.toString();
 
-  // TODO: move to a separate function
   let hasMorePages = false;
   const nextStories: Record<string, number[]> = {};
-
   const PER_PAGE = 5;
 
-  if (stories.length > 5) {
+  if (!isAdmin && stories.length > PER_PAGE) {
     hasMorePages = true;
 
-    const currentStories = mapped.slice(0, 5);
+    const currentStories = mapped.slice(0, PER_PAGE);
 
     for (let i = PER_PAGE; i < mapped.length; i += PER_PAGE) {
       const from = i + 1;
@@ -37,7 +37,6 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs) {
     mapped = currentStories;
   }
 
-  // TODO: move to a separate function
   const storiesWithoutMedia = mapped.filter((x) => !x.media);
 
   if (storiesWithoutMedia.length > 0) {
@@ -61,43 +60,26 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs) {
   try {
     console.log(`downloading ${mapped.length} pinned stories`);
 
-    bot.telegram
-      .sendMessage(
-        task.chatId!,
-        '✅ Active stories processed!\n' + '⏳ Downloading Pinned stories...'
-      )
-      .then(({ message_id }) => {
-        tempMessageSent(message_id);
-      })
+    await bot.telegram.sendMessage(
+      task.chatId!,
+      '✅ Active stories processed!\n⏳ Downloading Pinned stories...'
+    ).then(({ message_id }) => tempMessageSent(message_id))
       .catch(() => null);
 
     await downloadStories(mapped, 'pinned');
 
     const uploadableStories = mapped.filter(
-      (x) => x.buffer && x.bufferSize! <= 50 // skip too large file
+      (x) => x.buffer && x.bufferSize! <= 50
     );
 
     console.log(`pinned stories downloaded`);
+    console.log(`sending ${uploadableStories.length} uploadable pinned stories`);
 
-    console.log(
-      `sending ${uploadableStories.length} uploadable pinned stories`
-    );
-
-    bot.telegram
-      .sendMessage(
-        task.chatId!,
-        '✅ Active stories processed!\n' +
-          `📥 ${uploadableStories.length} Pinned stories downloaded successfully!\n` +
-          '⏳ Uploading stories to Telegram...'
-      )
-      .then(({ message_id }) => {
-        tempMessageSent(message_id);
-      })
+    await bot.telegram.sendMessage(
+      task.chatId!,
+      `📥 ${uploadableStories.length} Pinned stories downloaded successfully!\n⏳ Uploading stories to Telegram...`
+    ).then(({ message_id }) => tempMessageSent(message_id))
       .catch(() => null);
-
-    console.log(
-      `sending ${uploadableStories.length} uploadable active stories`
-    );
 
     if (uploadableStories.length > 0) {
       const chunkedList = chunkMediafiles(uploadableStories);
@@ -120,7 +102,6 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs) {
     }
 
     if (hasMorePages) {
-      // TODO: move to a separate function
       const btns = Object.entries(nextStories).map(
         ([pages, nextStoriesIds]) => ({
           text: `📥 ${pages} 📥`,
@@ -128,16 +109,12 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs) {
         })
       );
 
-      // TODO: move to a separate function
       const res = btns.reduce<any>((acc, curr, index) => {
         const chunkIndex = Math.floor(index / 3);
-
         if (!acc[chunkIndex]) {
           acc[chunkIndex] = [];
         }
-
         acc[chunkIndex].push(curr);
-
         return acc;
       }, []);
 
@@ -158,7 +135,8 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs) {
       task,
       errorInfo: { cause: error },
     });
-    console.log('error occured on sending PINNED stories:', error);
+    console.log('error occurred on sending PINNED stories:', error);
   }
+
   cleanUpTempMessagesFired();
 }
