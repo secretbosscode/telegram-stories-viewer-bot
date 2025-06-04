@@ -1,10 +1,15 @@
 // premium-service.ts
 import { db } from '../db';
 
+interface UserRow {
+  is_premium?: number;
+}
+
 export const isUserPremium = (telegramId: string): boolean => {
   const row = db
     .prepare('SELECT is_premium FROM users WHERE telegram_id = ?')
-    .get(telegramId);
+    .get(telegramId) as UserRow | undefined;
+
   return Boolean(row?.is_premium);
 };
 
