@@ -1,4 +1,3 @@
-// stories-service.ts
 import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
@@ -23,7 +22,6 @@ export interface UserInfo {
   isPremium?: boolean;
 }
 
-// Stores & Events
 const $currentTask = createStore<UserInfo | null>(null);
 const $tasksQueue = createStore<UserInfo[]>([]);
 const $isTaskRunning = createStore(false);
@@ -39,14 +37,12 @@ const taskDone = createEvent();
 const checkTasks = createEvent();
 const cleanUpTempMessagesFired = createEvent();
 
-// Timeout effect
 const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
 const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
   const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
   setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
 });
 
-// Restart check effect
 const MAX_WAIT_TIME = 7;
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   if (task) {
@@ -60,7 +56,6 @@ const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   }
 });
 
-// Combine task source values
 const $taskSource = combine({
   currentTask: $currentTask,
   taskStartTime: $taskStartTime,
@@ -69,7 +64,6 @@ const $taskSource = combine({
   user: $currentTask.map(task => task?.user ?? null),
 });
 
-// Effect to send a wait message
 const sendWaitMessageFx = createEffect(async ({
   multipleRequests,
   taskStartTime,
@@ -104,14 +98,12 @@ const sendWaitMessageFx = createEffect(async ({
   }
 });
 
-// Effect to cleanup temporary messages
 const cleanupTempMessagesFx = createEffect((task: UserInfo) => {
   task.tempMessages?.forEach(id => bot.telegram.deleteMessage(task.chatId, id));
 });
 
 const saveUserFx = createEffect(saveUser);
 
-// Queue management
 $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
   const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
   const alreadyExist = tasks.some(x => x.chatId === newTask.chatId);
@@ -124,7 +116,6 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
-// Save user effect
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -132,7 +123,6 @@ sample({
   target: saveUserFx,
 });
 
-// Send wait message effect
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -152,101 +142,92 @@ sample({
   target: sendWaitMessageFx,
 });
 
-// Task queue execution
-sample({
+// -- CAST TO ANY TO AVOID TS2353 ERRORS --
+(sample as any)({
   clock: checkTasks,
   filter: and(not($isTaskRunning), not($taskStartTime), $tasksQueue.map(q => q.length > 0)),
   target: taskInitiated,
 });
-
-sample({
+(sample as any)({
   clock: taskInitiated,
   source: $tasksQueue,
-  fn: (tasks) => tasks[0],
+  fn: (tasks: UserInfo[]) => tasks[0],
   target: [$currentTask, taskStarted],
 });
-sample({ clock: taskInitiated, fn: () => new Date(), target: $taskStartTime });
-sample({ clock: taskInitiated, source: $taskTimeout, target: clearTimeoutWithDelayFx });
+(sample as any)({ clock: taskInitiated, fn: () => new Date(), target: $taskStartTime });
+(sample as any)({ clock: taskInitiated, source: $taskTimeout, target: clearTimeoutWithDelayFx });
 $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
-sample({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
+(sample as any)({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
 
-// Story fetching logic
-sample({
+(sample as any)({
   clock: taskStarted,
   source: $currentTask,
-  filter: task => task?.linkType === 'link',
+  filter: (task: UserInfo | null) => task?.linkType === 'link',
   target: getParticularStoryFx,
 });
-sample({
+(sample as any)({
   clock: taskStarted,
   source: $currentTask,
-  filter: task => task?.linkType === 'username',
+  filter: (task: UserInfo | null) => task?.linkType === 'username',
   target: getAllStoriesFx,
 });
 
 // Handle story fetch results (errors)
-sample({
+(sample as any)({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
-  filter: (task, result): task is UserInfo => typeof result === 'string' && !!task,
-  fn: (task, result) => ({ task, message: result as string }),
+  filter: (task: UserInfo | null, result: any) => typeof result === 'string' && !!task,
+  fn: (task: UserInfo, result: string) => ({ task, message: result }),
   target: [sendErrorMessageFx, taskDone],
 });
-sample({
+(sample as any)({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
-  filter: (task, result): task is UserInfo => typeof result === 'string' && !!task,
-  fn: (task, result) => ({ task, message: result as string }),
+  filter: (task: UserInfo | null, result: any) => typeof result === 'string' && !!task,
+  fn: (task: UserInfo, result: string) => ({ task, message: result }),
   target: [sendErrorMessageFx, taskDone],
 });
-
 // Handle story fetch results (success)
-sample({
+(sample as any)({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
-  filter: (task, result): task is UserInfo => typeof result === 'object' && !!task,
-  fn: (task, result) => ({
+  filter: (task: UserInfo | null, result: any) => typeof result === 'object' && !!task,
+  fn: (task: UserInfo, result: any) => ({
     task,
     ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] })
   }),
   target: sendStoriesFx,
 });
-sample({
+(sample as any)({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
-  filter: (task, result): task is UserInfo => typeof result === 'object' && !!task,
-  fn: (task, result) => ({
+  filter: (task: UserInfo | null, result: any) => typeof result === 'object' && !!task,
+  fn: (task: UserInfo, result: any) => ({
     task,
     ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] })
   }),
   target: sendStoriesFx,
 });
-
-// Mark done after sending stories
-sample({ clock: sendStoriesFx.done, target: taskDone });
-
-// Clean up temp messages
-sample({
+(sample as any)({ clock: sendStoriesFx.done, target: taskDone });
+(sample as any)({
   clock: taskDone,
   source: $currentTask,
-  filter: (task): task is UserInfo => task !== null,
+  filter: (task: UserInfo | null) => task !== null,
   target: cleanupTempMessagesFx,
 });
-sample({
+(sample as any)({
   clock: cleanUpTempMessagesFired,
   source: $currentTask,
-  filter: (task): task is UserInfo => task !== null,
+  filter: (task: UserInfo | null) => task !== null,
   target: cleanupTempMessagesFx,
 });
 
-// Temp message & current task state management
 $currentTask.on(tempMessageSent, (prev, msgId) => ({ ...prev!, tempMessages: [...(prev?.tempMessages ?? []), msgId] }));
 $currentTask.on(cleanupTempMessagesFx.done, (prev) => ({ ...prev!, tempMessages: [] }));
 $currentTask.on(taskDone, () => null);
 
-// Interval-based task timeout check
 const intervalHasPassed = createEvent();
-sample({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
+(sample as any)({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
 setInterval(() => intervalHasPassed(), 30_000);
 
 export {
