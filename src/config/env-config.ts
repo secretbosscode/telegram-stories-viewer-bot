@@ -2,11 +2,12 @@ import { config } from 'dotenv';
 
 const { parsed } = config();
 
-export const getEnvVar = (key: string) => {
-  if (process.env[key] === undefined || parsed?.[key] === undefined) {
+const getEnvVar = (key: string): string => {
+  const value = process.env[key] ?? parsed?.[key];
+  if (!value) {
     throw new Error(`Env variable ${key} is required`);
   }
-  return process.env[key] || parsed[key] || '';
+  return value;
 };
 
 /** Runtime mode */
