@@ -138,16 +138,35 @@ sample({ clock: clearTimeout, fn: () => null, target: [$taskStartTime, checkTask
 sample({ clock: taskStarted, source: $currentTask, filter: task => task?.linkType === 'link', target: getParticularStoryFx });
 sample({ clock: taskStarted, source: $currentTask, filter: task => task?.linkType === 'username', target: getAllStoriesFx });
 
+// Fix: Split sample with multi-clock into two
 sample({
-  clock: [getAllStoriesFx.doneData, getParticularStoryFx.doneData],
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task, result) => typeof result === 'string',
+  fn: (task, result) => ({ task: task!, message: result as string }),
+  target: [sendErrorMessageFx, taskDone],
+});
+sample({
+  clock: getParticularStoryFx.doneData,
   source: $currentTask,
   filter: (task, result) => typeof result === 'string',
   fn: (task, result) => ({ task: task!, message: result as string }),
   target: [sendErrorMessageFx, taskDone],
 });
 
+// Fix: Split sample with multi-clock into two
 sample({
-  clock: [getAllStoriesFx.doneData, getParticularStoryFx.doneData],
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task, result) => typeof result === 'object' && task !== null,
+  fn: (task, result) => ({
+    task: task!,
+    ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] })
+  }),
+  target: sendStoriesFx,
+});
+sample({
+  clock: getParticularStoryFx.doneData,
   source: $currentTask,
   filter: (task, result) => typeof result === 'object' && task !== null,
   fn: (task, result) => ({
@@ -175,4 +194,3 @@ export {
   cleanUpTempMessagesFired,
   newTaskReceived,
 };
-
