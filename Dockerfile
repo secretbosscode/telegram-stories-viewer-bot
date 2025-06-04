@@ -1,7 +1,7 @@
-# Use Node 20 with Yarn preinstalled
-FROM node:20-slim
+# Use Node 18 (compatible with eslint-plugin-effector)
+FROM node:18-slim
 
-# Create app directory
+# Create app working directory
 WORKDIR /app
 
 # Copy dependency files first
@@ -10,14 +10,14 @@ COPY package.json yarn.lock ./
 # Install dependencies
 RUN yarn install
 
-# Copy the rest of the code
+# Copy the rest of the application code
 COPY . .
 
-# Build TypeScript
+# Build the TypeScript source to JS
 RUN yarn build
 
-# Set NODE_ENV just in case
+# Set environment variable for production mode
 ENV NODE_ENV=production
 
-# Start the bot
+# Start the bot (entry point is dist/main.js after build)
 CMD ["node", "dist/main.js"]
