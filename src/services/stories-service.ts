@@ -134,9 +134,16 @@ const saveUserFx = createEffect(saveUser);
 
 // Flow
 $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
+  const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
   const alreadyExist = tasks.some((x) => x.chatId === newTask.chatId);
   const taskStartTime = $taskStartTime.getState();
+
+  // Admins always go in immediately — even if a task is running
+  if (isAdmin && !alreadyExist) return [newTask, ...tasks];
+
+  // Regular users must wait for cooldown
   if (!alreadyExist && taskStartTime === null) return [...tasks, newTask];
+
   return tasks;
 });
 
