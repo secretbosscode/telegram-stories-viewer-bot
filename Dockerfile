@@ -1,7 +1,7 @@
 # Dockerfile for Telegram Bot with Stripe & SQLite support
 
 # Use official Node.js runtime as base
-FROM node:18
+FROM node:22
 
 # Create app directory
 WORKDIR /app
