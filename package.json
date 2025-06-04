@@ -14,30 +14,30 @@
     "deploy": "yarn process:stop && yarn process:start"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.43.3",       // latest as of June 2025
-    "better-sqlite3": "^9.5.3",               // latest
-    "body-parser": "^1.20.3",                 // latest
-    "dotenv": "^16.4.3",                      // latest
-    "effector": "^23.4.0",                    // latest
-    "express": "^4.19.2",                     // latest 4.x, 5.x is still in beta
-    "input": "^1.0.2",                        // latest
-    "patronum": "^2.4.0",                     // latest
-    "stripe": "^13.16.0",                     // latest
-    "telegraf": "^4.17.0",                    // latest (still 4.x, 5.x is not released/stable)
-    "telegram": "2.19.11"                     // latest
+    "@supabase/supabase-js": "^2.43.3",
+    "better-sqlite3": "^9.5.3",
+    "body-parser": "^1.20.3",
+    "dotenv": "^16.4.3",
+    "effector": "^23.4.0",
+    "express": "^4.19.2",
+    "input": "^1.0.2",
+    "patronum": "^2.4.0",
+    "stripe": "^13.16.0",
+    "telegraf": "^4.17.0",
+    "telegram": "2.19.11"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.8",        // latest
-    "@types/body-parser": "^1.19.4",          // latest
-    "@types/express": "^4.17.24",             // latest
-    "@types/node": "^20.12.13",               // latest
-    "eslint": "^9.1.0",                       // latest (major version bump, update config as needed)
-    "eslint-kit": "^9.2.0",                   // latest
-    "nodemon": "^3.1.0",                      // latest
-    "prettier": "^3.2.5",                     // latest
-    "ts-node": "^10.9.2",                     // latest (v10 is still fine for now)
-    "tsc-alias": "^1.9.11",                   // latest
-    "tsconfig-paths": "^4.3.2",               // latest
-    "typescript": "^5.4.5"                    // latest
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/body-parser": "^1.19.4",
+    "@types/express": "^4.17.24",
+    "@types/node": "^20.12.13",
+    "eslint": "^9.1.0",
+    "eslint-kit": "^9.2.0",
+    "nodemon": "^3.1.0",
+    "prettier": "^3.2.5",
+    "ts-node": "^10.9.2",
+    "tsc-alias": "^1.9.11",
+    "tsconfig-paths": "^4.3.2",
+    "typescript": "^5.4.5"
   }
 }
