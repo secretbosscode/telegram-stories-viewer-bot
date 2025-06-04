@@ -98,8 +98,15 @@ const sendWaitMessageFx = createEffect(async ({
   }
 });
 
-const cleanupTempMessagesFx = createEffect((task: UserInfo) => {
-  task.tempMessages?.forEach(id => bot.telegram.deleteMessage(task.chatId, id));
+// SAFER: Wrap deleteMessage in try/catch and await all (or at least Promise.allSettled)
+const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
+  if (task.tempMessages && task.tempMessages.length > 0) {
+    await Promise.allSettled(
+      task.tempMessages.map(id =>
+        bot.telegram.deleteMessage(task.chatId, id).catch(() => null)
+      )
+    );
+  }
 });
 
 const saveUserFx = createEffect(saveUser);
@@ -116,10 +123,12 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
+// ADD GUARD: Only call saveUserFx if user exists
 sample({
   clock: newTaskReceived,
   source: $taskSource,
-  fn: (task) => task.user!,
+  filter: (taskSource, newTask) => !!taskSource.user,
+  fn: (taskSource, newTask) => taskSource.user!,
   target: saveUserFx,
 });
 
@@ -222,8 +231,15 @@ $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
   target: cleanupTempMessagesFx,
 });
 
-$currentTask.on(tempMessageSent, (prev, msgId) => ({ ...prev!, tempMessages: [...(prev?.tempMessages ?? []), msgId] }));
-$currentTask.on(cleanupTempMessagesFx.done, (prev) => ({ ...prev!, tempMessages: [] }));
+// FIX: Prevent error if no current task (null)
+$currentTask.on(tempMessageSent, (prev, msgId) => {
+  if (!prev) return prev;
+  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
+});
+$currentTask.on(cleanupTempMessagesFx.done, (prev) => {
+  if (!prev) return prev;
+  return { ...prev, tempMessages: [] };
+});
 $currentTask.on(taskDone, () => null);
 
 const intervalHasPassed = createEvent();
