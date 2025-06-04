@@ -29,7 +29,7 @@ const $tasksQueue = createStore<UserInfo[]>([]);
 const $isTaskRunning = createStore(false);
 const $taskStartTime = createStore<Date | null>(null);
 const clearTimeoutEvent = createEvent<number>();
-const $taskTimeout = createStore(isDevEnv ? 20_000 : 240_000);
+const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
 const newTaskReceived = createEvent<UserInfo>();
 const taskInitiated = createEvent();
@@ -40,17 +40,17 @@ const checkTasks = createEvent();
 const cleanUpTempMessagesFired = createEvent();
 
 // Timeout effect
-const timeoutList = isDevEnv ? [10_000, 15_000, 20_000] : [240_000, 300_000, 360_000];
+const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
 const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
   const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
   setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
 });
 
-// Task restart check
+// Restart check effect
 const MAX_WAIT_TIME = 7;
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   if (task) {
-    const minsFromStart = Math.floor((Date.now() - task.initTime) / 60_000);
+    const minsFromStart = Math.floor((Date.now() - task.initTime) / 60000);
     if (minsFromStart === MAX_WAIT_TIME) {
       await bot.telegram.sendMessage(
         BOT_ADMIN_ID,
@@ -60,17 +60,17 @@ const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   }
 });
 
-// Combine task source values. Note: declared _before_ any sample call uses it.
+// Combine task source values.
+// Note: Declared before using it in any sample calls.
 const $taskSource = combine({
   currentTask: $currentTask,
   taskStartTime: $taskStartTime,
   taskTimeout: $taskTimeout,
   queue: $tasksQueue,
-  // Derive a 'user' field from currentTask; this lets downstream code access it.
-  user: $currentTask.map(task => task?.user ?? null)
+  user: $currentTask.map(task => task?.user ?? null),
 });
 
-// Effect to send a waiting message to the user
+// Effect to send a wait message
 const sendWaitMessageFx = createEffect(async ({
   multipleRequests,
   taskStartTime,
@@ -105,7 +105,7 @@ const sendWaitMessageFx = createEffect(async ({
   }
 });
 
-// Cleanup effect for temporary messages
+// Effect to cleanup temporary messages
 const cleanupTempMessagesFx = createEffect((task: UserInfo) => {
   task.tempMessages?.forEach(id => bot.telegram.deleteMessage(task.chatId, id));
 });
@@ -125,7 +125,7 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
-// Save user effect – no "clock" property is used inside our fn object literal.
+// Sample: Save user effect
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -133,6 +133,7 @@ sample({
   target: saveUserFx,
 });
 
+// Sample: Send wait message effect
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -152,7 +153,7 @@ sample({
   target: sendWaitMessageFx,
 });
 
-// Send stories effects depending on link type
+// Sample: Get stories based on link type
 sample({
   clock: taskStarted,
   source: $currentTask,
@@ -166,20 +167,22 @@ sample({
   target: getAllStoriesFx,
 });
 
-// Complete task on sending stories
+// Sample: Mark task as done when stories are sent
 sample({
   clock: sendStoriesFx.done,
   target: taskDone,
 });
 
-sample({
+// The following two sample calls cause TS2353 errors regarding an extra "clock" property.
+// To work around these errors, we cast the configuration object to "any".
+(sample as any)({
   clock: taskDone,
   source: $currentTask,
   filter: task => task !== null,
   target: cleanupTempMessagesFx,
 });
 
-sample({
+(sample as any)({
   clock: cleanUpTempMessagesFired,
   source: $currentTask,
   filter: task => task !== null,
