@@ -57,6 +57,15 @@ const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   }
 });
 
+// 🔧 Fix: Declare $taskSource before usage
+const $taskSource = combine({
+  currentTask: $currentTask,
+  taskStartTime: $taskStartTime,
+  taskTimeout: $taskTimeout,
+  queue: $tasksQueue,
+  user: $currentTask.map(task => task?.user ?? null) // 🔧 Ensures 'user' is included
+});
+
 const sendWaitMessageFx = createEffect(async ({
   multipleRequests,
   taskStartTime,
@@ -114,13 +123,6 @@ sample({
   source: $taskSource,
   fn: (task) => task.user!,
   target: saveUserFx,
-});
-
-const $taskSource = combine({
-  currentTask: $currentTask,
-  taskStartTime: $taskStartTime,
-  taskTimeout: $taskTimeout,
-  queue: $tasksQueue,
 });
 
 sample({
