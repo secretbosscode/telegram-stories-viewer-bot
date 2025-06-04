@@ -21,7 +21,7 @@
     "effector": "^23.3.0",
     "express": "^4.19.2",
     "patronum": "^2.3.0",
-    "stripe": "^13.16.0",
+    "stripe": "^18.2.1",
     "telegraf": "^4.16.3",
     "telegram": "2.19.11"
   },
