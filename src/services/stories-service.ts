@@ -3,7 +3,7 @@ import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
 import { sendStoriesFx } from 'controllers/send-stories';
-import { createEffect, createEvent, createStore, sample } from 'effector';
+import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
 import { and, not } from 'patronum';
@@ -109,9 +109,16 @@ sample({
   target: saveUserFx,
 });
 
+const $taskSource = combine({
+  currentTask: $currentTask,
+  taskStartTime: $taskStartTime,
+  taskTimeout: $taskTimeout,
+  queue: $tasksQueue,
+});
+
 sample({
   clock: newTaskReceived,
-  source: { currentTask: $currentTask, taskStartTime: $taskStartTime, taskTimeout: $taskTimeout, queue: $tasksQueue },
+  source: $taskSource,
   filter: ({ taskStartTime, queue }, newTask) => {
     const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
     const isPrivileged = isAdmin || newTask.isPremium;
