@@ -1,4 +1,4 @@
-# Dockerfile for Telegram Bot with Stripe & SQLite support
+x# Dockerfile for Telegram Bot with Stripe & SQLite support
 
 # Use official Node.js runtime as base
 FROM node:22
@@ -30,4 +30,4 @@ ENV NODE_ENV=production
 EXPOSE 33444
 
 # Start the Express server that includes the Stripe webhook and bot
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/index.js"]
