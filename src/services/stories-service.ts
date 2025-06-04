@@ -159,10 +159,11 @@ sample({
     taskTimeout: $taskTimeout,
     queue: $tasksQueue,
   },
-  filter: or(
-    $isTaskRunning,
-    $taskStartTime.map((x) => x instanceof Date)
-  ),
+  filter: ({ taskStartTime, queue }, newTask) => {
+    const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
+    const isCooldownActive = taskStartTime instanceof Date || $isTaskRunning.getState();
+    return !isAdmin && isCooldownActive;
+  },
   fn: ({ currentTask, taskStartTime, taskTimeout, queue }, newTask) => {
     return {
       multipleRequests: currentTask?.chatId === newTask.chatId,
