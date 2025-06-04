@@ -46,7 +46,6 @@ const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
   setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
 });
 
-// Restart check effect
 const MAX_WAIT_TIME = 7;
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   if (task) {
@@ -61,7 +60,6 @@ const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
 });
 
 // Combine task source values.
-// Note: Declared before using it in any sample calls.
 const $taskSource = combine({
   currentTask: $currentTask,
   taskStartTime: $taskStartTime,
@@ -129,7 +127,7 @@ $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 sample({
   clock: newTaskReceived,
   source: $taskSource,
-  fn: (task) => task.user!,
+  fn: ({ user }) => user!,
   target: saveUserFx,
 });
 
@@ -157,13 +155,15 @@ sample({
 sample({
   clock: taskStarted,
   source: $currentTask,
-  filter: task => task?.linkType === 'link',
+  filter: (task): task is UserInfo => !!task && task.linkType === 'link',
+  fn: task => task,
   target: getParticularStoryFx,
 });
 sample({
   clock: taskStarted,
   source: $currentTask,
-  filter: task => task?.linkType === 'username',
+  filter: (task): task is UserInfo => !!task && task.linkType === 'username',
+  fn: task => task,
   target: getAllStoriesFx,
 });
 
@@ -173,21 +173,38 @@ sample({
   target: taskDone,
 });
 
-// The following two sample calls cause TS2353 errors regarding an extra "clock" property.
-// To work around these errors, we cast the configuration object to "any".
-(sample as any)({
+// Sample: Cleanup temporary messages (type-safe!)
+sample({
   clock: taskDone,
   source: $currentTask,
-  filter: task => task !== null,
+  filter: (task): task is UserInfo => task !== null,
+  fn: task => task,
+  target: cleanupTempMessagesFx,
+});
+sample({
+  clock: cleanUpTempMessagesFired,
+  source: $currentTask,
+  filter: (task): task is UserInfo => task !== null,
+  fn: task => task,
   target: cleanupTempMessagesFx,
 });
 
-(sample as any)({
-  clock: cleanUpTempMessagesFired,
-  source: $currentTask,
-  filter: task => task !== null,
-  target: cleanupTempMessagesFx,
-});
+// Sample: Check tasks
+sample({ clock: [newTaskReceived, taskDone], target: checkTasks });
+
+// Add to temp messages
+$currentTask.on(tempMessageSent, (prev, msgId) =>
+  prev ? { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] } : prev
+);
+$currentTask.on(cleanupTempMessagesFx.done, (prev) =>
+  prev ? { ...prev, tempMessages: [] } : prev
+);
+$currentTask.on(taskDone, () => null);
+
+// Periodic stuck task check
+const intervalHasPassed = createEvent();
+sample({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
+setInterval(() => intervalHasPassed(), 30_000);
 
 export {
   tempMessageSent,
