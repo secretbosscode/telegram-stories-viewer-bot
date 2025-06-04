@@ -138,7 +138,6 @@ sample({ clock: clearTimeout, fn: () => null, target: [$taskStartTime, checkTask
 sample({ clock: taskStarted, source: $currentTask, filter: task => task?.linkType === 'link', target: getParticularStoryFx });
 sample({ clock: taskStarted, source: $currentTask, filter: task => task?.linkType === 'username', target: getAllStoriesFx });
 
-// Fix: Split sample with multi-clock into two
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
@@ -154,7 +153,6 @@ sample({
   target: [sendErrorMessageFx, taskDone],
 });
 
-// Fix: Split sample with multi-clock into two
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
@@ -187,7 +185,7 @@ sample({ clock: cleanUpTempMessagesFired, source: $currentTask, filter: task => 
 
 const intervalHasPassed = createEvent();
 sample({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
-setInterval(intervalHasPassed, 30_000);
+setInterval(() => intervalHasPassed(), 30_000);
 
 export {
   tempMessageSent,
