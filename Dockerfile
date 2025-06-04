@@ -1,23 +1,20 @@
-# Use Node 18 (compatible with eslint-plugin-effector)
+# Use official Node.js 18 base image
 FROM node:18-slim
 
-# Create app working directory
+# Set working directory
 WORKDIR /app
 
-# Copy dependency files first
+# Copy package manifests first to optimize Docker layer caching
 COPY package.json yarn.lock ./
 
 # Install dependencies
 RUN yarn install
 
-# Copy the rest of the application code
+# Copy the rest of the application source
 COPY . .
 
-# Build the TypeScript source to JS
+# Build TypeScript sources
 RUN yarn build
 
-# Set environment variable for production mode
-ENV NODE_ENV=production
-
-# Start the bot (entry point is dist/main.js after build)
-CMD ["node", "dist/main.js"]
+# Run the compiled entry point
+CMD ["node", "dist/index.js"]
