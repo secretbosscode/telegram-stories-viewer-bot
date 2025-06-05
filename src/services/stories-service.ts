@@ -9,8 +9,6 @@ import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
 import { Api } from 'telegram';
 
-// Console logs and watchers are kept for debugging purposes.
-
 export interface UserInfo {
   chatId: string;
   link: string;
@@ -37,6 +35,14 @@ const tempMessageSent = createEvent<number>();
 const taskDone = createEvent<void>();
 const checkTasks = createEvent<void>();
 const cleanUpTempMessagesFired = createEvent();
+
+// CORRECTED: This new sample will "wake up" the service if it's idle and a new task arrives.
+sample({
+  clock: newTaskReceived,
+  source: $isTaskRunning,
+  filter: (isTaskRunning) => !isTaskRunning, // Only run if no task is currently running
+  target: checkTasks,
+});
 
 const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
 const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
@@ -164,7 +170,6 @@ const $taskInitiationDataSource = combine<TaskInitiationSource>({
   queue: $tasksQueue
 });
 
-// CORRECTED: The clock is now ONLY checkTasks to prevent immediate restart loops.
 sample({
   clock: checkTasks,
   source: $taskInitiationDataSource,
@@ -214,8 +219,7 @@ sample({
     console.log('[StoriesService] getAllStoriesFx.doneData (error path) - task:', task.link, 'Message:', errorMessage);
     return { task, message: errorMessage };
   },
-  // CORRECTED: Explicitly check for next task after this one is marked done.
-  target: [sendErrorMessageFx, taskDone, checkTasks],
+  target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 
 sample({
@@ -244,7 +248,6 @@ sample({
   },
   target: sendStoriesFx,
 });
-// CORRECTED: Also handle hard failures by cleaning up and checking for a new task.
 getAllStoriesFx.fail.watch(({ params, error }) => {
     console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
     taskDone();
@@ -263,7 +266,6 @@ sample({
     console.log('[StoriesService] getParticularStoryFx.doneData (error path) - task:', task.link, 'Message:', errorMessage);
     return { task, message: errorMessage };
   },
-  // CORRECTED: Explicitly check for next task after this one is marked done.
   target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 
@@ -289,7 +291,6 @@ sample({
   },
   target: sendStoriesFx,
 });
-// CORRECTED: Also handle hard failures by cleaning up and checking for a new task.
 getParticularStoryFx.fail.watch(({ params, error }) => {
     console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
     taskDone();
@@ -300,15 +301,10 @@ sendStoriesFx.done.watch(({ params }) => {
   console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link);
 });
 sendStoriesFx.fail.watch(({ params, error }) => {
-  // This watcher will now only fire if sendStoriesFx itself has robust error handling
-  // that makes its promise reject, causing the .fail event to trigger.
   console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error);
 });
 
-// CORRECTED: After a task successfully finishes via sendStoriesFx, trigger both taskDone and checkTasks.
 sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
-
-// NEW: When sendStoriesFx fails, also clean up the task and check for a new one.
 sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
