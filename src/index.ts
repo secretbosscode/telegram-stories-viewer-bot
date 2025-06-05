@@ -36,27 +36,108 @@ bot.start(async (ctx) => {
   );
 });
 
-// ========== ADMIN & GENERAL COMMANDS ==========
-
-// /help - shows available commands
+// --- HELP COMMAND ---
 bot.command('help', async (ctx) => {
-  let helpText = `🤖 *Ghost Stories Bot Help*\n\n`;
-  helpText += `General Commands:\n`;
-  helpText += `/start - Show usage instructions\n`;
-  helpText += `/help - Show this help message\n`;
+  let helpText = `<b>🤖 Ghost Stories Bot Help</b>\n\n`;
+  helpText += `<b>General Commands:</b>\n`;
+  helpText += `<code>/start</code> - Show usage instructions\n`;
+  helpText += `<code>/help</code> - Show this help message\n`;
 
   if (ctx.from.id === BOT_ADMIN_ID) {
-    helpText += `\n*Admin Commands:*\n`;
-    helpText += `/setpremium <telegram_id | @username> - Mark user as premium\n`;
-    helpText += `/unsetpremium <telegram_id | @username> - Remove premium status\n`;
-    helpText += `/ispremium <telegram_id | @username> - Check if user is premium\n`;
-    helpText += `/listpremium - List all premium users\n`;
-    helpText += `/users - List all users\n`;
-    helpText += `/restart - (text only) Restart the bot\n`;
+    helpText += `\n<b>Admin Commands:</b>\n`;
+    helpText += `<code>/setpremium &lt;telegram_id | @username&gt;</code> - Mark user as premium\n`;
+    helpText += `<code>/unsetpremium &lt;telegram_id | @username&gt;</code> - Remove premium status\n`;
+    helpText += `<code>/ispremium &lt;telegram_id | @username&gt;</code> - Check if user is premium\n`;
+    helpText += `<code>/listpremium</code> - List all premium users\n`;
+    helpText += `<code>/users</code> - List all users\n`;
+    helpText += `<code>/restart</code> - (text only) Restart the bot\n`;
   }
 
-  await ctx.replyWithMarkdownV2(helpText);
+  await ctx.reply(helpText, { parse_mode: 'HTML' });
 });
+
+bot.on(message('text'), async (ctx) => {
+  const text = ctx.message.text;
+  console.log('Received text:', text, 'from:', ctx.from?.id);
+
+  // username or phone number
+  if (text.startsWith('@') || text.startsWith('+')) {
+    console.log('Processing username/phone:', text);
+    await newTaskReceived({
+      chatId: String(ctx.chat.id),
+      link: text,
+      linkType: 'username',
+      locale: '',
+      user: ctx.from,
+      initTime: Date.now(),
+    });
+    return;
+  }
+
+  // particular story link
+  if (text.startsWith('https') || text.startsWith('t.me/')) {
+    const paths = text.split('/');
+    if (
+      !Number.isNaN(Number(paths.at(-1))) &&
+      paths.at(-2) === 's' &&
+      paths.at(-3)
+    ) {
+      console.log('Processing link:', text);
+      await newTaskReceived({
+        chatId: String(ctx.chat.id),
+        link: text,
+        linkType: 'link',
+        locale: '',
+        user: ctx.from,
+        initTime: Date.now(),
+      });
+      return;
+    }
+  }
+
+  // restart action
+  if (ctx.from.id === BOT_ADMIN_ID && ctx.message.text === RESTART_COMMAND) {
+    await ctx.reply('Are you sure?', {
+      reply_markup: {
+        inline_keyboard: [[{ text: 'Yes', callback_data: RESTART_COMMAND }]],
+      },
+    });
+    return;
+  }
+
+  await ctx.reply(
+    '🚫 Please send a valid link to user (username or phone number)'
+  );
+});
+
+bot.on(callbackQuery('data'), async (ctx) => {
+  // handle pinned stories pagination
+  if (ctx.callbackQuery.data.includes('&')) {
+    const [username, nextStoriesIds] = ctx.callbackQuery.data.split('&');
+    console.log('Processing callback for pagination:', username, nextStoriesIds);
+
+    await newTaskReceived({
+      chatId: String(ctx?.from?.id),
+      link: username,
+      linkType: 'username',
+      nextStoriesIds: nextStoriesIds ? JSON.parse(nextStoriesIds) : undefined,
+      locale: '',
+      user: ctx.from,
+      initTime: Date.now(),
+    });
+  }
+
+  // restart action
+  if (
+    ctx.callbackQuery.data === RESTART_COMMAND &&
+    ctx?.from?.id === BOT_ADMIN_ID
+  ) {
+    await ctx.answerCbQuery('⏳ Restarting...');
+    process.exit();
+  }
+});
+
+// ----------- ADMIN COMMANDS -----------
 
 // /setpremium <telegram_id | @username>
 bot.command('setpremium', async (ctx) => {
@@ -188,108 +269,27 @@ bot.command('listpremium', async (ctx) => {
   await ctx.reply(msg);
 });
 
-// /users - list all users
+// /users - List all users
 bot.command('users', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
     return;
   }
-  const rows = db.prepare('SELECT telegram_id, username, is_premium FROM users').all() as { telegram_id: string, username?: string, is_premium: number }[];
+  const rows = db.prepare('SELECT telegram_id, username, is_premium FROM users').all() as { telegram_id: string, username?: string, is_premium?: number }[];
   if (!rows.length) {
     await ctx.reply('No users found.');
     return;
   }
   let msg = `👥 All users (${rows.length}):\n`;
   rows.forEach((u, i) => {
-    msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} ${u.is_premium ? '🌟' : ''}\n`;
+    msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id}`;
+    if (u.is_premium) msg += ' [PREMIUM]';
+    msg += '\n';
   });
   await ctx.reply(msg);
 });
 
-// ========== STORY HANDLING & DEFAULTS ==========
-
-bot.on(message('text'), async (ctx) => {
-  const text = ctx.message.text;
-  console.log('Received text:', text, 'from:', ctx.from?.id);
-
-  // username or phone number
-  if (text.startsWith('@') || text.startsWith('+')) {
-    console.log('Processing username/phone:', text);
-    await newTaskReceived({
-      chatId: String(ctx.chat.id),
-      link: text,
-      linkType: 'username',
-      locale: '',
-      user: ctx.from,
-      initTime: Date.now(),
-    });
-    return;
-  }
-
-  // particular story link
-  if (text.startsWith('https') || text.startsWith('t.me/')) {
-    const paths = text.split('/');
-    if (
-      !Number.isNaN(Number(paths.at(-1))) &&
-      paths.at(-2) === 's' &&
-      paths.at(-3)
-    ) {
-      console.log('Processing link:', text);
-      await newTaskReceived({
-        chatId: String(ctx.chat.id),
-        link: text,
-        linkType: 'link',
-        locale: '',
-        user: ctx.from,
-        initTime: Date.now(),
-      });
-      return;
-    }
-  }
-
-  // restart action
-  if (ctx.from.id === BOT_ADMIN_ID && ctx.message.text === RESTART_COMMAND) {
-    await ctx.reply('Are you sure?', {
-      reply_markup: {
-        inline_keyboard: [[{ text: 'Yes', callback_data: RESTART_COMMAND }]],
-      },
-    });
-    return;
-  }
-
-  await ctx.reply(
-    '🚫 Please send a valid link to user (username or phone number)'
-  );
-});
-
-bot.on(callbackQuery('data'), async (ctx) => {
-  // handle pinned stories pagination
-  if (ctx.callbackQuery.data.includes('&')) {
-    const [username, nextStoriesIds] = ctx.callbackQuery.data.split('&');
-    console.log('Processing callback for pagination:', username, nextStoriesIds);
-
-    await newTaskReceived({
-      chatId: String(ctx?.from?.id),
-      link: username,
-      linkType: 'username',
-      nextStoriesIds: nextStoriesIds ? JSON.parse(nextStoriesIds) : undefined,
-      locale: '',
-      user: ctx.from,
-      initTime: Date.now(),
-    });
-  }
-
-  // restart action
-  if (
-    ctx.callbackQuery.data === RESTART_COMMAND &&
-    ctx?.from?.id === BOT_ADMIN_ID
-  ) {
-    await ctx.answerCbQuery('⏳ Restarting...');
-    process.exit();
-  }
-});
-
-// ========== BOT LIFECYCLE ==========
+// ----------- END ADMIN COMMANDS -----------
 
 bot.launch({ dropPendingUpdates: true }).then(() => {
   console.log('Telegram bot started.');
