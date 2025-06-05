@@ -2,7 +2,7 @@ import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
 import { sendStoriesFx } from 'controllers/send-stories';
-import { createEffect, createEvent, createStore, sample, combine, StoreValue, Event } from 'effector';
+import { createEffect, createEvent, createStore, sample, combine, StoreValue } from 'effector';
 import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
 import { saveUser } from 'repositories/user-repository';
@@ -92,7 +92,7 @@ const $taskSource = combine({
 type TaskSourceSnapshot = StoreValue<typeof $taskSource>;
 
 /* =====================================================
-   CHANGED/NEW: sendWaitMessageFx sends ETA to user
+   UPDATED: sendWaitMessageFx always shows position/ETA
    ===================================================== */
 const sendWaitMessageFx = createEffect(async (params: {
   multipleRequests: boolean;
@@ -103,19 +103,21 @@ const sendWaitMessageFx = createEffect(async (params: {
 }) => {
   const { queueLength, taskTimeout, newTask } = params;
 
-  // Estimate total wait time (if already in queue, +1 their own spot)
-  const estimatedSeconds = (queueLength) * (taskTimeout / 1000);
+  // Position is always (queueLength + 1) for new arrivals
+  const position = queueLength + 1;
+
+  // Estimated wait time: users ahead * timeout
+  const estimatedSeconds = queueLength * (taskTimeout / 1000);
   const minutes = Math.floor(estimatedSeconds / 60);
   const seconds = Math.floor(estimatedSeconds % 60);
 
+  // Always show the user's position and ETA
   const message =
-    queueLength === 0
-      ? "⏳ Please wait, your request will be processed shortly!"
-      : `⏳ You are #${queueLength + 1} in the queue. Estimated wait time: ${minutes > 0 ? `${minutes} min ` : ""}${seconds} sec.\nYou’ll be notified automatically when it’s your turn.`;
+    `⏳ You are #${position} in the queue. Estimated wait time: ${minutes > 0 ? `${minutes} min ` : ""}${seconds} sec.\nYou’ll be notified automatically when it’s your turn.`;
 
   await bot.telegram.sendMessage(newTask.chatId, message);
 });
-/* ========== END OF CHANGED/NEW CODE ========== */
+/* ========== END OF UPDATED CODE ========== */
 
 const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
   if (task.tempMessages && task.tempMessages.length > 0) {
@@ -146,7 +148,7 @@ sample({
 });
 
 /* ==============================================================
-   CHANGED/NEW: Always notify non-privileged users of wait time
+   UPDATED: Always notify non-privileged users of wait time
    ============================================================== */
 sample({
   clock: newTaskReceived,
@@ -164,7 +166,7 @@ sample({
   }),
   target: sendWaitMessageFx,
 });
-/* ========== END OF CHANGED/NEW CODE ========== */
+/* ========== END OF UPDATED CODE ========== */
 
 // --- Task Initiation Core Logic ---
 type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
