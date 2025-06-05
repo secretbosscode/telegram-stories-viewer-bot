@@ -11,14 +11,6 @@ import { isDevEnv } from 'config/env-config';
 
 import { notifyAdmin } from './send-message';
 
-// =============================================================================
-// BUG FIX: The "Duplicate Message" issue was caused by sending multiple status
-// updates. The fix is to send ONE initial message ("Fetching...") and then EDIT
-// that same message with the final result (counts or error). This provides a
-// cleaner UX and makes duplication impossible.
-// =============================================================================
-
-
 export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
   let statusMessageId: number | undefined;
   try {
@@ -32,10 +24,9 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
   try {
     const client = await Userbot.getInstance();
     const entity = await client.getEntity(task.link);
-    notifyAdmin({ task, status: 'start' });
+    notifyAdmin({ task, status: 'start' }); // This notification on start is good.
 
     if (task.nextStoriesIds) {
-      // This path handles pagination clicks, which is a different flow.
       const paginatedStoriesResult = await client.invoke(
         new Api.stories.GetStoriesByID({ peer: entity, id: task.nextStoriesIds })
       );
@@ -93,7 +84,6 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
       const summaryText = `⚡️ ${activeStories.length} Active story items found.\n📌 ${pinnedStories.length} Pinned story items found.`;
       
       if (statusMessageId) {
-        // Edit the "Fetching..." message with the final counts.
         await bot.telegram.editMessageText(task.chatId, statusMessageId, undefined, summaryText).catch(() => {
             bot.telegram.sendMessage(task.chatId, summaryText).then(({message_id}) => tempMessageSent(message_id));
         });
@@ -101,7 +91,15 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
         bot.telegram.sendMessage(task.chatId, summaryText).then(({message_id}) => tempMessageSent(message_id));
       }
 
-      notifyAdmin({ status: 'info', baseInfo: summaryText });
+      // =======================================================================
+      // BUG FIX: This line was causing the duplicate message.
+      // The user already receives the summaryText from the editMessageText/sendMessage
+      // call above. Calling notifyAdmin here sends the *exact same text* again
+      // to the admin, who is often the user testing the bot. It's redundant.
+      // We still get notifications for task starts and critical errors.
+      // =======================================================================
+      // notifyAdmin({ status: 'info', baseInfo: summaryText });
+
       return { activeStories, pinnedStories };
     }
 
@@ -122,10 +120,6 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
   }
 });
 
-// =============================================================================
-// BUG FIX: Re-added the export for getParticularStoryFx which was missing.
-// Also applied the "send then edit" message pattern for consistency.
-// =============================================================================
 export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
   let statusMessageId: number | undefined;
   try {
