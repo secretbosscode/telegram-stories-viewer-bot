@@ -163,20 +163,3 @@ export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
   console.log(`[MapStories] Mapped ${mappedStories.length} out of ${stories.length} initial stories.`);
   return mappedStories;
 }
-```
-
-**Key Logging Changes:**
-1.  **In `mapStories`:**
-    * When the `noforwards` flag is processed, it will log its value (or if it's not present).
-    * It also logs how many stories were successfully mapped out of the initial set.
-2.  **In `downloadStories` (inside the `limit` callback):**
-    * `const mediaExists = !!storyItem.media;`
-    * `const isNoforwards = !!storyItem.noforwards;`
-    * `console.log(\`[DownloadStories] Checking story ${storyItem.id} (${storiesType}): Media Exists? ${mediaExists}, Is Noforwards? ${isNoforwards}\`);`
-    * The skip message now explicitly states the reason: `Skipping. Reason: Media Exists=${mediaExists}, Noforwards=${isNoforwards}.`
-
-With these logs, when you run your test again, you should see:
-* For each story, whether `mapStories` found a `noforwards` flag.
-* For each story entering the download process, the explicit boolean values for whether its `media` object is considered "truthy" and whether its `noforwards` flag is true.
-
-This will tell us definitively why all stories were skipped in the previous run. Please try this updated code and share the logs aga
