@@ -316,30 +316,35 @@ getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesServ
 (sample as any)({ 
   clock: getAllStoriesFx.done,
   filter: ({ result }: { result: any }) => typeof result === 'object',
-  fn: async ({ params: task, result }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => {
-    console.log('[StoriesService] getAllStoriesFx.done (success path) - fn: Success for task', task.link);
+  fn: async ({ params: taskFromGetAll, result: resultFromGetAll }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => {
+    console.log('[StoriesService] getAllStoriesFx.done (success path) - fn: Processing for task', taskFromGetAll.link);
     
-    const totalStories = (result.activeStories?.length || 0) + (result.pinnedStories?.length || 0) + (result.paginatedStories?.length || 0);
-    const isAdmin = task.chatId === BOT_ADMIN_ID.toString();
-    const isPremiumUser = task.isPremium === true;
+    const totalStories = (resultFromGetAll.activeStories?.length || 0) + (resultFromGetAll.pinnedStories?.length || 0) + (resultFromGetAll.paginatedStories?.length || 0);
+    const isAdmin = taskFromGetAll.chatId === BOT_ADMIN_ID.toString();
+    const isPremiumUser = taskFromGetAll.isPremium === true;
 
     if (totalStories > LARGE_ITEM_THRESHOLD && (isAdmin || isPremiumUser)) {
       try {
-        console.log(`[StoriesService] Task for ${task.link} has ${totalStories} items. Sending long download warning.`);
+        console.log(`[StoriesService] Task for ${taskFromGetAll.link} has ${totalStories} items. Sending long download warning.`);
         const warningMessage = await bot.telegram.sendMessage(
-          task.chatId,
-          `⏳ You're about to process ~${totalStories} story items for "${task.link}". This might take a while, please be patient! Your request will continue in the background.`
+          taskFromGetAll.chatId,
+          `⏳ You're about to process ~${totalStories} story items for "${taskFromGetAll.link}". This might take a while, please be patient! Your request will continue in the background.`
         );
-        tempMessageSent(warningMessage.message_id); // Track for cleanup
+        tempMessageSent(warningMessage.message_id); 
       } catch (e) {
-        console.error(`[StoriesService] Failed to send long download warning to ${task.chatId}:`, e);
+        console.error(`[StoriesService] Failed to send long download warning to ${taskFromGetAll.chatId}:`, e);
       }
     }
     
-    return ({
-      task: task, 
-      ...(result as any) 
-    });
+    const paramsForSendStoriesFx = {
+      task: taskFromGetAll, 
+      activeStories: resultFromGetAll.activeStories || [],
+      pinnedStories: resultFromGetAll.pinnedStories || [],
+      paginatedStories: resultFromGetAll.paginatedStories, // Keep as is (can be undefined)
+      particularStory: undefined // Not part of this flow from getAllStoriesFx
+    };
+    console.log('[StoriesService] Params being passed to sendStoriesFx:', JSON.stringify(paramsForSendStoriesFx).substring(0, 500) + "..."); // Log a snippet
+    return paramsForSendStoriesFx;
   },
   target: sendStoriesFx,
 });
@@ -347,30 +352,30 @@ getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesServ
 (sample as any)({ 
   clock: getParticularStoryFx.done,
   filter: ({ result }: { result: any }) => typeof result === 'object',
-  fn: ({ params, result }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem } }) => {
-    console.log('[StoriesService] getParticularStoryFx.done (success path) - fn: Success for task', params.link);
-    return ({
-      task: params,
-      ...(result as any)
-    });
+  fn: ({ params: taskFromGetParticular, result: resultFromGetParticular }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem } }) => {
+    console.log('[StoriesService] getParticularStoryFx.done (success path) - fn: Success for task', taskFromGetParticular.link);
+    const paramsForSendStoriesFx = {
+        task: taskFromGetParticular,
+        activeStories: resultFromGetParticular.activeStories || [],
+        pinnedStories: resultFromGetParticular.pinnedStories || [],
+        paginatedStories: resultFromGetParticular.paginatedStories,
+        particularStory: resultFromGetParticular.particularStory
+    };
+    console.log('[StoriesService] Params being passed to sendStoriesFx (particular story):', JSON.stringify(paramsForSendStoriesFx).substring(0,500) + "..."); // Log a snippet
+    return paramsForSendStoriesFx;
   },
   target: sendStoriesFx,
 });
 
-// MODIFIED .watch calls for sendStoriesFx.done and .fail
 sendStoriesFx.done.watch(payload => {
-  // The payload for .done is { params: /* input to effect */, result: /* output of effect */ }
-  // console.log('[StoriesService] sendStoriesFx.done full payload:', JSON.stringify(payload)); // For deep debugging
   if (payload && payload.params && payload.params.task && typeof payload.params.task.link === 'string') {
-    console.log('[StoriesService] sendStoriesFx.done for task:', payload.params.task.link);
+    console.log('[StoriesService] sendStoriesFx.done for task:', payload.params.task.link, "Result:", JSON.stringify(payload.result));
   } else {
-    console.error('[StoriesService] sendStoriesFx.done: params.task.link is not accessible. Full payload.params:', JSON.stringify(payload?.params));
+    console.error('[StoriesService] sendStoriesFx.done: params.task.link is not accessible. Full payload.params:', JSON.stringify(payload?.params), "Result:", JSON.stringify(payload?.result));
   }
 });
 
 sendStoriesFx.fail.watch(payload => {
-  // The payload for .fail is { params: /* input to effect */, error: Error }
-  // console.log('[StoriesService] sendStoriesFx.fail full payload:', JSON.stringify(payload)); // For deep debugging
   if (payload && payload.params && payload.params.task && typeof payload.params.task.link === 'string') {
     console.error('[StoriesService] sendStoriesFx.fail for task:', payload.params.task.link, 'Error:', payload.error);
   } else {
