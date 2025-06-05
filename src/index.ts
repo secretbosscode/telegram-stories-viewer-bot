@@ -28,6 +28,7 @@ const extraOptions: any = {
     is_disabled: true,
   },
 };
+
 bot.start(async (ctx) => {
   await ctx.reply(
     '🔗 Please send 1 of the next options:\n\n' +
@@ -39,66 +40,66 @@ bot.start(async (ctx) => {
 });
 
 bot.on(message('text'), async (ctx) => {
-  const handleMessage = async () => {
-    const text = ctx.message.text;
+  const text = ctx.message.text;
+  console.log('Received text:', text, 'from:', ctx.from?.id);
 
-    // username
-    if (text.startsWith('@') || text.startsWith('+')) {
-      newTaskReceived({
+  // username or phone number
+  if (text.startsWith('@') || text.startsWith('+')) {
+    console.log('Processing username/phone:', text);
+    await newTaskReceived({
+      chatId: String(ctx.chat.id),
+      link: text,
+      linkType: 'username',
+      locale: '',
+      user: ctx.from,
+      initTime: Date.now(),
+    });
+    return;
+  }
+
+  // particular story link
+  if (text.startsWith('https') || text.startsWith('t.me/')) {
+    const paths = text.split('/');
+    if (
+      !Number.isNaN(Number(paths.at(-1))) &&
+      paths.at(-2) === 's' &&
+      paths.at(-3)
+    ) {
+      console.log('Processing link:', text);
+      await newTaskReceived({
         chatId: String(ctx.chat.id),
         link: text,
-        linkType: 'username',
+        linkType: 'link',
         locale: '',
         user: ctx.from,
         initTime: Date.now(),
       });
       return;
     }
+  }
 
-    // particular story link
-    if (text.startsWith('https') || text.startsWith('t.me/')) {
-      const paths = text.split('/');
-      if (
-        !Number.isNaN(Number(paths.at(-1))) &&
-        paths.at(-2) === 's' &&
-        paths.at(-3)
-      ) {
-        newTaskReceived({
-          chatId: String(ctx.chat.id),
-          link: text,
-          linkType: 'link',
-          locale: '',
-          user: ctx.from,
-          initTime: Date.now(),
-        });
-        return;
-      }
-    }
+  // restart action
+  if (ctx.from.id === BOT_ADMIN_ID && ctx.message.text === RESTART_COMMAND) {
+    await ctx.reply('Are you sure?', {
+      reply_markup: {
+        inline_keyboard: [[{ text: 'Yes', callback_data: RESTART_COMMAND }]],
+      },
+    });
+    return;
+  }
 
-    // restart action
-    if (ctx.from.id === BOT_ADMIN_ID && ctx.message.text === RESTART_COMMAND) {
-      ctx.reply('Are you sure?', {
-        reply_markup: {
-          inline_keyboard: [[{ text: 'Yes', callback_data: RESTART_COMMAND }]],
-        },
-      });
-      return;
-    }
-
-    await ctx.reply(
-      '🚫 Please send a valid link to user (username or phone number)'
-    );
-  };
-
-  handleMessage();
+  await ctx.reply(
+    '🚫 Please send a valid link to user (username or phone number)'
+  );
 });
 
 bot.on(callbackQuery('data'), async (ctx) => {
   // handle pinned stories pagination
   if (ctx.callbackQuery.data.includes('&')) {
     const [username, nextStoriesIds] = ctx.callbackQuery.data.split('&');
+    console.log('Processing callback for pagination:', username, nextStoriesIds);
 
-    newTaskReceived({
+    await newTaskReceived({
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       chatId: String(ctx?.from?.id),
       link: username,
@@ -121,7 +122,9 @@ bot.on(callbackQuery('data'), async (ctx) => {
   }
 });
 
-bot.launch({ dropPendingUpdates: true });
+bot.launch({ dropPendingUpdates: true }).then(() => {
+  console.log('Telegram bot started.');
+});
 initUserbot();
 
 // Enable graceful stop
