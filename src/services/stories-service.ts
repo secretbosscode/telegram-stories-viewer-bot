@@ -5,12 +5,11 @@ import { sendStoriesFx } from 'controllers/send-stories';
 import { createEffect, createEvent, createStore, sample, combine, Event, StoreValue, EventCallable } from 'effector';
 import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
-// import { and, not } from 'patronum'; // Not used in current version
 import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
 import { Api } from 'telegram';
 
-// Console logs and most watchers omitted for brevity, please retain them for your debugging.
+// Console logs and watchers are kept for debugging purposes.
 
 export interface UserInfo {
   chatId: string;
@@ -132,7 +131,7 @@ $tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
 sample({
   clock: newTaskReceived,
   source: $taskSource,
-  filter: (sourceData: TaskSourceSnapshot): sourceData is TaskSourceSnapshot & { user: User } => !!sourceData.user,
+  filter: (sourceData: TaskSourceSnapshot): sourceData is TaskSourceSnapshot & { user: User } => !!sourceData.user,
   fn: (sourceData: TaskSourceSnapshot & { user: User }): User => sourceData.user,
   target: saveUserFx,
 });
@@ -160,19 +159,20 @@ sample({
 
 type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
 const $taskInitiationDataSource = combine<TaskInitiationSource>({
-  isRunning: $isTaskRunning,
-  currentSystemCooldownStartTime: $taskStartTime,
-  queue: $tasksQueue
+  isRunning: $isTaskRunning,
+  currentSystemCooldownStartTime: $taskStartTime,
+  queue: $tasksQueue
 });
 
+// CORRECTED: The clock is now ONLY checkTasks to prevent immediate restart loops.
 sample({
-  clock: [checkTasks, $tasksQueue.updates.map((_: UserInfo[]) => undefined as void)],
-  source: $taskInitiationDataSource,
+  clock: checkTasks,
+  source: $taskInitiationDataSource,
   filter: (sourceValues: TaskInitiationSource): boolean => {
     if (sourceValues.isRunning || sourceValues.queue.length === 0) return false;
     const nextTaskInQueue = sourceValues.queue[0];
     if (!nextTaskInQueue) return false;
-    const isPrivileged = nextTaskInQueue.chatId === BOT_ADMIN_ID.toString() || nextTaskInQueue.isPremium === true;
+    const isPrivileged = nextTaskInQueue.chatId === BOT_ADMIN_ID.toString() || nextTaskInQueue.isPremium === true;
     return isPrivileged || sourceValues.currentSystemCooldownStartTime === null;
   },
   target: taskInitiated,
@@ -189,125 +189,137 @@ sample({ clock: taskStarted, filter: (t: UserInfo): t is UserInfo => t.linkType 
 
 // --- Effect Payload Success Types ---
 type GetAllStoriesSuccessResult = {
-    activeStories: Api.TypeStoryItem[];
-    pinnedStories: Api.TypeStoryItem[];
-    paginatedStories?: Api.TypeStoryItem[];
+    activeStories: Api.TypeStoryItem[];
+    pinnedStories: Api.TypeStoryItem[];
+    paginatedStories?: Api.TypeStoryItem[];
 };
 
 type GetParticularStorySuccessResult = {
-    activeStories: Api.TypeStoryItem[];
-    pinnedStories: Api.TypeStoryItem[];
-    paginatedStories?: Api.TypeStoryItem[];
-    particularStory: Api.TypeStoryItem;
+    activeStories: Api.TypeStoryItem[];
+    pinnedStories: Api.TypeStoryItem[];
+    paginatedStories?: Api.TypeStoryItem[];
+    particularStory: Api.TypeStoryItem;
 };
 
-// This type represents what your effect's .doneData payload's `result` field contains
-// (or what effect.doneData itself contains, based on TS errors).
 type EffectDoneResult<SuccessT> = SuccessT | string;
 
 // --- Handling getAllStoriesFx results ---
 sample({
-  clock: getAllStoriesFx.doneData, // Assumed by TS to be Event<EffectDoneResult<GetAllStoriesSuccessResult>>
-  source: $currentTask,
-  filter: (task: UserInfo | null, effectResult: EffectDoneResult<GetAllStoriesSuccessResult>): task is UserInfo =>
-    task !== null && typeof effectResult === 'string',
-  // CORRECTED: fn's second parameter now accepts the wider type from the clock
-  fn: (task: UserInfo, effectResultFromClock: EffectDoneResult<GetAllStoriesSuccessResult>) => {
-    // We know effectResultFromClock is a string here due to the filter.
-    const errorMessage = effectResultFromClock as string;
-    console.log('[StoriesService] getAllStoriesFx.doneData (error path) - task:', task.link, 'Message:', errorMessage);
-    return { task, message: errorMessage };
-  },
-  target: [sendErrorMessageFx, taskDone],
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task: UserInfo | null, effectResult: EffectDoneResult<GetAllStoriesSuccessResult>): task is UserInfo =>
+    task !== null && typeof effectResult === 'string',
+  fn: (task: UserInfo, effectResultFromClock: EffectDoneResult<GetAllStoriesSuccessResult>) => {
+    const errorMessage = effectResultFromClock as string;
+    console.log('[StoriesService] getAllStoriesFx.doneData (error path) - task:', task.link, 'Message:', errorMessage);
+    return { task, message: errorMessage };
+  },
+  // CORRECTED: Explicitly check for next task after this one is marked done.
+  target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 
 sample({
-  clock: getAllStoriesFx.doneData,
-  source: $currentTask,
-  filter: (task: UserInfo | null, effectResult: EffectDoneResult<GetAllStoriesSuccessResult>): task is UserInfo =>
-    task !== null && typeof effectResult === 'object' && effectResult !== null,
-  fn: (task: UserInfo, effectResult: EffectDoneResult<GetAllStoriesSuccessResult>) => {
-    const successResult = effectResult as GetAllStoriesSuccessResult; // Safe due to filter
-    console.log('[StoriesService] getAllStoriesFx.doneData (success path) - task:', task.link);
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task: UserInfo | null, effectResult: EffectDoneResult<GetAllStoriesSuccessResult>): task is UserInfo =>
+    task !== null && typeof effectResult === 'object' && effectResult !== null,
+  fn: (task: UserInfo, effectResult: EffectDoneResult<GetAllStoriesSuccessResult>) => {
+    const successResult = effectResult as GetAllStoriesSuccessResult;
+    console.log('[StoriesService] getAllStoriesFx.doneData (success path) - task:', task.link);
 
-    const totalStories = (successResult.activeStories?.length || 0) + (successResult.pinnedStories?.length || 0) + (successResult.paginatedStories?.length || 0);
-    if (totalStories > LARGE_ITEM_THRESHOLD && (task.chatId === BOT_ADMIN_ID.toString() || task.isPremium)) {
-      bot.telegram.sendMessage(
-        task.chatId,
-        `⏳ You're about to process ~${totalStories} story items for "${task.link}". This might take a while...`
-      ).then(msg => tempMessageSent(msg.message_id)).catch(e => console.error(`Failed to send long download warning:`, e));
-    }
-    return {
-      task: task,
-      activeStories: successResult.activeStories || [],
-      pinnedStories: successResult.pinnedStories || [],
-      paginatedStories: successResult.paginatedStories,
-      particularStory: undefined,
-    };
-  },
-  target: sendStoriesFx,
+    const totalStories = (successResult.activeStories?.length || 0) + (successResult.pinnedStories?.length || 0) + (successResult.paginatedStories?.length || 0);
+    if (totalStories > LARGE_ITEM_THRESHOLD && (task.chatId === BOT_ADMIN_ID.toString() || task.isPremium)) {
+      bot.telegram.sendMessage(
+        task.chatId,
+        `⏳ You're about to process ~${totalStories} story items for "${task.link}". This might take a while...`
+      ).then(msg => tempMessageSent(msg.message_id)).catch(e => console.error(`Failed to send long download warning:`, e));
+    }
+    return {
+      task: task,
+      activeStories: successResult.activeStories || [],
+      pinnedStories: successResult.pinnedStories || [],
+      paginatedStories: successResult.paginatedStories,
+      particularStory: undefined,
+    };
+  },
+  target: sendStoriesFx,
 });
-getAllStoriesFx.fail.watch(({ params, error }) => console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error));
+// CORRECTED: Also handle hard failures by cleaning up and checking for a new task.
+getAllStoriesFx.fail.watch(({ params, error }) => {
+    console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
+    taskDone();
+    checkTasks();
+});
 
 
 // --- Handling getParticularStoryFx results ---
 sample({
-  clock: getParticularStoryFx.doneData,
-  source: $currentTask,
-  filter: (task: UserInfo | null, effectResult: EffectDoneResult<GetParticularStorySuccessResult>): task is UserInfo =>
-    task !== null && typeof effectResult === 'string',
-  // CORRECTED: fn's second parameter now accepts the wider type from the clock
-  fn: (task: UserInfo, effectResultFromClock: EffectDoneResult<GetParticularStorySuccessResult>) => {
-    // We know effectResultFromClock is a string here due to the filter.
-    const errorMessage = effectResultFromClock as string;
-    console.log('[StoriesService] getParticularStoryFx.doneData (error path) - task:', task.link, 'Message:', errorMessage);
-    return { task, message: errorMessage };
-  },
-  target: [sendErrorMessageFx, taskDone],
+  clock: getParticularStoryFx.doneData,
+  source: $currentTask,
+  filter: (task: UserInfo | null, effectResult: EffectDoneResult<GetParticularStorySuccessResult>): task is UserInfo =>
+    task !== null && typeof effectResult === 'string',
+  fn: (task: UserInfo, effectResultFromClock: EffectDoneResult<GetParticularStorySuccessResult>) => {
+    const errorMessage = effectResultFromClock as string;
+    console.log('[StoriesService] getParticularStoryFx.doneData (error path) - task:', task.link, 'Message:', errorMessage);
+    return { task, message: errorMessage };
+  },
+  // CORRECTED: Explicitly check for next task after this one is marked done.
+  target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 
 sample({
-  clock: getParticularStoryFx.doneData,
-  source: $currentTask,
-  filter: (task: UserInfo | null, effectResult: EffectDoneResult<GetParticularStorySuccessResult>): task is UserInfo =>
-    task !== null &&
-    typeof effectResult === 'object' &&
-    effectResult !== null &&
-    'particularStory' in effectResult &&
-    (effectResult as GetParticularStorySuccessResult).particularStory !== undefined,
-  fn: (task: UserInfo, effectResult: EffectDoneResult<GetParticularStorySuccessResult>) => {
-    const successResult = effectResult as GetParticularStorySuccessResult & { particularStory: Api.TypeStoryItem }; // Safe due to filter
-    console.log('[StoriesService] getParticularStoryFx.doneData (success path) - task:', task.link);
-    return {
-      task: task,
-      activeStories: successResult.activeStories || [],
-      pinnedStories: successResult.pinnedStories || [],
-      paginatedStories: successResult.paginatedStories,
-      particularStory: successResult.particularStory,
-    };
-  },
-  target: sendStoriesFx,
+  clock: getParticularStoryFx.doneData,
+  source: $currentTask,
+  filter: (task: UserInfo | null, effectResult: EffectDoneResult<GetParticularStorySuccessResult>): task is UserInfo =>
+    task !== null &&
+    typeof effectResult === 'object' &&
+    effectResult !== null &&
+    'particularStory' in effectResult &&
+    (effectResult as GetParticularStorySuccessResult).particularStory !== undefined,
+  fn: (task: UserInfo, effectResult: EffectDoneResult<GetParticularStorySuccessResult>) => {
+    const successResult = effectResult as GetParticularStorySuccessResult & { particularStory: Api.TypeStoryItem };
+    console.log('[StoriesService] getParticularStoryFx.doneData (success path) - task:', task.link);
+    return {
+      task: task,
+      activeStories: successResult.activeStories || [],
+      pinnedStories: successResult.pinnedStories || [],
+      paginatedStories: successResult.paginatedStories,
+      particularStory: successResult.particularStory,
+    };
+  },
+  target: sendStoriesFx,
 });
-getParticularStoryFx.fail.watch(({ params, error }) => console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error));
-
-sendStoriesFx.done.watch(({ params }) => { // Assuming sendStoriesFx.done provides { params: { task: UserInfo } }
-  console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link);
-});
-sendStoriesFx.fail.watch(({ params, error }) => { // Assuming sendStoriesFx.fail provides { params: { task: UserInfo }, error: any }
-  console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error);
+// CORRECTED: Also handle hard failures by cleaning up and checking for a new task.
+getParticularStoryFx.fail.watch(({ params, error }) => {
+    console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
+    taskDone();
+    checkTasks();
 });
 
-sample({ clock: sendStoriesFx.done, target: taskDone });
+sendStoriesFx.done.watch(({ params }) => {
+  console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link);
+});
+sendStoriesFx.fail.watch(({ params, error }) => {
+  // This watcher will now only fire if sendStoriesFx itself has robust error handling
+  // that makes its promise reject, causing the .fail event to trigger.
+  console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error);
+});
+
+// CORRECTED: After a task successfully finishes via sendStoriesFx, trigger both taskDone and checkTasks.
+sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
+
+// NEW: When sendStoriesFx fails, also clean up the task and check for a new one.
+sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 sample({ clock: cleanUpTempMessagesFired, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
-  if (!prev) {
-    console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
-    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId] } as UserInfo;
-  }
-  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
+  if (!prev) {
+    console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
+    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId] } as UserInfo;
+  }
+  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
 });
 $currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMessages: [] } : null);
 $currentTask.on(taskDone, () => null);
