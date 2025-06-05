@@ -1,14 +1,19 @@
 import { notifyAdmin } from 'controllers/send-message';
 import { db } from 'db'; // Adjust the import path if needed
+import { User } from 'telegraf/typings/core/types/typegram';
 
-export const saveUser = (user) => {
+// Save user to DB if not already present
+export const saveUser = (user: User) => {
   try {
+    const telegramId = user.id.toString();
+    const username = user.username || null;
+
     // Check if the user already exists
-    const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(user.id.toString());
+    const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(telegramId);
     if (!exists) {
       db.prepare(
         'INSERT INTO users (telegram_id, username) VALUES (?, ?)'
-      ).run(user.id.toString(), user.username || null);
+      ).run(telegramId, username);
 
       notifyAdmin({
         status: 'info',
