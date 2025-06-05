@@ -8,7 +8,7 @@ import { newTaskReceived } from 'services/stories-service';
 import { session, Telegraf } from 'telegraf';
 import { callbackQuery, message } from 'telegraf/filters';
 
-import { db } from './db'; // Adjust path as needed
+import { db } from './db';
 import { isUserPremium, addPremiumUser, removePremiumUser } from 'services/premium-service';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
@@ -117,7 +117,7 @@ bot.on(callbackQuery('data'), async (ctx) => {
   }
 });
 
-/* --- ADMIN-ONLY PREMIUM MANAGEMENT COMMANDS --- */
+// ----------- ADMIN COMMANDS -----------
 
 // /setpremium <telegram_id | @username>
 bot.command('setpremium', async (ctx) => {
@@ -125,7 +125,6 @@ bot.command('setpremium', async (ctx) => {
     await ctx.reply('🚫 You are not authorized to use this command.');
     return;
   }
-
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
     await ctx.reply('Usage: /setpremium <telegram_id | @username>');
@@ -136,9 +135,8 @@ bot.command('setpremium', async (ctx) => {
 
   if (args[0].startsWith('@')) {
     username = args[0].replace('@', '');
-    // Lookup in DB for telegram_id by username
-    const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username);
-    if (!row) {
+    const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username) as { telegram_id?: string } | undefined;
+    if (!row || !row.telegram_id) {
       await ctx.reply('User not found in database.');
       return;
     }
@@ -149,7 +147,10 @@ bot.command('setpremium', async (ctx) => {
     await ctx.reply('Invalid argument. Provide a Telegram user ID or @username.');
     return;
   }
-
+  if (!telegramId) {
+    await ctx.reply('Could not resolve telegram ID.');
+    return;
+  }
   addPremiumUser(telegramId, username);
   await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium!`);
 });
@@ -160,7 +161,6 @@ bot.command('unsetpremium', async (ctx) => {
     await ctx.reply('🚫 You are not authorized to use this command.');
     return;
   }
-
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
     await ctx.reply('Usage: /unsetpremium <telegram_id | @username>');
@@ -171,8 +171,8 @@ bot.command('unsetpremium', async (ctx) => {
 
   if (args[0].startsWith('@')) {
     username = args[0].replace('@', '');
-    const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username);
-    if (!row) {
+    const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username) as { telegram_id?: string } | undefined;
+    if (!row || !row.telegram_id) {
       await ctx.reply('User not found in database.');
       return;
     }
@@ -183,7 +183,10 @@ bot.command('unsetpremium', async (ctx) => {
     await ctx.reply('Invalid argument. Provide a Telegram user ID or @username.');
     return;
   }
-
+  if (!telegramId) {
+    await ctx.reply('Could not resolve telegram ID.');
+    return;
+  }
   removePremiumUser(telegramId);
   await ctx.reply(`✅ User ${username ? '@'+username : telegramId} is no longer premium.`);
 });
@@ -194,7 +197,6 @@ bot.command('ispremium', async (ctx) => {
     await ctx.reply('🚫 You are not authorized to use this command.');
     return;
   }
-
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
     await ctx.reply('Usage: /ispremium <telegram_id | @username>');
@@ -205,8 +207,8 @@ bot.command('ispremium', async (ctx) => {
 
   if (args[0].startsWith('@')) {
     username = args[0].replace('@', '');
-    const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username);
-    if (!row) {
+    const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username) as { telegram_id?: string } | undefined;
+    if (!row || !row.telegram_id) {
       await ctx.reply('User not found in database.');
       return;
     }
@@ -217,7 +219,10 @@ bot.command('ispremium', async (ctx) => {
     await ctx.reply('Invalid argument. Provide a Telegram user ID or @username.');
     return;
   }
-
+  if (!telegramId) {
+    await ctx.reply('Could not resolve telegram ID.');
+    return;
+  }
   const premium = isUserPremium(telegramId);
   await ctx.reply(
     premium
@@ -232,19 +237,19 @@ bot.command('listpremium', async (ctx) => {
     await ctx.reply('🚫 You are not authorized to use this command.');
     return;
   }
-  const rows = db.prepare('SELECT telegram_id, username FROM users WHERE is_premium = 1').all();
+  const rows = db.prepare('SELECT telegram_id, username FROM users WHERE is_premium = 1').all() as { telegram_id: string, username?: string }[];
   if (!rows.length) {
-    await ctx.reply('No premium users in the database.');
+    await ctx.reply('No premium users found.');
     return;
   }
-  const list = rows
-    .map((u: any) =>
-      u.username ? `@${u.username} (${u.telegram_id})` : u.telegram_id
-    )
-    .join('\n');
-  await ctx.reply(`👑 Premium Users:\n${list}`);
+  let msg = `🌟 Premium users (${rows.length}):\n`;
+  rows.forEach((u, i) => {
+    msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id}\n`;
+  });
+  await ctx.reply(msg);
 });
-/* --- END ADMIN-ONLY PREMIUM MANAGEMENT COMMANDS --- */
+
+// ----------- END ADMIN COMMANDS -----------
 
 bot.launch({ dropPendingUpdates: true }).then(() => {
   console.log('Telegram bot started.');
@@ -258,7 +263,6 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 process.on('uncaughtException', (err) => {
   console.error('Unhandled Exception:', err);
 });
-
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
