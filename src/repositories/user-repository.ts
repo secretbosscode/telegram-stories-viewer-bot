@@ -1,22 +1,24 @@
 import { notifyAdmin } from 'controllers/send-message';
-import { supabase } from 'index';
-import { User } from 'telegraf/typings/core/types/typegram';
+import { db } from 'db'; // Adjust the import path if needed
 
-export const saveUser = async (user: User) => {
+export const saveUser = (user) => {
   try {
-    const { data } = await supabase.from('users').select('*').eq('id', user.id);
-    // save if not exist in db
-    if (!data?.length) {
+    // Check if the user already exists
+    const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(user.id.toString());
+    if (!exists) {
+      db.prepare(
+        'INSERT INTO users (telegram_id, username) VALUES (?, ?)'
+      ).run(user.id.toString(), user.username || null);
+
       notifyAdmin({
         status: 'info',
         baseInfo: `👤 New user added to DB`,
       });
-      await supabase.from('users').insert([user]);
     }
   } catch (error) {
     notifyAdmin({
       status: 'error',
-      baseInfo: `❌ error occured adding user to DB:\n${JSON.stringify(error)}`,
+      baseInfo: `❌ error occurred adding user to DB:\n${JSON.stringify(error)}`,
     });
     console.log('error on saving user:', error);
   }
