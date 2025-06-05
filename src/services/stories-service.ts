@@ -1,7 +1,7 @@
 import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
-import { sendStoriesFx } from 'controllers/send-stories';
+import { sendStoriesFx } from 'controllers/send-stories'; // This is the effect in question
 import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
@@ -9,6 +9,9 @@ import { and, not } from 'patronum';
 import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
 import { Api } from 'telegram';
+
+// Log the kind of sendStoriesFx to ensure it's an effect
+console.log('[StoriesService] sendStoriesFx.kind:', sendStoriesFx.kind); // Should output 'effect'
 
 // ---- DATA TYPES ----
 export interface UserInfo {
@@ -312,38 +315,31 @@ getAllStoriesFx.fail.watch(({params, error}) => console.error('[StoriesService] 
 });
 getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesService] getParticularStoryFx.fail for task:', params.link, 'Error:', error));
 
-// Handle successful result for getAllStoriesFx and send warning for large downloads
+// Handle successful result for getAllStoriesFx
+// MODIFIED: fn is now synchronous for testing purposes
 (sample as any)({ 
   clock: getAllStoriesFx.done,
   filter: ({ result }: { result: any }) => typeof result === 'object',
-  fn: async ({ params: taskFromGetAll, result: resultFromGetAll }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => {
-    console.log('[StoriesService] getAllStoriesFx.done (success path) - fn: Processing for task', taskFromGetAll.link);
+  fn: ({ params: taskFromGetAll, result: resultFromGetAll }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => {
+    console.log('[StoriesService] getAllStoriesFx.done (success path) - fn (SYNC): Processing for task', taskFromGetAll.link);
     
-    const totalStories = (resultFromGetAll.activeStories?.length || 0) + (resultFromGetAll.pinnedStories?.length || 0) + (resultFromGetAll.paginatedStories?.length || 0);
-    const isAdmin = taskFromGetAll.chatId === BOT_ADMIN_ID.toString();
-    const isPremiumUser = taskFromGetAll.isPremium === true;
-
-    if (totalStories > LARGE_ITEM_THRESHOLD && (isAdmin || isPremiumUser)) {
-      try {
-        console.log(`[StoriesService] Task for ${taskFromGetAll.link} has ${totalStories} items. Sending long download warning.`);
-        const warningMessage = await bot.telegram.sendMessage(
-          taskFromGetAll.chatId,
-          `⏳ You're about to process ~${totalStories} story items for "${taskFromGetAll.link}". This might take a while, please be patient! Your request will continue in the background.`
-        );
-        tempMessageSent(warningMessage.message_id); 
-      } catch (e) {
-        console.error(`[StoriesService] Failed to send long download warning to ${taskFromGetAll.chatId}:`, e);
-      }
-    }
+    // Warning message logic is removed temporarily for this test
+    // const totalStories = (resultFromGetAll.activeStories?.length || 0) + (resultFromGetAll.pinnedStories?.length || 0) + (resultFromGetAll.paginatedStories?.length || 0);
+    // const isAdmin = taskFromGetAll.chatId === BOT_ADMIN_ID.toString();
+    // const isPremiumUser = taskFromGetAll.isPremium === true;
+    // if (totalStories > LARGE_ITEM_THRESHOLD && (isAdmin || isPremiumUser)) {
+    //   // Synchronous logging instead of async message send
+    //   console.log(`[StoriesService] Task for ${taskFromGetAll.link} has ${totalStories} items. (This would be where the warning message was sent).`);
+    // }
     
     const paramsForSendStoriesFx = {
       task: taskFromGetAll, 
       activeStories: resultFromGetAll.activeStories || [],
       pinnedStories: resultFromGetAll.pinnedStories || [],
-      paginatedStories: resultFromGetAll.paginatedStories, // Keep as is (can be undefined)
-      particularStory: undefined // Not part of this flow from getAllStoriesFx
+      paginatedStories: resultFromGetAll.paginatedStories, 
+      particularStory: undefined 
     };
-    console.log('[StoriesService] Params being passed to sendStoriesFx:', JSON.stringify(paramsForSendStoriesFx).substring(0, 500) + "..."); // Log a snippet
+    console.log('[StoriesService] Params being passed to sendStoriesFx (SYNC):', JSON.stringify(paramsForSendStoriesFx).substring(0, 500) + "..."); 
     return paramsForSendStoriesFx;
   },
   target: sendStoriesFx,
@@ -361,25 +357,33 @@ getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesServ
         paginatedStories: resultFromGetParticular.paginatedStories,
         particularStory: resultFromGetParticular.particularStory
     };
-    console.log('[StoriesService] Params being passed to sendStoriesFx (particular story):', JSON.stringify(paramsForSendStoriesFx).substring(0,500) + "..."); // Log a snippet
+    console.log('[StoriesService] Params being passed to sendStoriesFx (particular story):', JSON.stringify(paramsForSendStoriesFx).substring(0,500) + "..."); 
     return paramsForSendStoriesFx;
   },
   target: sendStoriesFx,
 });
 
 sendStoriesFx.done.watch(payload => {
+  console.log('[StoriesService] sendStoriesFx.done raw payload:', payload); 
   if (payload && payload.params && payload.params.task && typeof payload.params.task.link === 'string') {
     console.log('[StoriesService] sendStoriesFx.done for task:', payload.params.task.link, "Result:", JSON.stringify(payload.result));
   } else {
     console.error('[StoriesService] sendStoriesFx.done: params.task.link is not accessible. Full payload.params:', JSON.stringify(payload?.params), "Result:", JSON.stringify(payload?.result));
+    if (payload && payload.result && (payload.result as any).task && typeof (payload.result as any).task.link === 'string') {
+        console.warn('[StoriesService] sendStoriesFx.done: Task info found in payload.result.task.link:', (payload.result as any).task.link);
+    }
   }
 });
 
 sendStoriesFx.fail.watch(payload => {
+  console.log('[StoriesService] sendStoriesFx.fail raw payload:', payload); 
   if (payload && payload.params && payload.params.task && typeof payload.params.task.link === 'string') {
     console.error('[StoriesService] sendStoriesFx.fail for task:', payload.params.task.link, 'Error:', payload.error);
   } else {
     console.error('[StoriesService] sendStoriesFx.fail: params.task.link is not accessible. Error:', payload?.error, 'Full payload.params:', JSON.stringify(payload?.params));
+     if (payload && payload.error && (payload.error as any).params && (payload.error as any).params.task && typeof (payload.error as any).params.task.link === 'string') {
+        console.warn('[StoriesService] sendStoriesFx.fail: Task info might be in error.params.task.link:', (payload.error as any).params.task.link);
+    }
   }
 });
 
