@@ -2,7 +2,7 @@ import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
 import { sendStoriesFx } from 'controllers/send-stories'; // This is the effect in question
-import { createEffect, createEvent, createStore, sample, combine } from 'effector';
+import { createEffect, createEvent, createStore, sample, combine, Event } from 'effector'; // Added Event for typing
 import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
 import { and, not } from 'patronum';
@@ -36,8 +36,8 @@ const $taskTimeout = createStore(isDevEnv ? 20000 : 240000); // Default cooldown
 
 // ---- EVENTS ----
 const newTaskReceived = createEvent<UserInfo>();
-const taskInitiated = createEvent(); // Fired when a task is chosen to start processing
-const taskStarted = createEvent(); // Fired when $currentTask is set and actual work begins
+const taskInitiated = createEvent<UserInfo>(); // Explicitly type if it carries a payload, e.g. the task to be initiated
+const taskStarted = createEvent<UserInfo>(); // Explicitly type if it carries a payload
 const tempMessageSent = createEvent<number>();
 const taskDone = createEvent<void>(); // Fired when a task fully completes all its stages
 const checkTasks = createEvent(); // Event to trigger a check of the queue
@@ -45,8 +45,8 @@ const cleanUpTempMessagesFired = createEvent();
 
 // ---- LOGGING ----
 newTaskReceived.watch(task => console.log('[StoriesService] newTaskReceived:', JSON.stringify(task)));
-taskInitiated.watch(() => console.log('[StoriesService] taskInitiated called.'));
-taskStarted.watch(() => console.log('[StoriesService] taskStarted called. Current task should be set.'));
+taskInitiated.watch((task) => console.log('[StoriesService] taskInitiated called for task:', task?.link));
+taskStarted.watch((task) => console.log('[StoriesService] taskStarted called for task:', task?.link, 'Current task should be set.'));
 $currentTask.updates.watch(task => console.log('[StoriesService] $currentTask updated:', JSON.stringify(task)));
 checkTasks.watch(() => console.log('[StoriesService] checkTasks event called.'));
 $tasksQueue.updates.watch(queue => console.log('[StoriesService] $tasksQueue updated. Length:', queue.length, 'Links:', queue.map(t => t.link)));
@@ -182,8 +182,8 @@ $tasksQueue.on(taskDone, (tasks) => {
 sample({
   clock: newTaskReceived,
   source: $taskSource, 
-  filter: (sourceData, newTask) => !!sourceData.user,
-  fn: (sourceData, newTask) => sourceData.user!, 
+  filter: (sourceData, newTask): sourceData is { user: User } & typeof sourceData => !!sourceData.user, // Type guard
+  fn: (sourceData: { user: User } & typeof $taskSource.getState(), newTask: UserInfo) => sourceData.user, 
   target: saveUserFx,
 });
 
@@ -191,7 +191,7 @@ sample({
 sample({
   clock: newTaskReceived,
   source: $taskSource, 
-  filter: ({ taskStartTime, queue, currentTask }, newTask) => { 
+  filter: ({ taskStartTime, queue, currentTask }, newTask: UserInfo) => { 
     const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
     const isPremiumUser = newTask.isPremium === true;
     const isPrivileged = isAdmin || isPremiumUser;
@@ -205,7 +205,7 @@ sample({
     }
     return false; 
   },
-  fn: ({ currentTask, taskStartTime, taskTimeout, queue }, newTask) => {
+  fn: ({ currentTask, taskStartTime, taskTimeout, queue }: typeof $taskSource.getState(), newTask: UserInfo) => {
     const otherUsersInQueue = queue.filter(t => t.chatId !== newTask.chatId && t.link !== newTask.link).length;
     return {
         multipleRequests: false, 
@@ -218,15 +218,14 @@ sample({
 });
 
 // ---- TASK PROCESSING INITIATION ----
-// This sample attempts to start a new task whenever the queue is updated OR checkTasks is explicitly called.
 sample({
-  clock: [checkTasks, $tasksQueue.updates.map(_ => null)], // Trigger on checkTasks or any queue update
+  clock: [checkTasks, $tasksQueue.updates.map(_ => null as void)], // Ensure clock payload type matches if used
   source: { 
     isRunning: $isTaskRunning, 
     currentSystemCooldownStartTime: $taskStartTime, 
     queue: $tasksQueue 
   },
-  filter: ({ isRunning, currentSystemCooldownStartTime, queue }) => {
+  filter: ({ isRunning, currentSystemCooldownStartTime, queue }: { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[] }) => { // Added types
     if (isRunning || queue.length === 0) {
       console.log('[StoriesService] Task Initiation Filter: Bot is running or queue is empty. Skip check.');
       return false; 
@@ -250,36 +249,37 @@ sample({
     console.log(`[StoriesService] Task Initiation Filter: Next task for Normal user (${nextTaskInQueue.link}). System cooldown active? ${!canNormalUserStart}. Can start? ${canNormalUserStart}`);
     return canNormalUserStart;
   },
-  target: taskInitiated,
+  target: taskInitiated as Event<void>, // Target expects void if filter/fn doesn't pass data, or ensure data matches
 });
 
 
 (sample as any)({
-  clock: taskInitiated,
+  clock: taskInitiated, // Assuming taskInitiated might carry UserInfo if filter logic passes it
   source: $tasksQueue, 
-  filter: (queue) => queue.length > 0 && !$isTaskRunning.getState(), 
-  fn: (tasks: UserInfo[]) => {
+  filter: (queue: UserInfo[]) => queue.length > 0 && !$isTaskRunning.getState(), 
+  fn: (tasks: UserInfo[]) => { // tasks is UserInfo[]
     console.log('[StoriesService] taskInitiated effect: Taking first task from queue. Queue head:', tasks[0]?.link);
     return tasks[0]; 
   },
-  target: [$currentTask, taskStarted], 
+  target: [$currentTask, taskStarted as Event<UserInfo>], // taskStarted receives UserInfo
 });
 
+// taskInitiated may carry UserInfo. _task type needs to be UserInfo if so.
 (sample as any)({ 
     clock: taskInitiated, 
     source: $taskTimeout, 
-    filter: (timeoutDuration, _task) => timeoutDuration > 0, 
-    fn: (timeoutDuration, _task) => new Date(), 
+    filter: (timeoutDuration: number, _task: UserInfo | void) => timeoutDuration > 0, 
+    fn: (timeoutDuration: number, _task: UserInfo | void) => new Date(), 
     target: $taskStartTime 
 });
 (sample as any)({ 
     clock: taskInitiated, 
     source: $taskTimeout, 
-    filter: (timeoutDuration, _task) => timeoutDuration > 0,
+    filter: (timeoutDuration: number, _task: UserInfo | void) => timeoutDuration > 0,
     target: clearTimeoutWithDelayFx 
 }); 
 
-$taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => {
+$taskTimeout.on(clearTimeoutEvent, (_, newTimeout: number) => { // Typed newTimeout
   console.log('[StoriesService] $taskTimeout.on(clearTimeoutEvent) - new timeout value:', newTimeout);
   return newTimeout;
 });
@@ -334,7 +334,7 @@ $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => {
   },
   target: [sendErrorMessageFx, taskDone],
 });
-getAllStoriesFx.fail.watch(({params, error}) => console.error('[StoriesService] getAllStoriesFx.fail for task:', params.link, 'Error:', error));
+getAllStoriesFx.fail.watch(({params, error}: {params: UserInfo, error: Error}) => console.error('[StoriesService] getAllStoriesFx.fail for task:', params.link, 'Error:', error));
 
 (sample as any)({ 
   clock: getParticularStoryFx.done,
@@ -345,10 +345,8 @@ getAllStoriesFx.fail.watch(({params, error}) => console.error('[StoriesService] 
   },
   target: [sendErrorMessageFx, taskDone],
 });
-getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesService] getParticularStoryFx.fail for task:', params.link, 'Error:', error));
+getParticularStoryFx.fail.watch(({params, error}: {params: UserInfo, error: Error}) => console.error('[StoriesService] getParticularStoryFx.fail for task:', params.link, 'Error:', error));
 
-// Handle successful result for getAllStoriesFx
-// This fn is synchronous again to avoid issues with sendStoriesFx.done.watch params
 (sample as any)({ 
   clock: getAllStoriesFx.done,
   filter: ({ result }: { result: any }) => typeof result === 'object',
@@ -361,7 +359,6 @@ getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesServ
 
     if (totalStories > LARGE_ITEM_THRESHOLD && (isAdmin || isPremiumUser)) {
       console.log(`[StoriesService] Task for ${taskFromGetAll.link} has ${totalStories} items. (Note: Long download warning message sending is fire-and-forget).`);
-      // Fire-and-forget message sending to keep this fn synchronous
       bot.telegram.sendMessage(
           taskFromGetAll.chatId,
           `⏳ You're about to process ~${totalStories} story items for "${taskFromGetAll.link}". This might take a while, please be patient! Your request will continue in the background.`
