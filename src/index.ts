@@ -2,17 +2,14 @@ import { IContextBot } from 'config/context-interface';
 import {
   BOT_ADMIN_ID,
   BOT_TOKEN,
-  // SUPABASE_API_KEY,   // Removed
-  // SUPABASE_PROJECT_URL, // Removed
 } from 'config/env-config';
 import { initUserbot } from 'config/userbot';
 import { newTaskReceived } from 'services/stories-service';
 import { session, Telegraf } from 'telegraf';
 import { callbackQuery, message } from 'telegraf/filters';
 
-// import { createClient } from '@supabase/supabase-js'; // Removed
 import { db } from './db'; // Adjust path as needed
-import { isUserPremium, addPremiumUser } from 'services/premium-service';
+import { isUserPremium, addPremiumUser, removePremiumUser } from 'services/premium-service';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
 const RESTART_COMMAND = 'restart';
@@ -120,7 +117,9 @@ bot.on(callbackQuery('data'), async (ctx) => {
   }
 });
 
-/* --- ADMIN-ONLY /setpremium COMMAND --- */
+/* --- ADMIN-ONLY PREMIUM MANAGEMENT COMMANDS --- */
+
+// /setpremium <telegram_id | @username>
 bot.command('setpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -154,7 +153,98 @@ bot.command('setpremium', async (ctx) => {
   addPremiumUser(telegramId, username);
   await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium!`);
 });
-/* --- END ADMIN-ONLY /setpremium COMMAND --- */
+
+// /unsetpremium <telegram_id | @username>
+bot.command('unsetpremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) {
+    await ctx.reply('🚫 You are not authorized to use this command.');
+    return;
+  }
+
+  const args = ctx.message.text.split(' ').slice(1);
+  if (!args.length) {
+    await ctx.reply('Usage: /unsetpremium <telegram_id | @username>');
+    return;
+  }
+  let telegramId: string | undefined;
+  let username: string | undefined;
+
+  if (args[0].startsWith('@')) {
+    username = args[0].replace('@', '');
+    const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username);
+    if (!row) {
+      await ctx.reply('User not found in database.');
+      return;
+    }
+    telegramId = row.telegram_id;
+  } else if (/^\d+$/.test(args[0])) {
+    telegramId = args[0];
+  } else {
+    await ctx.reply('Invalid argument. Provide a Telegram user ID or @username.');
+    return;
+  }
+
+  removePremiumUser(telegramId);
+  await ctx.reply(`✅ User ${username ? '@'+username : telegramId} is no longer premium.`);
+});
+
+// /ispremium <telegram_id | @username>
+bot.command('ispremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) {
+    await ctx.reply('🚫 You are not authorized to use this command.');
+    return;
+  }
+
+  const args = ctx.message.text.split(' ').slice(1);
+  if (!args.length) {
+    await ctx.reply('Usage: /ispremium <telegram_id | @username>');
+    return;
+  }
+  let telegramId: string | undefined;
+  let username: string | undefined;
+
+  if (args[0].startsWith('@')) {
+    username = args[0].replace('@', '');
+    const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username);
+    if (!row) {
+      await ctx.reply('User not found in database.');
+      return;
+    }
+    telegramId = row.telegram_id;
+  } else if (/^\d+$/.test(args[0])) {
+    telegramId = args[0];
+  } else {
+    await ctx.reply('Invalid argument. Provide a Telegram user ID or @username.');
+    return;
+  }
+
+  const premium = isUserPremium(telegramId);
+  await ctx.reply(
+    premium
+      ? `✅ User ${username ? '@'+username : telegramId} is PREMIUM.`
+      : `❌ User ${username ? '@'+username : telegramId} is NOT premium.`
+  );
+});
+
+// /listpremium
+bot.command('listpremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) {
+    await ctx.reply('🚫 You are not authorized to use this command.');
+    return;
+  }
+  const rows = db.prepare('SELECT telegram_id, username FROM users WHERE is_premium = 1').all();
+  if (!rows.length) {
+    await ctx.reply('No premium users in the database.');
+    return;
+  }
+  const list = rows
+    .map((u: any) =>
+      u.username ? `@${u.username} (${u.telegram_id})` : u.telegram_id
+    )
+    .join('\n');
+  await ctx.reply(`👑 Premium Users:\n${list}`);
+});
+/* --- END ADMIN-ONLY PREMIUM MANAGEMENT COMMANDS --- */
 
 bot.launch({ dropPendingUpdates: true }).then(() => {
   console.log('Telegram bot started.');
