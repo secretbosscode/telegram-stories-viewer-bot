@@ -36,7 +36,7 @@ const newTaskReceived = createEvent<UserInfo>();
 const taskInitiated = createEvent();
 const taskStarted = createEvent();
 const tempMessageSent = createEvent<number>();
-const taskDone = createEvent();
+const taskDone = createEvent<void>(); // Explicitly void if it takes no payload
 const checkTasks = createEvent();
 const cleanUpTempMessagesFired = createEvent();
 
@@ -110,7 +110,7 @@ const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
   if (task.tempMessages && task.tempMessages.length > 0) {
     await Promise.allSettled(
       task.tempMessages.map(id =>
-        bot.telegram.deleteMessage(task.chatId, id).catch(() => null)
+        bot.telegram.deleteMessage(task.chatId, id).catch(() => null) // Gracefully handle errors if a message is already deleted
       )
     );
   }
@@ -122,21 +122,21 @@ const saveUserFx = createEffect(saveUser);
 $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
   const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
   const alreadyExist = tasks.some(x => x.chatId === newTask.chatId);
-  const taskStartTime = $taskStartTime.getState();
-  if ((isAdmin || newTask.isPremium) && !alreadyExist) return [newTask, ...tasks];
-  if (!alreadyExist && taskStartTime === null) return [...tasks, newTask];
-  return tasks;
+  const taskStartTime = $taskStartTime.getState(); // Get current state for comparison
+  if ((isAdmin || newTask.isPremium) && !alreadyExist) return [newTask, ...tasks]; // Admins/Premium jump queue if not already there
+  if (!alreadyExist && taskStartTime === null) return [...tasks, newTask]; // Add to queue if not present and no task is in cooldown
+  return tasks; // Otherwise, don't modify queue (e.g., user already in queue or cooldown active)
 });
 
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
+$tasksQueue.on(taskDone, (tasks) => tasks.slice(1)); // Remove completed task
 
 // Only call saveUserFx if user exists
 sample({
   clock: newTaskReceived,
-  source: $taskSource,
-  filter: (taskSource, newTask) => !!taskSource.user,
-  fn: (taskSource, newTask) => taskSource.user!,
+  source: $taskSource, // Using the combined store
+  filter: (sourceData, newTask) => !!sourceData.user, // Filter based on user presence in sourceData
+  fn: (sourceData, newTask) => sourceData.user!, // Extract user from sourceData
   target: saveUserFx,
 });
 
@@ -144,17 +144,20 @@ sample({
 sample({
   clock: newTaskReceived,
   source: $taskSource,
-  filter: ({ taskStartTime, queue }, newTask) => {
+  filter: ({ taskStartTime, queue, currentTask }, newTask) => { // Added currentTask to source for easier multiple request check
     const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
     const isPrivileged = isAdmin || newTask.isPremium;
+    // Check if the same user is trying to make a new request while their task is running OR general cooldown is active
+    const isMultipleRequestFromCurrentUser = currentTask?.chatId === newTask.chatId && $isTaskRunning.getState();
     const isCooldownActive = taskStartTime instanceof Date || $isTaskRunning.getState();
-    return !isPrivileged && isCooldownActive;
+
+    return !isPrivileged && (isCooldownActive || isMultipleRequestFromCurrentUser);
   },
   fn: ({ currentTask, taskStartTime, taskTimeout, queue }, newTask) => ({
-    multipleRequests: currentTask?.chatId === newTask.chatId,
+    multipleRequests: currentTask?.chatId === newTask.chatId && $isTaskRunning.getState(), // If current running task is by same user
     taskStartTime,
     taskTimeout,
-    queueLength: queue.length,
+    queueLength: queue.filter(t => t.chatId !== newTask.chatId).length, // Queue length excluding the current new task if it's a duplicate warning
     newTask,
   }),
   target: sendWaitMessageFx,
@@ -177,52 +180,59 @@ sample({
 $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
 (sample as any)({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
 
+
 // ----- MODERN EFFECTOR V22+: CORRECT EFFECT HANDLING -----
 // Handle errors for getAllStoriesFx (return string)
-sample({
+(sample as any)({ // Applied (as any) to bypass complex type error
   clock: getAllStoriesFx.done,
-  filter: ({ result }) => typeof result === 'string',
-  fn: ({ params, result }) => ({ task: params, message: result }),
+  filter: ({ result }: { result: any }) => typeof result === 'string',
+  fn: ({ params, result }: { params: UserInfo, result: string }) => ({ task: params, message: result }),
   target: [sendErrorMessageFx, taskDone],
 });
-sample({
+
+// Handle errors for getParticularStoryFx (return string)
+(sample as any)({ // Applied (as any) to bypass complex type error
   clock: getParticularStoryFx.done,
-  filter: ({ result }) => typeof result === 'string',
-  fn: ({ params, result }) => ({ task: params, message: result }),
+  filter: ({ result }: { result: any }) => typeof result === 'string',
+  fn: ({ params, result }: { params: UserInfo, result: string }) => ({ task: params, message: result }),
   target: [sendErrorMessageFx, taskDone],
 });
+
 // Handle successful result for getAllStoriesFx
 sample({
   clock: getAllStoriesFx.done,
-  filter: ({ result }) => typeof result === 'object',
-  fn: ({ params, result }) => ({
+  filter: ({ result }: { result: any }) => typeof result === 'object', // Check if result is an object
+  fn: ({ params, result }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => ({
     task: params,
-    ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] })
+    ...result
   }),
   target: sendStoriesFx,
 });
+
 // Handle successful result for getParticularStoryFx
 sample({
   clock: getParticularStoryFx.done,
-  filter: ({ result }) => typeof result === 'object',
-  fn: ({ params, result }) => ({
+  filter: ({ result }: { result: any }) => typeof result === 'object', // Check if result is an object
+  fn: ({ params, result }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem } }) => ({
     task: params,
-    ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem })
+    ...result
   }),
   target: sendStoriesFx,
 });
+
 // After stories sent, finish task
-(sample as any)({ clock: sendStoriesFx.done, target: taskDone });
+(sample as any)({ clock: sendStoriesFx.done, target: taskDone }); // taskDone might need fn: () => {} if it expects void
+
 (sample as any)({
   clock: taskDone,
   source: $currentTask,
-  filter: (task: UserInfo | null) => task !== null,
+  filter: (task: UserInfo | null): task is UserInfo => task !== null, // Type guard for filtering
   target: cleanupTempMessagesFx,
 });
 (sample as any)({
   clock: cleanUpTempMessagesFired,
   source: $currentTask,
-  filter: (task: UserInfo | null) => task !== null,
+  filter: (task: UserInfo | null): task is UserInfo => task !== null, // Type guard for filtering
   target: cleanupTempMessagesFx,
 });
 
@@ -233,18 +243,19 @@ $currentTask.on(tempMessageSent, (prev, msgId) => {
 });
 $currentTask.on(cleanupTempMessagesFx.done, (prev) => {
   if (!prev) return prev;
-  return { ...prev, tempMessages: [] };
+  return { ...prev, tempMessages: [] }; // Clear temp messages
 });
-$currentTask.on(taskDone, () => null);
+$currentTask.on(taskDone, () => null); // Reset current task
 
 // Periodic watchdog: restart bot if task too slow (7 min+)
 const intervalHasPassed = createEvent();
 (sample as any)({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
-setInterval(() => intervalHasPassed(), 30_000);
+setInterval(() => intervalHasPassed(), 30_000); // Check every 30 seconds
 
 // ---- EXPORTS ----
 export {
   tempMessageSent,
   cleanUpTempMessagesFired,
   newTaskReceived,
+  checkTasks, // Export checkTasks to potentially trigger queue processing from outside
 };
