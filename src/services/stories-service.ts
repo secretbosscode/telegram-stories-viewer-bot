@@ -2,7 +2,7 @@ import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
 import { sendStoriesFx } from 'controllers/send-stories';
-import { createEffect, createEvent, createStore, sample, combine, Event } from 'effector';
+import { createEffect, createEvent, createStore, sample, combine, Event, StoreValue } from 'effector'; // Added StoreValue
 import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
 import { and, not } from 'patronum';
@@ -32,16 +32,16 @@ const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
 const newTaskReceived = createEvent<UserInfo>();
-const taskInitiated = createEvent<void>(); // Task data will be sourced from queue
-const taskStarted = createEvent<UserInfo>(); // Carries the task that has started
+const taskInitiated = createEvent<void>(); // Target for this event should expect void or handle its absence
+const taskStarted = createEvent<UserInfo>();
 const tempMessageSent = createEvent<number>();
 const taskDone = createEvent<void>();
-const checkTasks = createEvent();
+const checkTasks = createEvent<void>(); // Typically a trigger event, payload often void
 const cleanUpTempMessagesFired = createEvent();
 
 newTaskReceived.watch(task => console.log('[StoriesService] newTaskReceived:', JSON.stringify(task)));
 taskInitiated.watch(() => console.log('[StoriesService] taskInitiated called.'));
-taskStarted.watch((task) => console.log('[StoriesService] taskStarted called for task:', task?.link, 'Current task should be set.'));
+taskStarted.watch((task) => console.log('[StoriesService] taskStarted called for task:', task?.link));
 $currentTask.updates.watch(task => console.log('[StoriesService] $currentTask updated:', JSON.stringify(task)));
 checkTasks.watch(() => console.log('[StoriesService] checkTasks event called.'));
 $tasksQueue.updates.watch(queue => console.log('[StoriesService] $tasksQueue updated. Length:', queue.length, 'Links:', queue.map(t => t.link)));
@@ -82,6 +82,9 @@ const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   }
 });
 
+// Define a type for the snapshot of $taskSource
+type TaskSourceSnapshot = StoreValue<typeof $taskSource>;
+
 const $taskSource = combine({
   currentTask: $currentTask,
   taskStartTime: $taskStartTime,
@@ -113,7 +116,7 @@ const sendWaitMessageFx = createEffect(async (params: {
       const minutes = Math.floor(remainingMs / 60000);
       const seconds = Math.floor((remainingMs % 60000) / 1000);
       const timeToWait = minutes > 0 ? `${minutes} minute(s) and ${seconds} seconds` : `${seconds} seconds`;
-      // This section (around line 172 in your errors) should be syntactically correct now.
+      // Re-verified syntax for this call (around original error line 172)
       await bot.telegram.sendMessage(
         newTask.chatId,
         `⏳ Please wait ***${timeToWait}*** before sending another link.\n\nYou can get ***unlimited access*** to our bot without waiting.\nRun the ***/premium*** command to upgrade.`,
@@ -168,15 +171,17 @@ $tasksQueue.on(taskDone, (tasks) => {
 sample({
   clock: newTaskReceived,
   source: $taskSource,
-  filter: (sourceData, newTask): sourceData is { user: User } & typeof sourceData => !!sourceData.user,
-  fn: (sourceData: { user: User } & typeof $taskSource.getState(), newTask: UserInfo) => sourceData.user,
+  filter: (source: TaskSourceSnapshot, newTask: UserInfo): source is TaskSourceSnapshot & { user: User } => !!source.user,
+  fn: (source: TaskSourceSnapshot & { user: User }, newTask: UserInfo): User => source.user,
   target: saveUserFx,
 });
 
+// This is the sample with original error line 179
 sample({
   clock: newTaskReceived,
   source: $taskSource,
-  filter: ({ taskStartTime, queue, currentTask }: typeof $taskSource.getState(), newTask: UserInfo) => { // Added type for source
+  filter: (source: TaskSourceSnapshot, newTask: UserInfo): boolean => {
+    const { taskStartTime, currentTask } = source; // Destructure after typing
     const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
     const isPremiumUser = newTask.isPremium === true;
     const isPrivileged = isAdmin || isPremiumUser;
@@ -189,7 +194,8 @@ sample({
     }
     return false;
   },
-  fn: ({ currentTask, taskStartTime, taskTimeout, queue }: typeof $taskSource.getState(), newTask: UserInfo) => {
+  fn: (source: TaskSourceSnapshot, newTask: UserInfo) => {
+    const { taskStartTime, taskTimeout, queue } = source; // Destructure after typing
     const otherUsersInQueue = queue.filter(t => t.chatId !== newTask.chatId && t.link !== newTask.link).length;
     return {
       multipleRequests: false,
@@ -203,15 +209,22 @@ sample({
 });
 
 // ---- TASK PROCESSING INITIATION ----
-// This section (around line 192 in your errors) should be syntactically correct now.
+// This is the sample with original error line 192
+type TaskInitiationSource = {
+  isRunning: boolean;
+  currentSystemCooldownStartTime: Date | null;
+  queue: UserInfo[];
+};
+
 sample({
-  clock: [checkTasks, $tasksQueue.updates.map((_: UserInfo[]) => ({} as void)) ],
+  clock: [checkTasks, $tasksQueue.updates.map((_: UserInfo[]) => undefined as void)], // Map to Event<void>
   source: {
     isRunning: $isTaskRunning,
     currentSystemCooldownStartTime: $taskStartTime,
     queue: $tasksQueue
-  },
-  filter: ({ isRunning, currentSystemCooldownStartTime, queue }: { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[] }) => {
+  } as StoreValue<TaskInitiationSource>, // Explicitly type source if combine isn't used
+  filter: (sourceValues: TaskInitiationSource, _clockPayload: void): boolean => {
+    const { isRunning, currentSystemCooldownStartTime, queue } = sourceValues;
     if (isRunning || queue.length === 0) {
       console.log('[StoriesService] Task Initiation Filter: Bot is running or queue is empty. Skip check.');
       return false;
@@ -231,13 +244,14 @@ sample({
     console.log(`[StoriesService] Task Initiation Filter: Next task for Normal user (${nextTaskInQueue.link}). System cooldown active? ${!canNormalUserStart}. Can start? ${canNormalUserStart}`);
     return canNormalUserStart;
   },
-  target: taskInitiated, // taskInitiated is Event<void>
+  target: taskInitiated, // taskInitiated is Event<void>, filter result (boolean) controls if it fires
 });
+
 
 sample({
   clock: taskInitiated, // Clock payload is void
   source: $tasksQueue,
-  filter: (queue: UserInfo[], _clockPayload: void) => queue.length > 0 && !$isTaskRunning.getState(),
+  filter: (queue: UserInfo[], _clockPayload: void): boolean => queue.length > 0 && !$isTaskRunning.getState(),
   fn: (tasks: UserInfo[], _clockPayload: void): UserInfo => {
     console.log('[StoriesService] taskInitiated effect: Taking first task from queue. Queue head:', tasks[0]?.link);
     return tasks[0];
@@ -248,14 +262,15 @@ sample({
 sample({
   clock: taskInitiated,
   source: $taskTimeout,
-  filter: (timeoutDuration: number, _clock: void) => timeoutDuration > 0,
-  fn: (timeoutDuration: number, _clock: void) => new Date(),
+  filter: (timeoutDuration: number, _clock: void): boolean => timeoutDuration > 0,
+  fn: (timeoutDuration: number, _clock: void): Date => new Date(),
   target: $taskStartTime
 });
 sample({
   clock: taskInitiated,
   source: $taskTimeout,
-  filter: (timeoutDuration: number, _clock: void) => timeoutDuration > 0,
+  filter: (timeoutDuration: number, _clock: void): boolean => timeoutDuration > 0,
+  fn: (timeoutDuration: number, _clock: void): number => timeoutDuration, // Pass timeoutDuration to effect
   target: clearTimeoutWithDelayFx
 });
 
@@ -270,16 +285,16 @@ sample({
     console.log('[StoriesService] System Cooldown Timer (clearTimeoutEvent) finished. Resetting $taskStartTime and calling checkTasks.');
     return null;
   },
-  target: [$taskStartTime, checkTasks]
+  target: [$taskStartTime, checkTasks as Event<null>] // checkTasks is Event<void>, null is assignable to void
 });
 
 // ---- TRIGGER STORY FETCHING BASED ON CURRENT TASK ----
 sample({
-  clock: taskStarted,
-  source: $currentTask,
-  filter: (currentTaskState: UserInfo | null, startedTask: UserInfo): startedTask is UserInfo =>
-    currentTaskState !== null && currentTaskState.id === startedTask.id && startedTask.linkType === 'username',
-  fn: (currentTaskState: UserInfo | null, startedTask: UserInfo): UserInfo => {
+  clock: taskStarted, // Event<UserInfo>
+  // source: $currentTask, // Not strictly needed if taskStarted payload is used
+  filter: (startedTask: UserInfo): startedTask is UserInfo => // Use startedTask directly
+    startedTask.linkType === 'username',
+  fn: (startedTask: UserInfo): UserInfo => {
     console.log('[StoriesService] getAllStoriesFx trigger - fn: Preparing to call getAllStoriesFx for task:', JSON.stringify(startedTask));
     return startedTask;
   },
@@ -287,11 +302,10 @@ sample({
 });
 
 sample({
-  clock: taskStarted,
-  source: $currentTask,
-  filter: (currentTaskState: UserInfo | null, startedTask: UserInfo): startedTask is UserInfo =>
-    currentTaskState !== null && currentTaskState.id === startedTask.id && startedTask.linkType === 'link',
-  fn: (currentTaskState: UserInfo | null, startedTask: UserInfo): UserInfo => {
+  clock: taskStarted, // Event<UserInfo>
+  filter: (startedTask: UserInfo): startedTask is UserInfo =>
+    startedTask.linkType === 'link',
+  fn: (startedTask: UserInfo): UserInfo => {
     console.log('[StoriesService] getParticularStoryFx trigger - fn: Preparing to call getParticularStoryFx for task:', JSON.stringify(startedTask));
     return startedTask;
   },
@@ -299,9 +313,12 @@ sample({
 });
 
 // ----- MODERN EFFECTOR V22+: CORRECT EFFECT HANDLING -----
+type GetAllStoriesDonePayload = { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } | string };
+type GetParticularStoryDonePayload = { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem } | string };
+
 sample({
   clock: getAllStoriesFx.done,
-  filter: ({ result }: { params: UserInfo, result: any }): result is string => typeof result === 'string',
+  filter: (payload: GetAllStoriesDonePayload): payload is { params: UserInfo, result: string } => typeof payload.result === 'string',
   fn: ({ params, result }: { params: UserInfo, result: string }) => {
     console.log('[StoriesService] getAllStoriesFx.done (error path) - fn: Error for task', params.link, 'Message:', result);
     return ({ task: params, message: result });
@@ -312,7 +329,7 @@ getAllStoriesFx.fail.watch(({params, error}: {params: UserInfo, error: Error}) =
 
 sample({
   clock: getParticularStoryFx.done,
-  filter: ({ result }: { params: UserInfo, result: any }): result is string => typeof result === 'string',
+  filter: (payload: GetParticularStoryDonePayload): payload is { params: UserInfo, result: string } => typeof payload.result === 'string',
   fn: ({ params, result }: { params: UserInfo, result: string }) => {
     console.log('[StoriesService] getParticularStoryFx.done (error path) - fn: Error for task', params.link, 'Message:', result);
     return ({ task: params, message: result });
@@ -323,7 +340,7 @@ getParticularStoryFx.fail.watch(({params, error}: {params: UserInfo, error: Erro
 
 sample({
   clock: getAllStoriesFx.done,
-  filter: ({ result }: { params: UserInfo, result: any }): result is object => typeof result === 'object',
+  filter: (payload: GetAllStoriesDonePayload): payload is { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } } => typeof payload.result === 'object',
   fn: ({ params: taskFromGetAll, result: resultFromGetAll }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => {
     console.log('[StoriesService] getAllStoriesFx.done (success path) - fn (SYNC): Processing for task', taskFromGetAll.link);
     const totalStories = (resultFromGetAll.activeStories?.length || 0) + (resultFromGetAll.pinnedStories?.length || 0) + (resultFromGetAll.paginatedStories?.length || 0);
@@ -352,7 +369,7 @@ sample({
 
 sample({
   clock: getParticularStoryFx.done,
-  filter: ({ result }: { params: UserInfo, result: any }): result is object => typeof result === 'object',
+  filter: (payload: GetParticularStoryDonePayload): payload is { params: UserInfo, result: { particularStory?: Api.TypeStoryItem } & object } => typeof payload.result === 'object' && 'particularStory' in payload.result,
   fn: ({ params: taskFromGetParticular, result: resultFromGetParticular }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem } }) => {
     console.log('[StoriesService] getParticularStoryFx.done (success path) - fn: Success for task', taskFromGetParticular.link);
     const paramsForSendStoriesFx = {
@@ -412,7 +429,7 @@ sendStoriesFx.fail.watch((payload: unknown) => {
 
 sample({
     clock: sendStoriesFx.done,
-    fn: (_: any) => console.log('[StoriesService] sendStoriesFx.done sample: Triggering taskDone.'),
+    fn: (_: any): void => console.log('[StoriesService] sendStoriesFx.done sample: Triggering taskDone.'),
     target: taskDone
 });
 
@@ -420,17 +437,24 @@ sample({
   clock: taskDone,
   source: $currentTask,
   filter: (task: UserInfo | null): task is UserInfo => task !== null,
+  fn: (task: UserInfo): UserInfo => task, // Pass the task to the target
   target: cleanupTempMessagesFx,
 });
 sample({
   clock: cleanUpTempMessagesFired,
   source: $currentTask,
   filter: (task: UserInfo | null): task is UserInfo => task !== null,
+  fn: (task: UserInfo): UserInfo => task, // Pass the task to the target
   target: cleanupTempMessagesFx,
 });
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
-  if (!prev) return { tempMessages: [msgId] } as UserInfo; 
+  if (!prev) { // If currentTask is null, create a new minimal UserInfo object
+    console.warn("[StoriesService] $currentTask was null when tempMessageSent was called. This is unexpected if a task is active.");
+    // This case should ideally not happen if tempMessageSent is only called during an active task.
+    // For robustness, create a shell UserInfo, but this indicates a potential logic flaw elsewhere.
+    return { chatId: '', link: '', linkType: 'username', initTime: Date.now(), tempMessages: [msgId] } as UserInfo;
+  }
   return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
 });
 $currentTask.on(cleanupTempMessagesFx.done, (prev) => {
@@ -443,8 +467,8 @@ $currentTask.on(taskDone, () => {
   return null;
 });
 
-const intervalHasPassed = createEvent();
-sample({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
+const intervalHasPassed = createEvent<void>(); // Typically event payloads are defined or void
+sample({ clock: intervalHasPassed, source: $currentTask, filter: (task): task is UserInfo => task !== null, target: checkTaskForRestart });
 setInterval(() => {
     intervalHasPassed();
 }, 30_000);
