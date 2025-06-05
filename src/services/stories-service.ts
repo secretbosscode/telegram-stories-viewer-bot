@@ -66,28 +66,22 @@ const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
 
     if (minsFromStart >= MAX_WAIT_TIME) { // Check if max wait time is reached or exceeded
       const isAdmin = task.chatId === BOT_ADMIN_ID.toString();
-      // Ensure isPremium is checked safely, defaulting to false if undefined
       const isPremiumUser = task.isPremium === true;
 
       if (isAdmin || isPremiumUser) {
         console.warn(`[StoriesService] Admin/Premium task for ${task.link} (User: ${task.chatId}) has been running for ${minsFromStart} minutes. Allowing to continue beyond MAX_WAIT_TIME.`);
-        // Optionally, notify the admin/premium user that their task is taking a long time
         try {
           await bot.telegram.sendMessage(task.chatId, `🔔 Your request for "${task.link}" is taking a while (${minsFromStart} mins) but is still processing. Please be patient.`);
         } catch (e) {
           console.error(`[StoriesService] Failed to send long task notification to admin/premium user ${task.chatId}:`, e);
         }
       } else {
-        // For non-admin/non-premium users, terminate the process
         console.error(`[StoriesService] Task for ${task.link} (User: ${task.chatId}) took too long (${minsFromStart} mins), exiting process.`);
         await bot.telegram.sendMessage(
-          BOT_ADMIN_ID, // Notify main admin
+          BOT_ADMIN_ID, 
           `❌ Task for user ${task.chatId} (link: ${task.link}) took too long (${minsFromStart} mins) and the bot process was terminated.\n\nDetails: ${JSON.stringify(task, null, 2)}`
         );
-        // Consider a more graceful shutdown or task cancellation for non-admins in the future
-        // instead of process.exit(), to keep the bot alive for other users.
-        // For now, keeping the original exit behavior for non-privileged long tasks.
-        process.exit(1); // Exit with a non-zero code indicating an error/timeout
+        process.exit(1); 
       }
     }
   }
@@ -343,7 +337,7 @@ getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesServ
     }
     
     return ({
-      task: task, // Use the 'params' directly as 'task'
+      task: task, 
       ...(result as any) 
     });
   },
@@ -362,8 +356,28 @@ getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesServ
   },
   target: sendStoriesFx,
 });
-sendStoriesFx.done.watch(({params}) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
-sendStoriesFx.fail.watch(({params, error}) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
+
+// MODIFIED .watch calls for sendStoriesFx.done and .fail
+sendStoriesFx.done.watch(payload => {
+  // The payload for .done is { params: /* input to effect */, result: /* output of effect */ }
+  // console.log('[StoriesService] sendStoriesFx.done full payload:', JSON.stringify(payload)); // For deep debugging
+  if (payload && payload.params && payload.params.task && typeof payload.params.task.link === 'string') {
+    console.log('[StoriesService] sendStoriesFx.done for task:', payload.params.task.link);
+  } else {
+    console.error('[StoriesService] sendStoriesFx.done: params.task.link is not accessible. Full payload.params:', JSON.stringify(payload?.params));
+  }
+});
+
+sendStoriesFx.fail.watch(payload => {
+  // The payload for .fail is { params: /* input to effect */, error: Error }
+  // console.log('[StoriesService] sendStoriesFx.fail full payload:', JSON.stringify(payload)); // For deep debugging
+  if (payload && payload.params && payload.params.task && typeof payload.params.task.link === 'string') {
+    console.error('[StoriesService] sendStoriesFx.fail for task:', payload.params.task.link, 'Error:', payload.error);
+  } else {
+    console.error('[StoriesService] sendStoriesFx.fail: params.task.link is not accessible. Error:', payload?.error, 'Full payload.params:', JSON.stringify(payload?.params));
+  }
+});
+
 
 (sample as any)({ 
     clock: sendStoriesFx.done, 
