@@ -5,6 +5,7 @@ import { timeout } from 'lib';
 import { tempMessageSent, UserInfo } from 'services/stories-service';
 import { Api } from 'telegram';
 import { FloodWaitError } from 'telegram/errors';
+import { isDevEnv } from 'config/env-config'; // Import isDevEnv
 
 import { notifyAdmin } from './send-message';
 
@@ -19,7 +20,8 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
       .sendMessage(task.chatId, '⏳ Fetching story lists...')
       .then(({ message_id }) => {
         tempMessageSent(message_id);
-        notifyAdmin({ task, status: 'start_metadata_fetch' }); // Updated status
+        // Reverted status to 'start'
+        notifyAdmin({ task, status: 'start' });
       })
       .catch(() => null);
 
@@ -122,8 +124,9 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
         .sendMessage(task.chatId, text)
         .then(({ message_id }) => {
           tempMessageSent(message_id);
+          // Reverted status to 'info'
           notifyAdmin({
-            status: 'info_metadata_complete', // Updated status
+            status: 'info', 
             baseInfo: text,
           });
         })
@@ -186,7 +189,8 @@ export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
       .sendMessage(task.chatId!, text)
       .then(({ message_id }) => {
         tempMessageSent(message_id);
-        notifyAdmin({ task, status: 'start_particular_story' });
+        // Reverted status to 'start'
+        notifyAdmin({ task, status: 'start' }); 
       })
       .catch(() => null);
 
