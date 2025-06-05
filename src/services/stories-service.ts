@@ -40,7 +40,7 @@ const checkTasks = createEvent();
 const cleanUpTempMessagesFired = createEvent();
 
 newTaskReceived.watch(task => console.log('[StoriesService] newTaskReceived:', JSON.stringify(task)));
-taskInitiated.watch(() => console.log('[StoriesService] taskInitiated called.')); // No payload needed here
+taskInitiated.watch(() => console.log('[StoriesService] taskInitiated called.'));
 taskStarted.watch((task) => console.log('[StoriesService] taskStarted called for task:', task?.link, 'Current task should be set.'));
 $currentTask.updates.watch(task => console.log('[StoriesService] $currentTask updated:', JSON.stringify(task)));
 checkTasks.watch(() => console.log('[StoriesService] checkTasks event called.'));
@@ -113,7 +113,7 @@ const sendWaitMessageFx = createEffect(async (params: {
       const minutes = Math.floor(remainingMs / 60000);
       const seconds = Math.floor((remainingMs % 60000) / 1000);
       const timeToWait = minutes > 0 ? `${minutes} minute(s) and ${seconds} seconds` : `${seconds} seconds`;
-      // Re-verified syntax for this call (around original error line 186)
+      // This section (around line 172 in your errors) should be syntactically correct now.
       await bot.telegram.sendMessage(
         newTask.chatId,
         `⏳ Please wait ***${timeToWait}*** before sending another link.\n\nYou can get ***unlimited access*** to our bot without waiting.\nRun the ***/premium*** command to upgrade.`,
@@ -176,7 +176,7 @@ sample({
 sample({
   clock: newTaskReceived,
   source: $taskSource,
-  filter: ({ taskStartTime, queue, currentTask }, newTask: UserInfo) => {
+  filter: ({ taskStartTime, queue, currentTask }: typeof $taskSource.getState(), newTask: UserInfo) => { // Added type for source
     const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
     const isPremiumUser = newTask.isPremium === true;
     const isPrivileged = isAdmin || isPremiumUser;
@@ -203,11 +203,9 @@ sample({
 });
 
 // ---- TASK PROCESSING INITIATION ----
-// This is the sample with error line 208 previously.
-// clock: [checkTasks, $tasksQueue.updates.map(_ => ({} as void) )],
-// Target for taskInitiated is Event<void>, so filter/fn should not pass data to it.
+// This section (around line 192 in your errors) should be syntactically correct now.
 sample({
-  clock: [checkTasks, $tasksQueue.updates.map((_: UserInfo[]) => ({} as void)) ], // Explicitly map payload to void for clarity
+  clock: [checkTasks, $tasksQueue.updates.map((_: UserInfo[]) => ({} as void)) ],
   source: {
     isRunning: $isTaskRunning,
     currentSystemCooldownStartTime: $taskStartTime,
@@ -236,34 +234,27 @@ sample({
   target: taskInitiated, // taskInitiated is Event<void>
 });
 
-// This sample is clocked by taskInitiated (Event<void>)
-// It sources from $tasksQueue and its fn takes the first task to pass to $currentTask and taskStarted
 sample({
   clock: taskInitiated, // Clock payload is void
   source: $tasksQueue,
-  // Filter ensures there's a task and bot isn't already running one (belt-and-suspenders)
   filter: (queue: UserInfo[], _clockPayload: void) => queue.length > 0 && !$isTaskRunning.getState(),
-  fn: (tasks: UserInfo[], _clockPayload: void): UserInfo => { // Explicitly type fn, tasks is UserInfo[]
+  fn: (tasks: UserInfo[], _clockPayload: void): UserInfo => {
     console.log('[StoriesService] taskInitiated effect: Taking first task from queue. Queue head:', tasks[0]?.link);
-    return tasks[0]; // This UserInfo becomes the payload for targets
+    return tasks[0];
   },
-  target: [$currentTask, taskStarted], // taskStarted is Event<UserInfo>
+  target: [$currentTask, taskStarted],
 });
 
-// These samples are clocked by taskInitiated.
-// The clock payload is void. The source provides the necessary data ($taskTimeout).
 sample({
-  clock: taskInitiated, // clock payload is void
+  clock: taskInitiated,
   source: $taskTimeout,
-  // Typed timeoutDuration from source, _clock (void) from clock
   filter: (timeoutDuration: number, _clock: void) => timeoutDuration > 0,
   fn: (timeoutDuration: number, _clock: void) => new Date(),
   target: $taskStartTime
 });
 sample({
-  clock: taskInitiated, // clock payload is void
+  clock: taskInitiated,
   source: $taskTimeout,
-  // Typed timeoutDuration from source, _clock (void) from clock
   filter: (timeoutDuration: number, _clock: void) => timeoutDuration > 0,
   target: clearTimeoutWithDelayFx
 });
@@ -275,7 +266,7 @@ $taskTimeout.on(clearTimeoutEvent, (_, newTimeout: number) => {
 
 sample({
   clock: clearTimeoutEvent,
-  fn: (): null => { // fn takes no arguments, returns null
+  fn: (): null => {
     console.log('[StoriesService] System Cooldown Timer (clearTimeoutEvent) finished. Resetting $taskStartTime and calling checkTasks.');
     return null;
   },
@@ -283,23 +274,22 @@ sample({
 });
 
 // ---- TRIGGER STORY FETCHING BASED ON CURRENT TASK ----
-sample({ // Removed (as any) and added types
-  clock: taskStarted, // taskStarted is Event<UserInfo>
-  source: $currentTask, // This might be redundant if taskStarted payload is used
-  // Filter ensures currentTask matches taskStarted payload, or just use taskStarted payload directly
-  filter: (currentTaskState: UserInfo | null, startedTask: UserInfo): startedTask is UserInfo => 
+sample({
+  clock: taskStarted,
+  source: $currentTask,
+  filter: (currentTaskState: UserInfo | null, startedTask: UserInfo): startedTask is UserInfo =>
     currentTaskState !== null && currentTaskState.id === startedTask.id && startedTask.linkType === 'username',
-  fn: (currentTaskState: UserInfo | null, startedTask: UserInfo): UserInfo => { // Ensure UserInfo is returned
+  fn: (currentTaskState: UserInfo | null, startedTask: UserInfo): UserInfo => {
     console.log('[StoriesService] getAllStoriesFx trigger - fn: Preparing to call getAllStoriesFx for task:', JSON.stringify(startedTask));
     return startedTask;
   },
   target: getAllStoriesFx,
 });
 
-sample({ // Removed (as any) and added types
-  clock: taskStarted, // taskStarted is Event<UserInfo>
+sample({
+  clock: taskStarted,
   source: $currentTask,
-  filter: (currentTaskState: UserInfo | null, startedTask: UserInfo): startedTask is UserInfo => 
+  filter: (currentTaskState: UserInfo | null, startedTask: UserInfo): startedTask is UserInfo =>
     currentTaskState !== null && currentTaskState.id === startedTask.id && startedTask.linkType === 'link',
   fn: (currentTaskState: UserInfo | null, startedTask: UserInfo): UserInfo => {
     console.log('[StoriesService] getParticularStoryFx trigger - fn: Preparing to call getParticularStoryFx for task:', JSON.stringify(startedTask));
@@ -309,7 +299,7 @@ sample({ // Removed (as any) and added types
 });
 
 // ----- MODERN EFFECTOR V22+: CORRECT EFFECT HANDLING -----
-sample({ // Removed (as any)
+sample({
   clock: getAllStoriesFx.done,
   filter: ({ result }: { params: UserInfo, result: any }): result is string => typeof result === 'string',
   fn: ({ params, result }: { params: UserInfo, result: string }) => {
@@ -320,7 +310,7 @@ sample({ // Removed (as any)
 });
 getAllStoriesFx.fail.watch(({params, error}: {params: UserInfo, error: Error}) => console.error('[StoriesService] getAllStoriesFx.fail for task:', params.link, 'Error:', error));
 
-sample({ // Removed (as any)
+sample({
   clock: getParticularStoryFx.done,
   filter: ({ result }: { params: UserInfo, result: any }): result is string => typeof result === 'string',
   fn: ({ params, result }: { params: UserInfo, result: string }) => {
@@ -331,7 +321,7 @@ sample({ // Removed (as any)
 });
 getParticularStoryFx.fail.watch(({params, error}: {params: UserInfo, error: Error}) => console.error('[StoriesService] getParticularStoryFx.fail for task:', params.link, 'Error:', error));
 
-sample({ // Removed (as any)
+sample({
   clock: getAllStoriesFx.done,
   filter: ({ result }: { params: UserInfo, result: any }): result is object => typeof result === 'object',
   fn: ({ params: taskFromGetAll, result: resultFromGetAll }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => {
@@ -360,7 +350,7 @@ sample({ // Removed (as any)
   target: sendStoriesFx,
 });
 
-sample({ // Removed (as any)
+sample({
   clock: getParticularStoryFx.done,
   filter: ({ result }: { params: UserInfo, result: any }): result is object => typeof result === 'object',
   fn: ({ params: taskFromGetParticular, result: resultFromGetParticular }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem } }) => {
@@ -420,19 +410,19 @@ sendStoriesFx.fail.watch((payload: unknown) => {
 });
 
 
-sample({ // Removed (as any)
+sample({
     clock: sendStoriesFx.done,
-    fn: (_: any) => console.log('[StoriesService] sendStoriesFx.done sample: Triggering taskDone.'), // fn doesn't need payload if just logging
+    fn: (_: any) => console.log('[StoriesService] sendStoriesFx.done sample: Triggering taskDone.'),
     target: taskDone
 });
 
-sample({ // Removed (as any)
+sample({
   clock: taskDone,
   source: $currentTask,
   filter: (task: UserInfo | null): task is UserInfo => task !== null,
   target: cleanupTempMessagesFx,
 });
-sample({ // Removed (as any)
+sample({
   clock: cleanUpTempMessagesFired,
   source: $currentTask,
   filter: (task: UserInfo | null): task is UserInfo => task !== null,
@@ -440,7 +430,7 @@ sample({ // Removed (as any)
 });
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
-  if (!prev) return { tempMessages: [msgId] } as UserInfo; // Initialize if prev is null
+  if (!prev) return { tempMessages: [msgId] } as UserInfo; 
   return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
 });
 $currentTask.on(cleanupTempMessagesFx.done, (prev) => {
@@ -454,7 +444,7 @@ $currentTask.on(taskDone, () => {
 });
 
 const intervalHasPassed = createEvent();
-sample({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart }); // Removed (as any)
+sample({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
 setInterval(() => {
     intervalHasPassed();
 }, 30_000);
