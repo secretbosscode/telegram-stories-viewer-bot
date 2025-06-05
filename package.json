@@ -14,7 +14,6 @@
     "deploy": "yarn process:stop && yarn process:start"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.49.10",
     "better-sqlite3": "^11.10.0",
     "body-parser": "^2.2.0",
     "dotenv": "^16.5.0",
