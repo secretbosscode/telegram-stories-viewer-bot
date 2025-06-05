@@ -1,10 +1,16 @@
 import { db } from '../db';
 
-interface UserRow {
+export interface UserRow {
+  telegram_id?: string;
+  username?: string;
   is_premium?: number;
 }
 
-/** Returns true if user is premium, false otherwise */
+/**
+ * Checks if a user is premium by Telegram ID.
+ * @param telegramId Telegram user ID as a string.
+ * @returns true if premium, false otherwise.
+ */
 export const isUserPremium = (telegramId: string): boolean => {
   const row = db
     .prepare('SELECT is_premium FROM users WHERE telegram_id = ?')
@@ -13,7 +19,11 @@ export const isUserPremium = (telegramId: string): boolean => {
   return !!row?.is_premium;
 };
 
-/** Sets user as premium, updates username if provided, creates user if missing */
+/**
+ * Marks a user as premium (creates user if missing).
+ * @param telegramId Telegram user ID.
+ * @param username (optional) Telegram username.
+ */
 export const addPremiumUser = (telegramId: string, username?: string): void => {
   if (username) {
     db.prepare(
@@ -30,7 +40,10 @@ export const addPremiumUser = (telegramId: string, username?: string): void => {
   }
 };
 
-/** Optionally, for downgrade/removal: */
+/**
+ * Removes premium status from a user.
+ * @param telegramId Telegram user ID.
+ */
 export const removePremiumUser = (telegramId: string): void => {
   db.prepare(
     `UPDATE users SET is_premium = 0 WHERE telegram_id = ?`
