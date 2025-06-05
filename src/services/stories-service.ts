@@ -316,22 +316,12 @@ getAllStoriesFx.fail.watch(({params, error}) => console.error('[StoriesService] 
 getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesService] getParticularStoryFx.fail for task:', params.link, 'Error:', error));
 
 // Handle successful result for getAllStoriesFx
-// MODIFIED: fn is now synchronous for testing purposes
 (sample as any)({ 
   clock: getAllStoriesFx.done,
   filter: ({ result }: { result: any }) => typeof result === 'object',
   fn: ({ params: taskFromGetAll, result: resultFromGetAll }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => {
     console.log('[StoriesService] getAllStoriesFx.done (success path) - fn (SYNC): Processing for task', taskFromGetAll.link);
-    
-    // Warning message logic is removed temporarily for this test
-    // const totalStories = (resultFromGetAll.activeStories?.length || 0) + (resultFromGetAll.pinnedStories?.length || 0) + (resultFromGetAll.paginatedStories?.length || 0);
-    // const isAdmin = taskFromGetAll.chatId === BOT_ADMIN_ID.toString();
-    // const isPremiumUser = taskFromGetAll.isPremium === true;
-    // if (totalStories > LARGE_ITEM_THRESHOLD && (isAdmin || isPremiumUser)) {
-    //   // Synchronous logging instead of async message send
-    //   console.log(`[StoriesService] Task for ${taskFromGetAll.link} has ${totalStories} items. (This would be where the warning message was sent).`);
-    // }
-    
+        
     const paramsForSendStoriesFx = {
       task: taskFromGetAll, 
       activeStories: resultFromGetAll.activeStories || [],
@@ -363,26 +353,48 @@ getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesServ
   target: sendStoriesFx,
 });
 
-sendStoriesFx.done.watch(payload => {
+// MODIFIED .watch calls to be more robust to potential void payload (typescript workaround)
+sendStoriesFx.done.watch((payload: unknown) => { // Changed type to unknown for initial check
   console.log('[StoriesService] sendStoriesFx.done raw payload:', payload); 
-  if (payload && payload.params && payload.params.task && typeof payload.params.task.link === 'string') {
-    console.log('[StoriesService] sendStoriesFx.done for task:', payload.params.task.link, "Result:", JSON.stringify(payload.result));
+  // Type guard to check if payload is an object with the expected structure
+  if (payload && typeof payload === 'object' && 
+      'params' in payload && (payload as any).params && 
+      typeof (payload as any).params === 'object' && (payload as any).params.task && 
+      typeof (payload as any).params.task.link === 'string') {
+    const typedPayload = payload as { params: { task: UserInfo }, result: any };
+    console.log('[StoriesService] sendStoriesFx.done for task:', typedPayload.params.task.link, "Result:", JSON.stringify(typedPayload.result));
   } else {
-    console.error('[StoriesService] sendStoriesFx.done: params.task.link is not accessible. Full payload.params:', JSON.stringify(payload?.params), "Result:", JSON.stringify(payload?.result));
-    if (payload && payload.result && (payload.result as any).task && typeof (payload.result as any).task.link === 'string') {
-        console.warn('[StoriesService] sendStoriesFx.done: Task info found in payload.result.task.link:', (payload.result as any).task.link);
+    const paramsString = (payload && typeof payload === 'object' && 'params' in payload) ? JSON.stringify((payload as any).params) : 'N/A or payload not an object';
+    const resultString = (payload && typeof payload === 'object' && 'result' in payload) ? JSON.stringify((payload as any).result) : 'N/A or payload not an object';
+    console.error('[StoriesService] sendStoriesFx.done: params.task.link is not accessible or payload is void/unexpected. Full payload.params:', paramsString, "Result:", resultString);
+    
+    if (payload && typeof payload === 'object' && 'result' in payload && (payload as any).result && 
+        typeof (payload as any).result === 'object' && (payload as any).result.task && 
+        typeof (payload as any).result.task.link === 'string') {
+        console.warn('[StoriesService] sendStoriesFx.done: Task info found in payload.result.task.link:', (payload as any).result.task.link);
     }
   }
 });
 
-sendStoriesFx.fail.watch(payload => {
+sendStoriesFx.fail.watch((payload: unknown) => { // Changed type to unknown for initial check
   console.log('[StoriesService] sendStoriesFx.fail raw payload:', payload); 
-  if (payload && payload.params && payload.params.task && typeof payload.params.task.link === 'string') {
-    console.error('[StoriesService] sendStoriesFx.fail for task:', payload.params.task.link, 'Error:', payload.error);
+  // Type guard
+  if (payload && typeof payload === 'object' && 
+      'params' in payload && (payload as any).params && 
+      typeof (payload as any).params === 'object' && (payload as any).params.task && 
+      typeof (payload as any).params.task.link === 'string' && 'error' in payload) {
+    const typedPayload = payload as { params: { task: UserInfo }, error: any };
+    console.error('[StoriesService] sendStoriesFx.fail for task:', typedPayload.params.task.link, 'Error:', typedPayload.error);
   } else {
-    console.error('[StoriesService] sendStoriesFx.fail: params.task.link is not accessible. Error:', payload?.error, 'Full payload.params:', JSON.stringify(payload?.params));
-     if (payload && payload.error && (payload.error as any).params && (payload.error as any).params.task && typeof (payload.error as any).params.task.link === 'string') {
-        console.warn('[StoriesService] sendStoriesFx.fail: Task info might be in error.params.task.link:', (payload.error as any).params.task.link);
+    const paramsString = (payload && typeof payload === 'object' && 'params' in payload) ? JSON.stringify((payload as any).params) : 'N/A or payload not an object';
+    const errorString = (payload && typeof payload === 'object' && 'error' in payload) ? (payload as any).error : 'N/A or payload not an object';
+    console.error('[StoriesService] sendStoriesFx.fail: params.task.link is not accessible or payload is void/unexpected. Error:', errorString, 'Full payload.params:', paramsString);
+
+     if (payload && typeof payload === 'object' && 'error' in payload && (payload as any).error && 
+         typeof (payload as any).error === 'object' && (payload as any).error.params && 
+         typeof (payload as any).error.params === 'object' && (payload as any).error.params.task && 
+         typeof (payload as any).error.params.task.link === 'string') {
+        console.warn('[StoriesService] sendStoriesFx.fail: Task info might be in error.params.task.link:', (payload as any).error.params.task.link);
     }
   }
 });
