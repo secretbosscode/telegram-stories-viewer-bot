@@ -15,9 +15,21 @@ import { callbackQuery, message } from 'telegraf/filters';
 
 import { db } from './db'; // DO NOT REMOVE - main user db connection
 import { isUserPremium, addPremiumUser, removePremiumUser } from 'services/premium-service';
+import { saveUser } from 'repositories/user-repository'; // <-- Make sure this import is correct!
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
 const RESTART_COMMAND = 'restart';
+
+// --------------------------------
+//    GLOBAL USER LOGGING MIDDLEWARE
+//    DO NOT REMOVE THIS BLOCK!!!
+// --------------------------------
+
+bot.use((ctx, next) => {
+  // Logs every user who interacts with the bot (any command, any text, any callback, etc.)
+  if (ctx.from) saveUser(ctx.from);
+  return next();
+});
 
 // --------------------------------
 //       Middleware and Handlers
@@ -389,3 +401,13 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
+/*
+=====================================================================================
+  NOTE FOR MAINTAINERS:
+  - The global user-tracking middleware at the top is critical: DO NOT REMOVE!
+  - Core database logic (addPremiumUser, removePremiumUser, etc) should not be edited
+    unless you are *certain* you understand the downstream effects.
+  - If you add new commands, update /help as well.
+  - Any changes to user/privilege logic should be coordinated with database structure.
+=====================================================================================
+*/
