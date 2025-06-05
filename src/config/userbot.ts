@@ -5,8 +5,8 @@ import {
   USERBOT_API_HASH,
   USERBOT_API_ID,
   USERBOT_PHONE_NUMBER,
-  USERBOT_PASSWORD,      // <-- Add these to env-config and your deployment ENV
-  USERBOT_PHONE_CODE     // <-- Add these to env-config and your deployment ENV
+  USERBOT_PASSWORD,
+  USERBOT_PHONE_CODE
 } from './env-config';
 
 export class Userbot {
@@ -33,22 +33,22 @@ async function initClient() {
     }
   );
 
-  // Get code and password from ENV
-  const password = USERBOT_PASSWORD || undefined;
-  const phoneCode = USERBOT_PHONE_CODE || undefined;
-
-  // Optional: Print warning if these are missing (will cause login to fail)
-  if (!phoneCode) {
-    console.warn("Warning: USERBOT_PHONE_CODE is not set! You must provide it on first login.");
-  }
-  // For security, don't print password
+  const password = USERBOT_PASSWORD || '';
+  const phoneCode = USERBOT_PHONE_CODE || '';
 
   await client.start({
     phoneNumber: USERBOT_PHONE_NUMBER,
-    password: password ? async () => password : undefined,
-    phoneCode: phoneCode ? async () => phoneCode : undefined,
+    password: async () => {
+      if (!password) throw new Error('USERBOT_PASSWORD is required for this account!');
+      return password;
+    },
+    phoneCode: async (_isCodeViaApp?: boolean) => {
+      if (!phoneCode) throw new Error('USERBOT_PHONE_CODE is required for first login!');
+      return phoneCode;
+    },
     onError: (err) => console.log('error', err),
   });
+
   console.log('You should now be connected.');
   console.log(client.session.save()); // Save the session to avoid logging in again
   await client.sendMessage('me', { message: 'Hi!' });
