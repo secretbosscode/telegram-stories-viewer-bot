@@ -10,6 +10,7 @@ import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
 import { Api } from 'telegram';
 
+// ---- DATA TYPES ----
 export interface UserInfo {
   chatId: string;
   link: string;
@@ -22,6 +23,7 @@ export interface UserInfo {
   isPremium?: boolean;
 }
 
+// ---- STORES ----
 const $currentTask = createStore<UserInfo | null>(null);
 const $tasksQueue = createStore<UserInfo[]>([]);
 const $isTaskRunning = createStore(false);
@@ -29,6 +31,7 @@ const $taskStartTime = createStore<Date | null>(null);
 const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
+// ---- EVENTS ----
 const newTaskReceived = createEvent<UserInfo>();
 const taskInitiated = createEvent();
 const taskStarted = createEvent();
@@ -37,6 +40,7 @@ const taskDone = createEvent();
 const checkTasks = createEvent();
 const cleanUpTempMessagesFired = createEvent();
 
+// ---- UTILS ----
 const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
 const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
   const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
@@ -52,10 +56,12 @@ const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
         BOT_ADMIN_ID,
         "❌ Bot took too long to process a task:\n\n" + JSON.stringify(task, null, 2)
       );
+      process.exit();
     }
   }
 });
 
+// ---- TASK/USER QUEUE ----
 const $taskSource = combine({
   currentTask: $currentTask,
   taskStartTime: $taskStartTime,
@@ -64,6 +70,7 @@ const $taskSource = combine({
   user: $currentTask.map(task => task?.user ?? null),
 });
 
+// ---- WAIT MESSAGE ----
 const sendWaitMessageFx = createEffect(async ({
   multipleRequests,
   taskStartTime,
@@ -98,7 +105,7 @@ const sendWaitMessageFx = createEffect(async ({
   }
 });
 
-// SAFER: Wrap deleteMessage in try/catch and await all (or at least Promise.allSettled)
+// ---- TEMP MESSAGE CLEANUP ----
 const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
   if (task.tempMessages && task.tempMessages.length > 0) {
     await Promise.allSettled(
@@ -111,6 +118,7 @@ const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
 
 const saveUserFx = createEffect(saveUser);
 
+// ---- TASK QUEUE/SESSION HANDLING ----
 $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
   const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
   const alreadyExist = tasks.some(x => x.chatId === newTask.chatId);
@@ -123,7 +131,7 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
-// ADD GUARD: Only call saveUserFx if user exists
+// Only call saveUserFx if user exists
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -132,6 +140,7 @@ sample({
   target: saveUserFx,
 });
 
+// Wait/cooldown logic for normal users
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -151,7 +160,7 @@ sample({
   target: sendWaitMessageFx,
 });
 
-// -- CAST TO ANY TO AVOID TS2353 ERRORS --
+// Task queue advancement
 (sample as any)({
   clock: checkTasks,
   filter: and(not($isTaskRunning), not($taskStartTime), $tasksQueue.map(q => q.length > 0)),
@@ -168,55 +177,41 @@ sample({
 $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
 (sample as any)({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
 
-(sample as any)({
-  clock: taskStarted,
-  source: $currentTask,
-  filter: (task: UserInfo | null) => task?.linkType === 'link',
-  target: getParticularStoryFx,
-});
-(sample as any)({
-  clock: taskStarted,
-  source: $currentTask,
-  filter: (task: UserInfo | null) => task?.linkType === 'username',
-  target: getAllStoriesFx,
-});
-
-// ------ FIXED: Combine params+result directly using .done ----------
-
-// Send error messages
+// ----- MODERN EFFECTOR V22+: CORRECT EFFECT HANDLING -----
+// Handle errors for getAllStoriesFx (return string)
 sample({
   clock: getAllStoriesFx.done,
-  filter: ({ params, result }) => typeof result === 'string' && !!params,
+  filter: ({ result }) => typeof result === 'string',
   fn: ({ params, result }) => ({ task: params, message: result }),
   target: [sendErrorMessageFx, taskDone],
 });
 sample({
   clock: getParticularStoryFx.done,
-  filter: ({ params, result }) => typeof result === 'string' && !!params,
+  filter: ({ result }) => typeof result === 'string',
   fn: ({ params, result }) => ({ task: params, message: result }),
   target: [sendErrorMessageFx, taskDone],
 });
-
-// Send stories
+// Handle successful result for getAllStoriesFx
 sample({
   clock: getAllStoriesFx.done,
-  filter: ({ params, result }) => typeof result === 'object' && !!params,
+  filter: ({ result }) => typeof result === 'object',
   fn: ({ params, result }) => ({
     task: params,
     ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] })
   }),
   target: sendStoriesFx,
 });
+// Handle successful result for getParticularStoryFx
 sample({
   clock: getParticularStoryFx.done,
-  filter: ({ params, result }) => typeof result === 'object' && !!params,
+  filter: ({ result }) => typeof result === 'object',
   fn: ({ params, result }) => ({
     task: params,
     ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem })
   }),
   target: sendStoriesFx,
 });
-
+// After stories sent, finish task
 (sample as any)({ clock: sendStoriesFx.done, target: taskDone });
 (sample as any)({
   clock: taskDone,
@@ -231,7 +226,7 @@ sample({
   target: cleanupTempMessagesFx,
 });
 
-// FIX: Prevent error if no current task (null)
+// Prevent error if no current task (null)
 $currentTask.on(tempMessageSent, (prev, msgId) => {
   if (!prev) return prev;
   return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
@@ -242,10 +237,12 @@ $currentTask.on(cleanupTempMessagesFx.done, (prev) => {
 });
 $currentTask.on(taskDone, () => null);
 
+// Periodic watchdog: restart bot if task too slow (7 min+)
 const intervalHasPassed = createEvent();
 (sample as any)({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
 setInterval(() => intervalHasPassed(), 30_000);
 
+// ---- EXPORTS ----
 export {
   tempMessageSent,
   cleanUpTempMessagesFired,
