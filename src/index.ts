@@ -1,3 +1,8 @@
+// =============================
+//   Ghost Stories Bot Main Entry
+//   DO NOT TOUCH CORE BOT SETUP
+// =============================
+
 import { IContextBot } from 'config/context-interface';
 import {
   BOT_ADMIN_ID,
@@ -8,24 +13,37 @@ import { newTaskReceived } from 'services/stories-service';
 import { session, Telegraf } from 'telegraf';
 import { callbackQuery, message } from 'telegraf/filters';
 
-import { db } from './db';
+import { db } from './db'; // DO NOT REMOVE - main user db connection
 import { isUserPremium, addPremiumUser, removePremiumUser } from 'services/premium-service';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
 const RESTART_COMMAND = 'restart';
 
+// --------------------------------
+//       Middleware and Handlers
+// --------------------------------
+
 bot.use(session());
 
 bot.catch((error) => {
+  // Core global error handler, don't remove
   console.error(error, 'INDEX.TS');
 });
 
+// Disables link previews for all bot replies
 const extraOptions: any = {
   link_preview_options: {
     is_disabled: true,
   },
 };
 
+// =============================
+//         USER COMMANDS
+// =============================
+
+/**
+ * /start - Shows instructions for using the bot.
+ */
 bot.start(async (ctx) => {
   await ctx.reply(
     '🔗 Please send 1 of the next options:\n\n' +
@@ -36,31 +54,67 @@ bot.start(async (ctx) => {
   );
 });
 
-// --- HELP COMMAND ---
+/**
+ * /help - Lists available commands.
+ * Shows admin commands if the user is the admin.
+ * If you add more commands, update this section!
+ */
 bot.command('help', async (ctx) => {
-  let helpText = `<b>🤖 Ghost Stories Bot Help</b>\n\n`;
-  helpText += `<b>General Commands:</b>\n`;
-  helpText += `<code>/start</code> - Show usage instructions\n`;
-  helpText += `<code>/help</code> - Show this help message\n`;
+  let helpText =
+    '🤖 *Ghost Stories Bot Help*\n\n' +
+    'General Commands:\n' +
+    '/start - Show usage instructions\n' +
+    '/help - Show this help message\n';
 
+  // Only show admin commands if user is admin
   if (ctx.from.id === BOT_ADMIN_ID) {
-    helpText += `\n<b>Admin Commands:</b>\n`;
-    helpText += `<code>/setpremium &lt;telegram_id | @username&gt;</code> - Mark user as premium\n`;
-    helpText += `<code>/unsetpremium &lt;telegram_id | @username&gt;</code> - Remove premium status\n`;
-    helpText += `<code>/ispremium &lt;telegram_id | @username&gt;</code> - Check if user is premium\n`;
-    helpText += `<code>/listpremium</code> - List all premium users\n`;
-    helpText += `<code>/users</code> - List all users\n`;
-    helpText += `<code>/restart</code> - (text only) Restart the bot\n`;
+    helpText +=
+      '\n*Admin Commands:*\n' +
+      '/setpremium <telegram_id | @username> - Mark user as premium\n' +
+      '/unsetpremium <telegram_id | @username> - Remove premium status\n' +
+      '/ispremium <telegram_id | @username> - Check if user is premium\n' +
+      '/listpremium - List all premium users\n' +
+      '/users - List all users\n' +
+      '/restart - (text only) Restart the bot\n';
   }
 
-  await ctx.reply(helpText, { parse_mode: 'HTML' });
+  // Use MarkdownV2, escape problematic characters
+  helpText = helpText
+    .replace(/\./g, '\\.')
+    .replace(/\-/g, '\\-')
+    .replace(/\*/g, '\\*')
+    .replace(/\_/g, '\\_')
+    .replace(/\!/g, '\\!')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+    .replace(/\~/g, '\\~')
+    .replace(/\`/g, '\\`')
+    .replace(/\>/g, '\\>')
+    .replace(/\#/g, '\\#')
+    .replace(/\+/g, '\\+')
+    .replace(/\=/g, '\\=')
+    .replace(/\|/g, '\\|')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}')
+    .replace(/\</g, '\\<')
+    .replace(/\>/g, '\\>');
+
+  await ctx.reply(helpText, { parse_mode: 'MarkdownV2' });
 });
+
+// =============================
+//    STORY PROCESSING SECTION
+//   DO NOT TOUCH UNLESS YOU 
+//   NEED TO CHANGE USER INPUT
+// =============================
 
 bot.on(message('text'), async (ctx) => {
   const text = ctx.message.text;
   console.log('Received text:', text, 'from:', ctx.from?.id);
 
-  // username or phone number
+  // [Core functionality] Handle username or phone number search
   if (text.startsWith('@') || text.startsWith('+')) {
     console.log('Processing username/phone:', text);
     await newTaskReceived({
@@ -74,7 +128,7 @@ bot.on(message('text'), async (ctx) => {
     return;
   }
 
-  // particular story link
+  // [Core functionality] Handle story links
   if (text.startsWith('https') || text.startsWith('t.me/')) {
     const paths = text.split('/');
     if (
@@ -95,7 +149,7 @@ bot.on(message('text'), async (ctx) => {
     }
   }
 
-  // restart action
+  // [Core functionality] Handle /restart confirmation
   if (ctx.from.id === BOT_ADMIN_ID && ctx.message.text === RESTART_COMMAND) {
     await ctx.reply('Are you sure?', {
       reply_markup: {
@@ -105,13 +159,18 @@ bot.on(message('text'), async (ctx) => {
     return;
   }
 
+  // [Default] For all other text input not matching above
   await ctx.reply(
     '🚫 Please send a valid link to user (username or phone number)'
   );
 });
 
+// =============================
+//     CALLBACK HANDLERS
+// =============================
+
 bot.on(callbackQuery('data'), async (ctx) => {
-  // handle pinned stories pagination
+  // [Pagination handler for stories]
   if (ctx.callbackQuery.data.includes('&')) {
     const [username, nextStoriesIds] = ctx.callbackQuery.data.split('&');
     console.log('Processing callback for pagination:', username, nextStoriesIds);
@@ -127,7 +186,7 @@ bot.on(callbackQuery('data'), async (ctx) => {
     });
   }
 
-  // restart action
+  // [Admin only] Confirmed restart
   if (
     ctx.callbackQuery.data === RESTART_COMMAND &&
     ctx?.from?.id === BOT_ADMIN_ID
@@ -137,9 +196,16 @@ bot.on(callbackQuery('data'), async (ctx) => {
   }
 });
 
-// ----------- ADMIN COMMANDS -----------
+// =============================
+//         ADMIN COMMANDS
+//     DO NOT TOUCH CORE DB LOGIC
+// =============================
 
-// /setpremium <telegram_id | @username>
+/**
+ * /setpremium <telegram_id | @username>
+ * Admin: Sets user as premium in the database.
+ * Only callable by BOT_ADMIN_ID.
+ */
 bot.command('setpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -175,7 +241,10 @@ bot.command('setpremium', async (ctx) => {
   await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium!`);
 });
 
-// /unsetpremium <telegram_id | @username>
+/**
+ * /unsetpremium <telegram_id | @username>
+ * Admin: Removes premium status from a user.
+ */
 bot.command('unsetpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -211,7 +280,10 @@ bot.command('unsetpremium', async (ctx) => {
   await ctx.reply(`✅ User ${username ? '@'+username : telegramId} is no longer premium.`);
 });
 
-// /ispremium <telegram_id | @username>
+/**
+ * /ispremium <telegram_id | @username>
+ * Admin: Checks if a user is marked as premium.
+ */
 bot.command('ispremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -251,7 +323,10 @@ bot.command('ispremium', async (ctx) => {
   );
 });
 
-// /listpremium
+/**
+ * /listpremium
+ * Admin: Lists all premium users in the database.
+ */
 bot.command('listpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -269,7 +344,10 @@ bot.command('listpremium', async (ctx) => {
   await ctx.reply(msg);
 });
 
-// /users - List all users
+/**
+ * /users
+ * Admin: Lists all users in the database.
+ */
 bot.command('users', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -280,23 +358,27 @@ bot.command('users', async (ctx) => {
     await ctx.reply('No users found.');
     return;
   }
-  let msg = `👥 All users (${rows.length}):\n`;
+  let msg = `👥 Users (${rows.length}):\n`;
   rows.forEach((u, i) => {
-    msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id}`;
-    if (u.is_premium) msg += ' [PREMIUM]';
-    msg += '\n';
+    msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${u.is_premium ? 'PREMIUM' : 'FREE'}]\n`;
   });
   await ctx.reply(msg);
 });
 
-// ----------- END ADMIN COMMANDS -----------
+// =============================
+//     BOT LAUNCH/SHUTDOWN
+// =============================
 
 bot.launch({ dropPendingUpdates: true }).then(() => {
   console.log('Telegram bot started.');
 });
 initUserbot();
 
-// Enable graceful stop
+// =============================
+//     PROCESS SIGNAL HANDLING
+//   DO NOT REMOVE THESE BLOCKS
+// =============================
+
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
@@ -306,3 +388,4 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
+
