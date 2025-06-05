@@ -181,42 +181,42 @@ $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
   target: getAllStoriesFx,
 });
 
-// Handle story fetch results (errors)
-(sample as any)({
-  clock: getAllStoriesFx.doneData,
-  source: $currentTask,
-  filter: (task: UserInfo | null, result: any) => typeof result === 'string' && !!task,
-  fn: (task: UserInfo, result: string) => ({ task, message: result }),
+// ------ FIXED: Combine params+result directly using .done ----------
+
+// Send error messages
+sample({
+  clock: getAllStoriesFx.done,
+  filter: ({ params, result }) => typeof result === 'string' && !!params,
+  fn: ({ params, result }) => ({ task: params, message: result }),
   target: [sendErrorMessageFx, taskDone],
 });
-(sample as any)({
-  clock: getParticularStoryFx.doneData,
-  source: $currentTask,
-  filter: (task: UserInfo | null, result: any) => typeof result === 'string' && !!task,
-  fn: (task: UserInfo, result: string) => ({ task, message: result }),
+sample({
+  clock: getParticularStoryFx.done,
+  filter: ({ params, result }) => typeof result === 'string' && !!params,
+  fn: ({ params, result }) => ({ task: params, message: result }),
   target: [sendErrorMessageFx, taskDone],
 });
-// Handle story fetch results (success)
-(sample as any)({
-  clock: getAllStoriesFx.doneData,
-  source: $currentTask,
-  filter: (task: UserInfo | null, result: any) => typeof result === 'object' && !!task,
-  fn: (task: UserInfo, result: any) => ({
-    task,
+
+// Send stories
+sample({
+  clock: getAllStoriesFx.done,
+  filter: ({ params, result }) => typeof result === 'object' && !!params,
+  fn: ({ params, result }) => ({
+    task: params,
     ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] })
   }),
   target: sendStoriesFx,
 });
-(sample as any)({
-  clock: getParticularStoryFx.doneData,
-  source: $currentTask,
-  filter: (task: UserInfo | null, result: any) => typeof result === 'object' && !!task,
-  fn: (task: UserInfo, result: any) => ({
-    task,
-    ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] })
+sample({
+  clock: getParticularStoryFx.done,
+  filter: ({ params, result }) => typeof result === 'object' && !!params,
+  fn: ({ params, result }) => ({
+    task: params,
+    ...(result as { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem })
   }),
   target: sendStoriesFx,
 });
+
 (sample as any)({ clock: sendStoriesFx.done, target: taskDone });
 (sample as any)({
   clock: taskDone,
