@@ -21,6 +21,7 @@
     "effector": "^23.3.0",
     "express": "^5.1.0",
     "patronum": "^2.3.0",
+    "p-limit": "^6.2.0",
     "stripe": "^18.2.1",
     "telegraf": "^4.16.3",
     "telegram": "^2.26.22"
