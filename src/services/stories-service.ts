@@ -17,10 +17,10 @@ export interface UserInfo {
   linkType: 'username' | 'link';
   nextStoriesIds?: number[];
   locale: string;
-  user?: User;
+  user?: User; // Telegraf User object, contains is_premium
   tempMessages?: number[];
   initTime: number;
-  isPremium?: boolean;
+  isPremium?: boolean; // This should be reliably set when UserInfo is created
 }
 
 // ---- STORES ----
@@ -29,14 +29,14 @@ const $tasksQueue = createStore<UserInfo[]>([]);
 const $isTaskRunning = createStore(false);
 const $taskStartTime = createStore<Date | null>(null);
 const clearTimeoutEvent = createEvent<number>();
-const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
+const $taskTimeout = createStore(isDevEnv ? 20000 : 240000); // Cooldown for non-privileged users
 
 // ---- EVENTS ----
 const newTaskReceived = createEvent<UserInfo>();
 const taskInitiated = createEvent();
-const taskStarted = createEvent(); // This event signifies a task is ready to be processed
+const taskStarted = createEvent();
 const tempMessageSent = createEvent<number>();
-const taskDone = createEvent<void>(); // Explicitly void if it takes no payload
+const taskDone = createEvent<void>();
 const checkTasks = createEvent();
 const cleanUpTempMessagesFired = createEvent();
 
@@ -48,27 +48,47 @@ $currentTask.updates.watch(task => console.log('[StoriesService] $currentTask up
 checkTasks.watch(() => console.log('[StoriesService] checkTasks event called.'));
 $tasksQueue.updates.watch(queue => console.log('[StoriesService] $tasksQueue updated. Length:', queue.length, 'Links:', queue.map(t => t.link)));
 
-
 // ---- UTILS ----
-const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
+const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000]; // Used for $taskTimeout values
 const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
   console.log('[StoriesService] clearTimeoutWithDelayFx called with timeout:', currentTimeout);
   const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
   setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
 });
 
-const MAX_WAIT_TIME = 7;
+const MAX_WAIT_TIME = 7; // Overall task timeout in minutes
+const LARGE_ITEM_THRESHOLD = 100; // Threshold for sending "long download" warning
+
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   if (task) {
     const minsFromStart = Math.floor((Date.now() - task.initTime) / 60000);
-    console.log(`[StoriesService] checkTaskForRestart: Task ${task.link}, ${minsFromStart} mins from start.`);
-    if (minsFromStart === MAX_WAIT_TIME) {
-      console.error('[StoriesService] Task took too long, exiting:', JSON.stringify(task));
-      await bot.telegram.sendMessage(
-        BOT_ADMIN_ID,
-        "❌ Bot took too long to process a task:\n\n" + JSON.stringify(task, null, 2)
-      );
-      process.exit();
+    console.log(`[StoriesService] checkTaskForRestart: Task for ${task.link} (User: ${task.chatId}), ${minsFromStart} mins from start.`);
+
+    if (minsFromStart >= MAX_WAIT_TIME) { // Check if max wait time is reached or exceeded
+      const isAdmin = task.chatId === BOT_ADMIN_ID.toString();
+      // Ensure isPremium is checked safely, defaulting to false if undefined
+      const isPremiumUser = task.isPremium === true;
+
+      if (isAdmin || isPremiumUser) {
+        console.warn(`[StoriesService] Admin/Premium task for ${task.link} (User: ${task.chatId}) has been running for ${minsFromStart} minutes. Allowing to continue beyond MAX_WAIT_TIME.`);
+        // Optionally, notify the admin/premium user that their task is taking a long time
+        try {
+          await bot.telegram.sendMessage(task.chatId, `🔔 Your request for "${task.link}" is taking a while (${minsFromStart} mins) but is still processing. Please be patient.`);
+        } catch (e) {
+          console.error(`[StoriesService] Failed to send long task notification to admin/premium user ${task.chatId}:`, e);
+        }
+      } else {
+        // For non-admin/non-premium users, terminate the process
+        console.error(`[StoriesService] Task for ${task.link} (User: ${task.chatId}) took too long (${minsFromStart} mins), exiting process.`);
+        await bot.telegram.sendMessage(
+          BOT_ADMIN_ID, // Notify main admin
+          `❌ Task for user ${task.chatId} (link: ${task.link}) took too long (${minsFromStart} mins) and the bot process was terminated.\n\nDetails: ${JSON.stringify(task, null, 2)}`
+        );
+        // Consider a more graceful shutdown or task cancellation for non-admins in the future
+        // instead of process.exit(), to keep the bot alive for other users.
+        // For now, keeping the original exit behavior for non-privileged long tasks.
+        process.exit(1); // Exit with a non-zero code indicating an error/timeout
+      }
     }
   }
 });
@@ -137,6 +157,7 @@ saveUserFx.fail.watch(({params, error}) => console.error('[StoriesService] saveU
 $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
   console.log('[StoriesService] $tasksQueue.on(newTaskReceived) - current queue length:', tasks.length, 'new task:', newTask.link);
   const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
+  const isPremiumUser = newTask.isPremium === true;
   const alreadyExist = tasks.some(x => x.chatId === newTask.chatId && x.link === newTask.link); 
   const taskStartTime = $taskStartTime.getState(); 
   
@@ -145,7 +166,7 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
     return tasks;
   }
 
-  if ((isAdmin || newTask.isPremium)) {
+  if (isAdmin || isPremiumUser) {
      console.log('[StoriesService] Admin/Premium user, adding to front of queue:', newTask.link);
      return [newTask, ...tasks];
   }
@@ -167,10 +188,7 @@ $tasksQueue.on(taskDone, (tasks) => {
 sample({
   clock: newTaskReceived,
   source: $taskSource, 
-  filter: (sourceData, newTask) => {
-    const shouldRun = !!sourceData.user;
-    return shouldRun;
-  },
+  filter: (sourceData, newTask) => !!sourceData.user,
   fn: (sourceData, newTask) => sourceData.user!, 
   target: saveUserFx,
 });
@@ -181,11 +199,11 @@ sample({
   source: $taskSource,
   filter: ({ taskStartTime, queue, currentTask }, newTask) => { 
     const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
-    const isPrivileged = isAdmin || newTask.isPremium;
+    const isPremiumUser = newTask.isPremium === true;
+    const isPrivileged = isAdmin || isPremiumUser;
     const isMultipleRequestFromCurrentUser = currentTask?.chatId === newTask.chatId && $isTaskRunning.getState();
     const isCooldownActive = taskStartTime instanceof Date || $isTaskRunning.getState();
-    const shouldSendWait = !isPrivileged && (isCooldownActive || isMultipleRequestFromCurrentUser);
-    return shouldSendWait;
+    return !isPrivileged && (isCooldownActive || isMultipleRequestFromCurrentUser);
   },
   fn: ({ currentTask, taskStartTime, taskTimeout, queue }, newTask) => ({
     multipleRequests: currentTask?.chatId === newTask.chatId && $isTaskRunning.getState(), 
@@ -198,10 +216,8 @@ sample({
 });
 
 // ---- TASK PROCESSING INITIATION ----
-
-// If the queue updates (e.g. new task added) AND the bot is idle, trigger checkTasks
 sample({
-  clock: $tasksQueue.updates, // Trigger when the $tasksQueue store changes
+  clock: $tasksQueue.updates, 
   source: { isRunning: $isTaskRunning, startTime: $taskStartTime, queue: $tasksQueue },
   filter: ({ isRunning, startTime, queue }) => {
     const shouldCheck = !isRunning && startTime === null && queue.length > 0;
@@ -211,11 +227,9 @@ sample({
   target: checkTasks,
 });
 
-// This is the main task processing trigger
 (sample as any)({
-  clock: checkTasks, // Triggered by the sample above or by clearTimeoutEvent
+  clock: checkTasks, 
   filter: () => {
-    // Conditions: Not currently running a task, no cooldown active, and queue has items
     const conditionsMet = !$isTaskRunning.getState() && $taskStartTime.getState() === null && $tasksQueue.getState().length > 0;
     console.log('[StoriesService] checkTasks sample to taskInitiated - $isTaskRunning:', $isTaskRunning.getState(), '$taskStartTime:', $taskStartTime.getState(), '$tasksQueue length:', $tasksQueue.getState().length, 'filter result:', conditionsMet);
     return conditionsMet;
@@ -228,25 +242,24 @@ sample({
   source: $tasksQueue,
   fn: (tasks: UserInfo[]) => {
     console.log('[StoriesService] taskInitiated sample - fn: Taking first task from queue. Queue head:', tasks[0]?.link);
-    return tasks[0]; // Get the first task from the queue
+    return tasks[0]; 
   },
-  target: [$currentTask, taskStarted], // Set it as current and mark task as started
+  target: [$currentTask, taskStarted], 
 });
 
-(sample as any)({ clock: taskInitiated, fn: () => new Date(), target: $taskStartTime }); // Set task start time for cooldown
-(sample as any)({ clock: taskInitiated, source: $taskTimeout, target: clearTimeoutWithDelayFx }); // Start cooldown timer
+(sample as any)({ clock: taskInitiated, fn: () => new Date(), target: $taskStartTime }); 
+(sample as any)({ clock: taskInitiated, source: $taskTimeout, target: clearTimeoutWithDelayFx }); 
 
 $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => {
   console.log('[StoriesService] $taskTimeout.on(clearTimeoutEvent) - new timeout value:', newTimeout);
   return newTimeout;
 });
 
-// When cooldown finishes, reset start time and check queue again
 (sample as any)({ 
     clock: clearTimeoutEvent, 
     fn: () => {
         console.log('[StoriesService] clearTimeoutEvent sample: Resetting $taskStartTime and calling checkTasks.');
-        return null; // This null will be passed to $taskStartTime
+        return null; 
     }, 
     target: [$taskStartTime, checkTasks] 
 });
@@ -262,7 +275,7 @@ $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => {
   },
   fn: (task: UserInfo) => {
     console.log('[StoriesService] getAllStoriesFx trigger - fn: Preparing to call getAllStoriesFx for task:', JSON.stringify(task));
-    return task; // Pass the UserInfo object to the effect
+    return task; 
   }, 
   target: getAllStoriesFx,
 });
@@ -277,11 +290,10 @@ $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => {
   },
   fn: (task: UserInfo) => {
     console.log('[StoriesService] getParticularStoryFx trigger - fn: Preparing to call getParticularStoryFx for task:', JSON.stringify(task));
-    return task; // Pass the UserInfo object
+    return task; 
   }, 
   target: getParticularStoryFx,
 });
-
 
 // ----- MODERN EFFECTOR V22+: CORRECT EFFECT HANDLING -----
 (sample as any)({ 
@@ -306,13 +318,32 @@ getAllStoriesFx.fail.watch(({params, error}) => console.error('[StoriesService] 
 });
 getParticularStoryFx.fail.watch(({params, error}) => console.error('[StoriesService] getParticularStoryFx.fail for task:', params.link, 'Error:', error));
 
+// Handle successful result for getAllStoriesFx and send warning for large downloads
 (sample as any)({ 
   clock: getAllStoriesFx.done,
   filter: ({ result }: { result: any }) => typeof result === 'object',
-  fn: ({ params, result }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => {
-    console.log('[StoriesService] getAllStoriesFx.done (success path) - fn: Success for task', params.link);
+  fn: async ({ params: task, result }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => {
+    console.log('[StoriesService] getAllStoriesFx.done (success path) - fn: Success for task', task.link);
+    
+    const totalStories = (result.activeStories?.length || 0) + (result.pinnedStories?.length || 0) + (result.paginatedStories?.length || 0);
+    const isAdmin = task.chatId === BOT_ADMIN_ID.toString();
+    const isPremiumUser = task.isPremium === true;
+
+    if (totalStories > LARGE_ITEM_THRESHOLD && (isAdmin || isPremiumUser)) {
+      try {
+        console.log(`[StoriesService] Task for ${task.link} has ${totalStories} items. Sending long download warning.`);
+        const warningMessage = await bot.telegram.sendMessage(
+          task.chatId,
+          `⏳ You're about to process ~${totalStories} story items for "${task.link}". This might take a while, please be patient! Your request will continue in the background.`
+        );
+        tempMessageSent(warningMessage.message_id); // Track for cleanup
+      } catch (e) {
+        console.error(`[StoriesService] Failed to send long download warning to ${task.chatId}:`, e);
+      }
+    }
+    
     return ({
-      task: params,
+      task: task, // Use the 'params' directly as 'task'
       ...(result as any) 
     });
   },
@@ -382,7 +413,6 @@ export {
 };
 
 // Initial check for tasks when the service starts
-// Use a small timeout to ensure all Effector units are initialized
 setTimeout(() => {
     console.log('[StoriesService] Initial checkTasks() call on startup.');
     checkTasks();
