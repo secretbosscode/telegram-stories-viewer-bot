@@ -2,17 +2,18 @@ import { IContextBot } from 'config/context-interface';
 import {
   BOT_ADMIN_ID,
   BOT_TOKEN,
-  SUPABASE_API_KEY,
-  SUPABASE_PROJECT_URL,
+  // SUPABASE_API_KEY,   // Removed
+  // SUPABASE_PROJECT_URL, // Removed
 } from 'config/env-config';
 import { initUserbot } from 'config/userbot';
 import { newTaskReceived } from 'services/stories-service';
 import { session, Telegraf } from 'telegraf';
 import { callbackQuery, message } from 'telegraf/filters';
 
-import { createClient } from '@supabase/supabase-js';
+// import { createClient } from '@supabase/supabase-js'; // Removed
+import { db } from './db'; // Adjust path as needed
+import { isUserPremium, addPremiumUser } from 'services/premium-service';
 
-export const supabase = createClient(SUPABASE_PROJECT_URL, SUPABASE_API_KEY);
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
 const RESTART_COMMAND = 'restart';
 
@@ -22,7 +23,6 @@ bot.catch((error) => {
   console.error(error, 'INDEX.TS');
 });
 
-// FIXME: set any due to buildtime error
 const extraOptions: any = {
   link_preview_options: {
     is_disabled: true,
@@ -100,7 +100,6 @@ bot.on(callbackQuery('data'), async (ctx) => {
     console.log('Processing callback for pagination:', username, nextStoriesIds);
 
     await newTaskReceived({
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       chatId: String(ctx?.from?.id),
       link: username,
       linkType: 'username',
@@ -114,13 +113,48 @@ bot.on(callbackQuery('data'), async (ctx) => {
   // restart action
   if (
     ctx.callbackQuery.data === RESTART_COMMAND &&
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     ctx?.from?.id === BOT_ADMIN_ID
   ) {
     await ctx.answerCbQuery('⏳ Restarting...');
     process.exit();
   }
 });
+
+/* --- ADMIN-ONLY /setpremium COMMAND --- */
+bot.command('setpremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) {
+    await ctx.reply('🚫 You are not authorized to use this command.');
+    return;
+  }
+
+  const args = ctx.message.text.split(' ').slice(1);
+  if (!args.length) {
+    await ctx.reply('Usage: /setpremium <telegram_id | @username>');
+    return;
+  }
+  let telegramId: string | undefined;
+  let username: string | undefined;
+
+  if (args[0].startsWith('@')) {
+    username = args[0].replace('@', '');
+    // Lookup in DB for telegram_id by username
+    const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username);
+    if (!row) {
+      await ctx.reply('User not found in database.');
+      return;
+    }
+    telegramId = row.telegram_id;
+  } else if (/^\d+$/.test(args[0])) {
+    telegramId = args[0];
+  } else {
+    await ctx.reply('Invalid argument. Provide a Telegram user ID or @username.');
+    return;
+  }
+
+  addPremiumUser(telegramId, username);
+  await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium!`);
+});
+/* --- END ADMIN-ONLY /setpremium COMMAND --- */
 
 bot.launch({ dropPendingUpdates: true }).then(() => {
   console.log('Telegram bot started.');
