@@ -40,18 +40,22 @@ export async function downloadStories(
   const downloadPromises = stories.map((storyItem) =>
     // Each story download is a task managed by p-limit
     limit(async () => {
-      // Enhanced logging to debug skips
       const mediaExists = !!storyItem.media;
-      const isNoforwards = !!storyItem.noforwards; // Coerce to boolean for logging
+      const isNoforwards = !!storyItem.noforwards;
       console.log(`[DownloadStories] Checking story ${storyItem.id} (${storiesType}): Media Exists? ${mediaExists}, Is Noforwards? ${isNoforwards}`);
 
-      if (!mediaExists || isNoforwards) {
-        console.log(`[DownloadStories] Story ${storyItem.id} (${storiesType}): Skipping. Reason: Media Exists=${mediaExists}, Noforwards=${isNoforwards}.`);
-        // Log the media object if it exists but was falsy for some reason, or parts of it
+      // MODIFIED: Now only skips if media does not exist. It will attempt to download even if noforwards is true.
+      if (!mediaExists) {
+        console.log(`[DownloadStories] Story ${storyItem.id} (${storiesType}): Skipping. Reason: Media Exists=${mediaExists}. (Noforwards flag is now ignored for download attempts)`);
         if (storyItem.media) {
-            // console.log(`[DownloadStories] Story ${storyItem.id} Media details:`, JSON.stringify(storyItem.media).substring(0, 200)); // Log a snippet
+            // console.log(`[DownloadStories] Story ${storyItem.id} Media details:`, JSON.stringify(storyItem.media).substring(0, 200));
         }
         return; // Story item remains unmodified
+      }
+      
+      // Log if we are attempting to download a 'noforwards' story
+      if (isNoforwards) {
+        console.log(`[DownloadStories] Note: Attempting to download story ${storyItem.id} which is marked 'noforwards'.`);
       }
 
       try {
@@ -144,13 +148,11 @@ export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
         story.caption = x.caption;
     }
     
-    // Explicitly log and set noforwards
+    // Still map the noforwards flag, but downloadStories will ignore it for skipping
     if ('noforwards' in x && typeof x.noforwards === 'boolean') {
         story.noforwards = x.noforwards;
-        // console.log(`[MapStories] Story ID ${x.id}: noforwards flag is ${story.noforwards}`);
     } else {
-        story.noforwards = false; // Default to false if not present
-        // console.log(`[MapStories] Story ID ${x.id}: noforwards flag not present, defaulting to false.`);
+        story.noforwards = false; 
     }
 
 
