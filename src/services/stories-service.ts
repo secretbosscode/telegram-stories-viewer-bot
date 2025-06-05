@@ -92,7 +92,7 @@ const $taskSource = combine({
 type TaskSourceSnapshot = StoreValue<typeof $taskSource>;
 
 /* =====================================================
-   UPDATED: sendWaitMessageFx always shows position/ETA
+   UPDATED: sendWaitMessageFx shows **true ETA** per user
    ===================================================== */
 const sendWaitMessageFx = createEffect(async (params: {
   multipleRequests: boolean;
@@ -101,17 +101,30 @@ const sendWaitMessageFx = createEffect(async (params: {
   queueLength: number;
   newTask: UserInfo;
 }) => {
-  const { queueLength, taskTimeout, newTask } = params;
+  const { queueLength, taskTimeout, newTask, taskStartTime } = params;
+  const now = Date.now();
 
-  // Position is always (queueLength + 1) for new arrivals
+  // Calculate remaining cooldown (if any)
+  let remainingCooldownMs = 0;
+  if (taskStartTime instanceof Date) {
+    const sinceStart = now - taskStartTime.getTime();
+    const msLeft = taskTimeout - sinceStart;
+    remainingCooldownMs = msLeft > 0 ? msLeft : 0;
+  }
+
+  // If they're first in queue, use remainingCooldown.
+  // If further back, add N full timeouts after current cooldown.
   const position = queueLength + 1;
-
-  // Estimated wait time: users ahead * timeout
-  const estimatedSeconds = queueLength * (taskTimeout / 1000);
+  let estimatedMs = 0;
+  if (queueLength === 0) {
+    estimatedMs = remainingCooldownMs;
+  } else {
+    estimatedMs = remainingCooldownMs + (queueLength * taskTimeout);
+  }
+  const estimatedSeconds = Math.round(estimatedMs / 1000);
   const minutes = Math.floor(estimatedSeconds / 60);
-  const seconds = Math.floor(estimatedSeconds % 60);
+  const seconds = estimatedSeconds % 60;
 
-  // Always show the user's position and ETA
   const message =
     `⏳ You are #${position} in the queue. Estimated wait time: ${minutes > 0 ? `${minutes} min ` : ""}${seconds} sec.\nYou’ll be notified automatically when it’s your turn.`;
 
@@ -148,7 +161,7 @@ sample({
 });
 
 /* ==============================================================
-   UPDATED: Always notify non-privileged users of wait time
+   UPDATED: Always notify non-privileged users of **true ETA**
    ============================================================== */
 sample({
   clock: newTaskReceived,
