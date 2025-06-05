@@ -34,7 +34,7 @@ const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 // ---- EVENTS ----
 const newTaskReceived = createEvent<UserInfo>();
 const taskInitiated = createEvent();
-const taskStarted = createEvent();
+const taskStarted = createEvent(); // This event signifies a task is ready to be processed
 const tempMessageSent = createEvent<number>();
 const taskDone = createEvent<void>(); // Explicitly void if it takes no payload
 const checkTasks = createEvent();
@@ -122,21 +122,21 @@ const saveUserFx = createEffect(saveUser);
 $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
   const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
   const alreadyExist = tasks.some(x => x.chatId === newTask.chatId);
-  const taskStartTime = $taskStartTime.getState(); // Get current state for comparison
-  if ((isAdmin || newTask.isPremium) && !alreadyExist) return [newTask, ...tasks]; // Admins/Premium jump queue if not already there
-  if (!alreadyExist && taskStartTime === null) return [...tasks, newTask]; // Add to queue if not present and no task is in cooldown
-  return tasks; // Otherwise, don't modify queue (e.g., user already in queue or cooldown active)
+  const taskStartTime = $taskStartTime.getState(); 
+  if ((isAdmin || newTask.isPremium) && !alreadyExist) return [newTask, ...tasks]; 
+  if (!alreadyExist && taskStartTime === null) return [...tasks, newTask]; 
+  return tasks; 
 });
 
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.slice(1)); // Remove completed task
+$tasksQueue.on(taskDone, (tasks) => tasks.slice(1)); 
 
 // Only call saveUserFx if user exists
 sample({
   clock: newTaskReceived,
-  source: $taskSource, // Using the combined store
-  filter: (sourceData, newTask) => !!sourceData.user, // Filter based on user presence in sourceData
-  fn: (sourceData, newTask) => sourceData.user!, // Extract user from sourceData
+  source: $taskSource, 
+  filter: (sourceData, newTask) => !!sourceData.user, 
+  fn: (sourceData, newTask) => sourceData.user!, 
   target: saveUserFx,
 });
 
@@ -144,20 +144,19 @@ sample({
 sample({
   clock: newTaskReceived,
   source: $taskSource,
-  filter: ({ taskStartTime, queue, currentTask }, newTask) => { // Added currentTask to source for easier multiple request check
+  filter: ({ taskStartTime, queue, currentTask }, newTask) => { 
     const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
     const isPrivileged = isAdmin || newTask.isPremium;
-    // Check if the same user is trying to make a new request while their task is running OR general cooldown is active
     const isMultipleRequestFromCurrentUser = currentTask?.chatId === newTask.chatId && $isTaskRunning.getState();
     const isCooldownActive = taskStartTime instanceof Date || $isTaskRunning.getState();
 
     return !isPrivileged && (isCooldownActive || isMultipleRequestFromCurrentUser);
   },
   fn: ({ currentTask, taskStartTime, taskTimeout, queue }, newTask) => ({
-    multipleRequests: currentTask?.chatId === newTask.chatId && $isTaskRunning.getState(), // If current running task is by same user
+    multipleRequests: currentTask?.chatId === newTask.chatId && $isTaskRunning.getState(), 
     taskStartTime,
     taskTimeout,
-    queueLength: queue.filter(t => t.chatId !== newTask.chatId).length, // Queue length excluding the current new task if it's a duplicate warning
+    queueLength: queue.filter(t => t.chatId !== newTask.chatId).length, 
     newTask,
   }),
   target: sendWaitMessageFx,
@@ -173,17 +172,38 @@ sample({
   clock: taskInitiated,
   source: $tasksQueue,
   fn: (tasks: UserInfo[]) => tasks[0],
-  target: [$currentTask, taskStarted],
+  target: [$currentTask, taskStarted], // taskStarted is fired here
 });
 (sample as any)({ clock: taskInitiated, fn: () => new Date(), target: $taskStartTime });
 (sample as any)({ clock: taskInitiated, source: $taskTimeout, target: clearTimeoutWithDelayFx });
 $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
 (sample as any)({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
 
+// ---- TRIGGER STORY FETCHING BASED ON CURRENT TASK ----
+// When a task has started, and it's for a username, call getAllStoriesFx
+(sample as any)({
+  clock: taskStarted, // Triggered when a task is dequeued and set as current
+  source: $currentTask, // Get the current task data
+  filter: (task: UserInfo | null): task is UserInfo => // Ensure task is not null and is for a username
+    task !== null && task.linkType === 'username',
+  fn: (task: UserInfo) => task, // Pass the whole UserInfo object as parameters to the effect
+  target: getAllStoriesFx,
+});
+
+// When a task has started, and it's for a specific link, call getParticularStoryFx
+(sample as any)({
+  clock: taskStarted, // Triggered when a task is dequeued and set as current
+  source: $currentTask, // Get the current task data
+  filter: (task: UserInfo | null): task is UserInfo => // Ensure task is not null and is for a link
+    task !== null && task.linkType === 'link',
+  fn: (task: UserInfo) => task, // Pass the whole UserInfo object
+  target: getParticularStoryFx,
+});
+
 
 // ----- MODERN EFFECTOR V22+: CORRECT EFFECT HANDLING -----
 // Handle errors for getAllStoriesFx (return string)
-(sample as any)({ // Applied (as any) to bypass complex type error
+(sample as any)({ 
   clock: getAllStoriesFx.done,
   filter: ({ result }: { result: any }) => typeof result === 'string',
   fn: ({ params, result }: { params: UserInfo, result: string }) => ({ task: params, message: result }),
@@ -191,7 +211,7 @@ $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
 });
 
 // Handle errors for getParticularStoryFx (return string)
-(sample as any)({ // Applied (as any) to bypass complex type error
+(sample as any)({ 
   clock: getParticularStoryFx.done,
   filter: ({ result }: { result: any }) => typeof result === 'string',
   fn: ({ params, result }: { params: UserInfo, result: string }) => ({ task: params, message: result }),
@@ -199,26 +219,22 @@ $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
 });
 
 // Handle successful result for getAllStoriesFx
-(sample as any)({ // Applied (as any) to bypass complex type error
+(sample as any)({ 
   clock: getAllStoriesFx.done,
-  filter: ({ result }: { result: any }) => typeof result === 'object', // Check if result is an object
+  filter: ({ result }: { result: any }) => typeof result === 'object', 
   fn: ({ params, result }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[] } }) => ({
     task: params,
-    // It's generally safe to spread result here because the filter ensures it's an object
-    // with the expected structure for success.
-    ...(result as any) // Using 'as any' for spread if result's type is too broad for TS to be happy.
-                       // Or ensure 'result' in the fn signature is 'any' or a compatible union and cast.
+    ...(result as any) 
   }),
   target: sendStoriesFx,
 });
 
 // Handle successful result for getParticularStoryFx
-(sample as any)({ // Applied (as any) to bypass complex type error
+(sample as any)({ 
   clock: getParticularStoryFx.done,
-  filter: ({ result }: { result: any }) => typeof result === 'object', // Check if result is an object
+  filter: ({ result }: { result: any }) => typeof result === 'object', 
   fn: ({ params, result }: { params: UserInfo, result: { activeStories: Api.TypeStoryItem[], pinnedStories: Api.TypeStoryItem[], paginatedStories?: Api.TypeStoryItem[], particularStory?: Api.TypeStoryItem } }) => ({
     task: params,
-    // Similar to above, spread result.
     ...(result as any)
   }),
   target: sendStoriesFx,
@@ -230,13 +246,13 @@ $taskTimeout.on(clearTimeoutEvent, (_, newTimeout) => newTimeout);
 (sample as any)({
   clock: taskDone,
   source: $currentTask,
-  filter: (task: UserInfo | null): task is UserInfo => task !== null, // Type guard for filtering
+  filter: (task: UserInfo | null): task is UserInfo => task !== null, 
   target: cleanupTempMessagesFx,
 });
 (sample as any)({
   clock: cleanUpTempMessagesFired,
   source: $currentTask,
-  filter: (task: UserInfo | null): task is UserInfo => task !== null, // Type guard for filtering
+  filter: (task: UserInfo | null): task is UserInfo => task !== null, 
   target: cleanupTempMessagesFx,
 });
 
@@ -247,19 +263,19 @@ $currentTask.on(tempMessageSent, (prev, msgId) => {
 });
 $currentTask.on(cleanupTempMessagesFx.done, (prev) => {
   if (!prev) return prev;
-  return { ...prev, tempMessages: [] }; // Clear temp messages
+  return { ...prev, tempMessages: [] }; 
 });
-$currentTask.on(taskDone, () => null); // Reset current task
+$currentTask.on(taskDone, () => null); 
 
 // Periodic watchdog: restart bot if task too slow (7 min+)
 const intervalHasPassed = createEvent();
 (sample as any)({ clock: intervalHasPassed, source: $currentTask, target: checkTaskForRestart });
-setInterval(() => intervalHasPassed(), 30_000); // Check every 30 seconds
+setInterval(() => intervalHasPassed(), 30_000); 
 
 // ---- EXPORTS ----
 export {
   tempMessageSent,
   cleanUpTempMessagesFired,
   newTaskReceived,
-  checkTasks, // Export checkTasks to potentially trigger queue processing from outside
+  checkTasks, 
 };
