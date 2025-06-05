@@ -48,9 +48,6 @@ export async function downloadStories(
       try {
         console.log(`[DownloadStories] Attempting download for story ID ${storyItem.id} (${storiesType})`);
 
-        // Your Promise.race logic for a 30s timeout on pinned videos was interesting.
-        // For a simpler p-limit integration, we'll first try direct download.
-        // If specific timeouts are crucial, they can be wrapped around this downloadMedia call.
         const buffer = await client.downloadMedia(storyItem.media, {
           // progressCallback: (progress) => console.log(`[DownloadStories] Story ${storyItem.id} Progress: ${Math.round(progress * 100)}%`),
         });
@@ -72,8 +69,6 @@ export async function downloadStories(
         // Story item remains without buffer on error.
       }
       // Optional: A small delay after each download attempt (success or fail)
-      // This can help reduce overall request intensity if you're still seeing issues.
-      // Adjust or remove based on testing.
       // await timeout(200); // e.g., 200ms delay
     })
   );
@@ -85,63 +80,57 @@ export async function downloadStories(
   let failedDownloads = 0;
   results.forEach(result => {
     if (result.status === 'fulfilled') {
-      // A fulfilled promise here means p-limit successfully executed the async function.
-      // We need to check if the storyItem actually got a buffer to count it as a "successful download".
-      // This is tricky because we modify by reference.
-      // For simplicity, we'll count fulfilled p-limit tasks as operations that ran.
-      // The check for storyItem.buffer happens later in sendPinnedStories.ts
       successfulDownloads++;
     } else {
-      // status === 'rejected'
       failedDownloads++;
     }
   });
 
   console.log(`[DownloadStories] Finished all download attempts for ${stories.length} ${storiesType} stories. Operations run (fulfilled by p-limit): ${successfulDownloads}, Operations failed in p-limit: ${failedDownloads}.`);
-  // The 'stories' array has its items modified by reference if they successfully received a buffer.
 }
 
-// Your mapStories function remains the same, but ensure it's robust.
 export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
   const mappedStories: MappedStoryItem[] = [];
 
   stories.forEach((x) => {
-    if (!x || !('id' in x)) { // Basic check for a valid item
-        // console.warn('[MapStories] Skipping potentially invalid story item:', x);
+    if (!x || !('id' in x)) {
         return;
     }
 
-    // Ensure media is present and is a valid type before proceeding
     if (!('media' in x) || !x.media || typeof x.media !== 'object') {
-        // console.warn(`[MapStories] Story ID ${x.id}: Media is missing or not an object. Skipping.`);
         return;
     }
 
     const story: Partial<MappedStoryItem> = {};
-
     story.id = x.id;
-    story.media = x.media; // Should be Api.TypeMessageMedia
+    story.media = x.media; // x.media is Api.TypeMessageMedia
 
     // Determine mediaType
-    if ('photo' in x.media && x.media.photo) {
+    // Check if media is MessageMediaPhoto
+    if ('photo' in x.media && x.media.photo && typeof x.media.photo === 'object') {
         story.mediaType = 'photo';
-    } else if ('document' in x.media && x.media.document) {
-        if ((x.media as Api.MessageMediaDocument).document.mimeType?.startsWith('video/')) {
+    // Check if media is MessageMediaDocument
+    } else if ('document' in x.media && x.media.document && typeof x.media.document === 'object') {
+        // Safely check for mimeType only if document is not DocumentEmpty
+        // Api.Document has 'mimeType', Api.DocumentEmpty does not.
+        // A common way to differentiate is to check for a property that only Api.Document has, like 'id' or 'accessHash',
+        // or more directly, check if 'mimeType' exists before accessing it.
+        const doc = x.media.document as Api.Document; // Tentatively cast to Api.Document
+        if (doc.mimeType && typeof doc.mimeType === 'string' && doc.mimeType.startsWith('video/')) {
             story.mediaType = 'video';
         } else {
-            // console.warn(`[MapStories] Story ID ${x.id}: Media is a document but not a video. Skipping.`);
-            return; // Skip if it's a document but not a video
+            // console.warn(`[MapStories] Story ID ${x.id}: Media is a document but not a recognized video. mimeType: ${doc.mimeType}. Skipping.`);
+            return; 
         }
     } else {
-        // console.warn(`[MapStories] Story ID ${x.id}: Unknown media structure. Skipping.`);
-        return; // Skip if media structure is not recognized
+        // console.warn(`[MapStories] Story ID ${x.id}: Unknown or unsupported media structure. Skipping.`);
+        return; 
     }
 
     if ('date' in x && typeof x.date === 'number') {
         story.date = new Date(x.date * 1000);
     } else {
-        // console.warn(`[MapStories] Story ID ${x.id}: Date is missing or invalid. Skipping.`);
-        return; // Skip if date is essential and missing/invalid
+        return; 
     }
 
     if ('caption' in x && typeof x.caption === 'string') {
@@ -151,12 +140,8 @@ export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
         story.noforwards = x.noforwards;
     }
 
-
-    // Only push if essential fields are present
     if (story.id && story.media && story.mediaType && story.date) {
         mappedStories.push(story as MappedStoryItem);
-    } else {
-        // console.warn(`[MapStories] Story item for ID ${x.id} was not fully mappable after checks. Skipping.`);
     }
   });
 
