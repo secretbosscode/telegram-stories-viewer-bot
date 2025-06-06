@@ -1,60 +1,74 @@
-// ===============================
-//   User Repository - DB Logic
-//   Handles: DB insert/check for bot users
-// ===============================
+// In: src/repositories/user-repository.ts
 
 import { notifyAdmin } from 'controllers/send-message';
-import { db } from 'db'; // Do not change this unless your DB path changes
+import { db } from 'db';
 import { User } from 'telegraf/typings/core/types/typegram';
+
+// Define a type for our user model that matches the database table.
+export interface UserModel {
+  telegram_id: string;
+  username?: string;
+  is_premium: 0 | 1; // SQLite stores booleans as 0 or 1
+  created_at: string;
+}
 
 /**
  * saveUser
  * Adds a user to the users table if they do not already exist.
  * Only called when a user sends /start for the first time.
- * @param user - Telegram User object
  */
 export const saveUser = (user: User) => {
-  try {
-    const telegramId = user.id.toString();
-    const username = user.username || null;
+  try {
+    const telegramId = user.id.toString();
+    const username = user.username || null;
 
-    // Check if the user already exists in the database
-    const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(telegramId);
+    const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(telegramId);
 
-    if (!exists) {
-      // Add new user to DB
-      db.prepare(
-        'INSERT INTO users (telegram_id, username) VALUES (?, ?)'
-      ).run(telegramId, username);
+    if (!exists) {
+      db.prepare(
+        'INSERT INTO users (telegram_id, username) VALUES (?, ?)'
+      ).run(telegramId, username);
 
-      // Notify admin for logging/monitoring
-      notifyAdmin({
-        status: 'info',
-        baseInfo: `👤 New user added to DB`,
-      });
-    }
-  } catch (error) {
-    // Error logging and admin notification
-    notifyAdmin({
-      status: 'error',
-      baseInfo: `❌ error occurred adding user to DB:\n${JSON.stringify(error)}`,
-    });
-    console.log('error on saving user:', error);
-  }
+      notifyAdmin({
+        status: 'info',
+        baseInfo: `👤 New user added to DB: @${username} (${telegramId})`,
+      });
+    }
+  } catch (error) {
+    notifyAdmin({
+      status: 'error',
+      baseInfo: `❌ error occurred adding user to DB:\n${JSON.stringify(error)}`,
+    });
+    console.log('error on saving user:', error);
+  }
 };
 
 /**
  * userHasStarted
  * Checks if a user has already been added (has sent /start).
- * @param telegramId - Telegram user ID (as string)
- * @returns boolean - true if exists, false if not
  */
 export const userHasStarted = (telegramId: string): boolean => {
+  try {
+    const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(telegramId);
+    return !!exists;
+  } catch (error) {
+    console.log('error checking user existence:', error);
+    return false;
+  }
+};
+
+// =========================================================================
+// NEW FUNCTION ADDED
+// This is the function that was missing, causing the build error.
+// It retrieves the full user record from the database, including their premium status.
+// =========================================================================
+export const findUserById = (telegram_id: string): UserModel | undefined => {
   try {
-    const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(telegramId);
-    return !!exists;
+    const stmt = db.prepare('SELECT * FROM users WHERE telegram_id = ?');
+    const user = stmt.get(telegram_id) as UserModel | undefined;
+    return user;
   } catch (error) {
-    console.log('error checking user existence:', error);
-    return false; // safest default: treat as not started
+    console.error(`[DB] Error finding user ${telegram_id}:`, error);
+    return undefined;
   }
 };
