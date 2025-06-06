@@ -7,7 +7,10 @@ import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
 import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
-import { Api } from 'telegram';
+
+// =============================================================================
+// TYPES
+// =============================================================================
 
 export interface UserInfo {
   chatId: string;
@@ -22,6 +25,14 @@ export interface UserInfo {
 }
 
 // =============================================================================
+// COOLDOWN CONTROL - DO NOT REMOVE THIS LOGIC
+// =============================================================================
+
+const COOLDOWN_FREE_MS = 12 * 60 * 60 * 1000; // 12 hours for free
+const COOLDOWN_PREMIUM_MS = 2 * 60 * 60 * 1000; // 2 hours for premium
+const lastDownloadTimes: Record<string, number> = {}; // `${chatId}_${link}`
+
+// =============================================================================
 // STORES & EVENTS
 // =============================================================================
 
@@ -34,6 +45,7 @@ const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
 const newTaskReceived = createEvent<UserInfo>();
 const taskReadyToBeQueued = createEvent<UserInfo>();
+
 const taskInitiated = createEvent<void>();
 const taskStarted = createEvent<UserInfo>();
 const tempMessageSent = createEvent<number>();
@@ -119,6 +131,9 @@ const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
 const saveUserFx = createEffect(saveUser);
 
 // --- Task Queue Management ---
+// =========================================================================
+// 1. COOLDOWN+RACE CONDITION FIX (DIFFERENT BY USER TIER!)
+// =========================================================================
 
 const $queueState = combine({
   tasks: $tasksQueue,
@@ -129,9 +144,26 @@ sample({
   clock: newTaskReceived,
   source: $queueState,
   filter: (state, newTask) => {
+    const isAdmin = newTask.chatId === BOT_ADMIN_ID.toString();
+    const isPremium = newTask.isPremium === true;
+    const key = `${newTask.chatId}_${newTask.link}`;
+    const now = Date.now();
+
+    if (!isAdmin) {
+      const cooldown = isPremium ? COOLDOWN_PREMIUM_MS : COOLDOWN_FREE_MS;
+      if (lastDownloadTimes[key] && now - lastDownloadTimes[key] < cooldown) {
+        const hours = isPremium ? 2 : 12;
+        bot.telegram.sendMessage(
+          newTask.chatId,
+          `⏳ As a${isPremium ? " premium" : ""} user, you can only request downloads for "${newTask.link}" once every ${hours} hours. Please wait and try again later.`
+        );
+        console.log(`[StoriesService] Task for ${newTask.link} rejected due to cooldown (${hours}h) for chat ${newTask.chatId}`);
+        return false;
+      }
+    }
+
     const isInQueue = state.tasks.some(t => t.link === newTask.link && t.chatId === newTask.chatId);
     const isRunning = state.current ? (state.current.link === newTask.link && state.current.chatId === newTask.chatId) : false;
-
     if (isInQueue || isRunning) {
       console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
       return false;
@@ -142,6 +174,7 @@ sample({
   target: taskReadyToBeQueued,
 });
 
+// --- Maintain queue: privileged jump to front, others to back ---
 $tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
   const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
   return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
@@ -150,6 +183,7 @@ $tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
 
+// --- Save user when received ---
 sample({
   clock: newTaskReceived,
   filter: (newTask) => !!newTask.user,
@@ -157,6 +191,7 @@ sample({
   target: saveUserFx,
 });
 
+// --- Inform user if waiting ---
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -177,6 +212,7 @@ sample({
   target: sendWaitMessageFx,
 });
 
+// --- Only allow new task if nothing running and queue not empty ---
 type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
 const $taskInitiationDataSource = combine<TaskInitiationSource>({
   isRunning: $isTaskRunning,
@@ -197,6 +233,7 @@ sample({
   target: taskInitiated,
 });
 
+// --- Pop from queue only after previous task really done! ---
 sample({ clock: taskInitiated, source: $tasksQueue, filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(), fn: (q) => q[0], target: [$currentTask, taskStarted]});
 sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: () => new Date(), target: $taskStartTime });
 sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: (t) => t, target: clearTimeoutWithDelayFx });
@@ -206,15 +243,13 @@ sample({ clock: taskStarted, filter: (t) => t.linkType === 'username', target: g
 sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getParticularStoryFx });
 
 // --- Effect Result Handling ---
-
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone],
+  target: [sendErrorMessageFx, taskDone, checkTasks],
 });
-
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
@@ -222,20 +257,18 @@ sample({
   fn: (task, result) => ({ task: task!, ...(result as object) }),
   target: sendStoriesFx,
 });
-
 getAllStoriesFx.fail.watch(({ params, error }) => {
   console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
   taskDone();
+  checkTasks();
 });
-
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone],
+  target: [sendErrorMessageFx, taskDone, checkTasks],
 });
-
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
@@ -243,27 +276,30 @@ sample({
   fn: (task, result) => ({ task: task!, ...(result as object) }),
   target: sendStoriesFx,
 });
-
 getParticularStoryFx.fail.watch(({ params, error }) => {
   console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
   taskDone();
+  checkTasks();
 });
 
 // --- Finalization Logic ---
-
 sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
 sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
-
-// -- KEY CHANGE: Trigger checkTasks asynchronously after taskDone to avoid race --
-taskDone.watch(() => {
-  setTimeout(() => checkTasks(), 0); // Ensures state is up-to-date before next run!
-});
-
-sample({ clock: sendStoriesFx.done, target: taskDone });
-sample({ clock: sendStoriesFx.fail, target: taskDone });
-// (Removed direct [taskDone, checkTasks] sample! This is what fixes the race.)
+sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
+sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
+
+// --- Mark cooldown after real completion ---
+taskDone.watch(() => {
+  const current = $currentTask.getState();
+  if (current && current.chatId !== BOT_ADMIN_ID.toString()) {
+    const key = `${current.chatId}_${current.link}`;
+    const cooldown = current.isPremium === true ? COOLDOWN_PREMIUM_MS : COOLDOWN_FREE_MS;
+    lastDownloadTimes[key] = Date.now();
+  }
+});
+
 $currentTask.on(taskDone, () => null);
 $isTaskRunning.on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
@@ -282,15 +318,14 @@ const intervalHasPassed = createEvent<void>();
 sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: checkTaskForRestart });
 setInterval(() => intervalHasPassed(), 30_000);
 
-// =========================================================================
-//  EXPORTS
-// =========================================================================
+// =============================================================================
+// EXPORTS
+// =============================================================================
 export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
 
 setTimeout(() => checkTasks(), 100);
 
-/* 
- * DO NOT revert to the old pattern of calling checkTasks and taskDone simultaneously.
- * DO NOT put checkTasks inside any .on reducer or before queue updates.
- * Only use setTimeout for async tick after store updates.
- */
+// =============================================================================
+//  !! NEVER REMOVE THE COOLDOWN OR THE 'taskDone' QUEUE LOGIC, OR THE BOT WILL BE ABUSED OR BUGGY
+// =============================================================================
+
