@@ -1,40 +1,38 @@
 import { bot } from 'index';
-import {
-  cleanUpTempMessagesFired,
-  tempMessageSent,
-} from 'services/stories-service';
 import { Api } from 'telegram';
 
 import { downloadStories, mapStories } from './download-stories';
 import { notifyAdmin } from './send-message';
 import { SendStoriesArgs } from './types';
 
+/**
+ * Sends paginated stories to the user (i.e., a batch/page of stories).
+ * @param stories - Array of story items to send.
+ * @param task    - User/task context.
+ */
 export async function sendPaginatedStories({
   stories,
   task,
-}: Omit<SendStoriesArgs, 'stories'> & {
-  stories: Api.TypeStoryItem[];
-}) {
+}: Omit<SendStoriesArgs, 'stories'> & { stories: Api.TypeStoryItem[] }) {
   const mapped = mapStories(stories);
 
   try {
-    bot.telegram
-      .sendMessage(task.chatId, '⏳ Downloading...')
-      .then(({ message_id }) => tempMessageSent(message_id))
-      .catch(() => null);
+    // Notify user that download is starting
+    await bot.telegram.sendMessage(task.chatId, '⏳ Downloading...').catch(() => null);
 
+    // Actually download the stories (media files to buffer)
     await downloadStories(mapped, 'pinned');
 
+    // Filter only those stories which have a buffer (media) and are not too large
     const uploadableStories = mapped.filter(
-      (x) => x.buffer && x.bufferSize! <= 50 // skip too large file
+      (x) => x.buffer && x.bufferSize! <= 50 // skip too large files
     );
 
     if (uploadableStories.length > 0) {
-      bot.telegram
-        .sendMessage(task.chatId, '⏳ Uploading to Telegram...')
-        .then(({ message_id }) => tempMessageSent(message_id))
-        .catch(() => null);
+      // Notify user that upload is starting
+      await bot.telegram.sendMessage(task.chatId, '⏳ Uploading to Telegram...').catch(() => null);
 
+      // Send all media as a group (album)
       await bot.telegram.sendMediaGroup(
         task.chatId,
         uploadableStories.map((x) => ({
@@ -43,8 +41,14 @@ export async function sendPaginatedStories({
           caption: x.caption ?? 'Active stories',
         }))
       );
+    } else {
+      await bot.telegram.sendMessage(
+        task.chatId,
+        '❌ No paginated stories could be sent. They might be too large or none were found.'
+      ).catch(() => null);
     }
 
+    // Notify admin for logging and monitoring
     notifyAdmin({
       status: 'info',
       baseInfo: `📥 Paginated stories uploaded to user!`,
@@ -55,7 +59,10 @@ export async function sendPaginatedStories({
       task,
       errorInfo: { cause: error },
     });
-    console.log('error occured on sending PAGINATED stories:', error);
+    console.error('[sendPaginatedStories] Error occurred while sending paginated stories:', error);
+    try {
+      await bot.telegram.sendMessage(task.chatId, 'An error occurred while sending these stories. The admin has been notified.').catch(() => null);
+    } catch (_) {/* ignore */}
   }
-  cleanUpTempMessagesFired();
+  // No Effector event triggers; queue manager will handle progression!
 }
