@@ -1,26 +1,17 @@
-// =============================
-//   Ghost Stories Bot Main Entry
-//   DO NOT TOUCH CORE BOT SETUP
-// =============================
+// ===============================
+//   Ghost Stories Bot Entry Point
+// ===============================
 
 import { IContextBot } from 'config/context-interface';
-import {
-  BOT_ADMIN_ID,
-  BOT_TOKEN,
-} from 'config/env-config';
+import { BOT_ADMIN_ID, BOT_TOKEN } from 'config/env-config';
 import { initUserbot } from 'config/userbot';
 import { newTaskReceived } from 'services/stories-service';
 import { session, Telegraf } from 'telegraf';
 import { callbackQuery, message } from 'telegraf/filters';
 
-// Adjust path as needed if you move user repo
-import { saveUser, userHasStarted } from './repositories/user-repository';
-import { db } from './db'; // DO NOT REMOVE - main user db connection
+import { db } from './db';
 import { isUserPremium, addPremiumUser, removePremiumUser } from 'services/premium-service';
-
-// =============================
-//     BOT INITIALIZATION
-// =============================
+import { saveUser, userHasStarted } from 'repositories/user-repository'; // <--- Fix path if needed
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
 const RESTART_COMMAND = 'restart';
@@ -44,21 +35,50 @@ const extraOptions: any = {
 };
 
 // =============================
+//   UTILITY: Command checker
+// =============================
+
+// Only allow users who have used /start, except /start, /help, /premium
+bot.use(async (ctx, next) => {
+  const allowedCommands = ['/start', '/help', '/premium'];
+  const isCommand = ctx.message && ctx.message.text && ctx.message.text.startsWith('/');
+  const userId = ctx.from?.id?.toString();
+  if (!userId) return;
+  if (isCommand) {
+    const cmd = ctx.message.text.split(' ')[0].toLowerCase();
+    if (allowedCommands.includes(cmd)) {
+      await next();
+      return;
+    }
+    // Only proceed if user is registered
+    if (userHasStarted(userId)) {
+      await next();
+      return;
+    }
+    // Otherwise, tell them to /start
+    await ctx.reply("👋 Please type /start to begin using the bot.");
+    return;
+  } else {
+    // Not a command: Only proceed if registered
+    if (userHasStarted(userId)) {
+      await next();
+      return;
+    }
+    await ctx.reply("👋 Please type /start to begin using the bot.");
+    return;
+  }
+});
+
+// =============================
 //         USER COMMANDS
 // =============================
 
 /**
- * /start - Shows instructions for using the bot and adds the user to the DB.
- * Only /start adds user to the DB!
+ * /start - Register user and show usage.
  */
 bot.start(async (ctx) => {
-  const telegramId = ctx.from.id.toString();
-
-  // If the user hasn't started before, add to DB
-  if (!userHasStarted(telegramId)) {
-    saveUser(ctx.from);
-    await ctx.reply('👤 New user added to DB');
-  }
+  // Register user if not already done
+  saveUser(ctx.from);
 
   await ctx.reply(
     '🔗 Please send 1 of the next options:\n\n' +
@@ -67,12 +87,11 @@ bot.start(async (ctx) => {
       'or the direct link to story:\nhttps://t.me/durov/s/1',
     extraOptions
   );
+  console.log(`[BOT] User ${ctx.from.id} started the bot.`);
 });
 
 /**
- * /help - Lists available commands.
- * Shows admin commands if the user is the admin.
- * If you add more commands, update this section!
+ * /help - List available commands.
  */
 bot.command('help', async (ctx) => {
   let helpText =
@@ -82,7 +101,6 @@ bot.command('help', async (ctx) => {
     '/help - Show this help message\n' +
     '/premium - Info about premium (coming soon!)\n';
 
-  // Only show admin commands if user is admin
   if (ctx.from.id === BOT_ADMIN_ID) {
     helpText +=
       '\n*Admin Commands:*\n' +
@@ -94,7 +112,7 @@ bot.command('help', async (ctx) => {
       '/restart - (text only) Restart the bot\n';
   }
 
-  // MarkdownV2: escape characters as needed
+  // MarkdownV2: escape
   helpText = helpText
     .replace(/\./g, '\\.')
     .replace(/\-/g, '\\-')
@@ -113,45 +131,35 @@ bot.command('help', async (ctx) => {
     .replace(/\=/g, '\\=')
     .replace(/\|/g, '\\|')
     .replace(/\{/g, '\\{')
-    .replace(/\}/g, '\\}')
-    .replace(/\</g, '\\<');
+    .replace(/\}/g, '\\}');
 
   await ctx.reply(helpText, { parse_mode: 'MarkdownV2' });
+  console.log(`[BOT] /help called by ${ctx.from.id}`);
 });
 
 /**
- * /premium - Placeholder for info about premium.
- * Only returns info; does not affect DB.
+ * /premium - Show info about premium (coming soon).
  */
 bot.command('premium', async (ctx) => {
-  await ctx.reply(
-    '🌟 Premium coming soon!\n' +
-    'Premium users will get unlimited access and more features.\n' +
-    'Stay tuned!'
-  );
+  await ctx.reply('🌟 Premium coming soon!\nPremium users will get unlimited access and more features.\nStay tuned!');
+  console.log(`[BOT] /premium called by ${ctx.from.id}`);
 });
 
 // =============================
 //    STORY PROCESSING SECTION
-//   DO NOT TOUCH UNLESS YOU 
-//   NEED TO CHANGE USER INPUT
 // =============================
 
 bot.on(message('text'), async (ctx) => {
-  const telegramId = ctx.from.id.toString();
+  // Only process for registered users
+  const userId = ctx.from?.id?.toString();
+  if (!userHasStarted(userId)) return;
+
   const text = ctx.message.text;
-
-  // -- Only allow access if user has started via /start --
-  if (!userHasStarted(telegramId)) {
-    await ctx.reply('👋 Please type /start to begin using the bot.');
-    return;
-  }
-
-  // -- Skip fallback handler for commands (they're handled by command-specific handlers) --
-  if (text.startsWith('/')) return;
+  console.log('Received text:', text, 'from:', ctx.from?.id);
 
   // [Core functionality] Handle username or phone number search
   if (text.startsWith('@') || text.startsWith('+')) {
+    console.log('Processing username/phone:', text);
     await newTaskReceived({
       chatId: String(ctx.chat.id),
       link: text,
@@ -171,6 +179,7 @@ bot.on(message('text'), async (ctx) => {
       paths.at(-2) === 's' &&
       paths.at(-3)
     ) {
+      console.log('Processing link:', text);
       await newTaskReceived({
         chatId: String(ctx.chat.id),
         link: text,
@@ -184,7 +193,7 @@ bot.on(message('text'), async (ctx) => {
   }
 
   // [Core functionality] Handle /restart confirmation
-  if (ctx.from.id === BOT_ADMIN_ID && text === RESTART_COMMAND) {
+  if (ctx.from.id === BOT_ADMIN_ID && ctx.message.text === RESTART_COMMAND) {
     await ctx.reply('Are you sure?', {
       reply_markup: {
         inline_keyboard: [[{ text: 'Yes', callback_data: RESTART_COMMAND }]],
@@ -194,9 +203,7 @@ bot.on(message('text'), async (ctx) => {
   }
 
   // [Default] For all other text input not matching above
-  await ctx.reply(
-    '🚫 Invalid command or input.\nType /help for available commands or /start to begin.'
-  );
+  await ctx.reply('🚫 Invalid command or input.\nType /help for available commands or /start to begin.');
 });
 
 // =============================
@@ -205,8 +212,9 @@ bot.on(message('text'), async (ctx) => {
 
 bot.on(callbackQuery('data'), async (ctx) => {
   // [Pagination handler for stories]
-  if ((ctx.callbackQuery as any).data?.includes('&')) {
-    const [username, nextStoriesIds] = (ctx.callbackQuery as any).data.split('&');
+  if (ctx.callbackQuery.data.includes('&')) {
+    const [username, nextStoriesIds] = ctx.callbackQuery.data.split('&');
+    console.log('Processing callback for pagination:', username, nextStoriesIds);
 
     await newTaskReceived({
       chatId: String(ctx?.from?.id),
@@ -221,7 +229,7 @@ bot.on(callbackQuery('data'), async (ctx) => {
 
   // [Admin only] Confirmed restart
   if (
-    (ctx.callbackQuery as any).data === RESTART_COMMAND &&
+    ctx.callbackQuery.data === RESTART_COMMAND &&
     ctx?.from?.id === BOT_ADMIN_ID
   ) {
     await ctx.answerCbQuery('⏳ Restarting...');
@@ -234,11 +242,6 @@ bot.on(callbackQuery('data'), async (ctx) => {
 //     DO NOT TOUCH CORE DB LOGIC
 // =============================
 
-/**
- * /setpremium <telegram_id | @username>
- * Admin: Sets user as premium in the database.
- * Only callable by BOT_ADMIN_ID.
- */
 bot.command('setpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -274,10 +277,6 @@ bot.command('setpremium', async (ctx) => {
   await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium!`);
 });
 
-/**
- * /unsetpremium <telegram_id | @username>
- * Admin: Removes premium status from a user.
- */
 bot.command('unsetpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -313,10 +312,6 @@ bot.command('unsetpremium', async (ctx) => {
   await ctx.reply(`✅ User ${username ? '@'+username : telegramId} is no longer premium.`);
 });
 
-/**
- * /ispremium <telegram_id | @username>
- * Admin: Checks if a user is marked as premium.
- */
 bot.command('ispremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -356,10 +351,6 @@ bot.command('ispremium', async (ctx) => {
   );
 });
 
-/**
- * /listpremium
- * Admin: Lists all premium users in the database.
- */
 bot.command('listpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -377,10 +368,6 @@ bot.command('listpremium', async (ctx) => {
   await ctx.reply(msg);
 });
 
-/**
- * /users
- * Admin: Lists all users in the database.
- */
 bot.command('users', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -407,11 +394,6 @@ bot.launch({ dropPendingUpdates: true }).then(() => {
 });
 initUserbot();
 
-// =============================
-//     PROCESS SIGNAL HANDLING
-//   DO NOT REMOVE THESE BLOCKS
-// =============================
-
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
@@ -421,4 +403,3 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
-
