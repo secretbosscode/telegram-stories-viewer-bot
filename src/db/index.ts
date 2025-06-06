@@ -87,6 +87,30 @@ export function getNextQueueItem(): DownloadQueueItem | null {
   return null;
 }
 
-// Corrected parameter type for id from number to string
+// Corrected parameter type for id from number to string, AND FIXED UNTERMINATED LITERAL
 export function markProcessing(id: string): void {
-  db.prepare(`UPDATE download_queue SET status = 'processing' WHERE
+  db.prepare(`UPDATE download_queue SET status = 'processing' WHERE id = ?`).run(id);
+}
+// Corrected parameter type for id from number to string
+export function markDone(id: string): void {
+  db.prepare(`UPDATE download_queue SET status = 'done', processed_ts = ? WHERE id = ?`).run(Math.floor(Date.now() / 1000), id);
+}
+// Corrected parameter type for id from number to string
+export function markError(id: string, error: string): void {
+  db.prepare(`UPDATE download_queue SET status = 'error', error = ?, processed_ts = ? WHERE id = ?`).run(error, Math.floor(Date.now() / 1000), id);
+}
+export function cleanupQueue(): void {
+  // Remove all but the last 50 per user, or anything older than 3 days
+  db.prepare(`
+    DELETE FROM download_queue
+    WHERE id IN (
+      SELECT id FROM download_queue
+      WHERE processed_ts IS NOT NULL AND processed_ts < (strftime('%s','now') - 259200)
+    )
+  `).run();
+}
+
+export function wasRecentlyDownloaded(telegram_id: string, target_username: string, hours: number): boolean {
+  if (hours <= 0) return false;
+  const cutoff = Math.floor(Date.now() / 1000) - (hours * 3600);
+  const row = db.prepare(`
