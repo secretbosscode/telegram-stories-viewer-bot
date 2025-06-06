@@ -1,41 +1,36 @@
-// src/services/webhook.ts
+import express from 'express';
+import Stripe from 'stripe';
+import bodyParser from 'body-parser';
+// import { addPremiumUser } from './premium-service'; // Assuming this import path is correct
 
-// ... (existing imports)
-import {
-  newTaskReceived,
-  tempMessageSent,
-  cleanUpTempMessagesFired // Import these from stories-service.ts
-} from 'services/stories-service'; // Assumes 'services/stories-service.ts' is correctly mapped by tsconfig
+dotenv.config(); // Load .env variables
 
-// =============================================================================
-// STORES & EVENTS
-// =============================================================================
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2025-05-28.basil', // CHANGED LINE HERE
+});
 
-const $currentTask = createStore<UserInfo | null>(null);
-const $tasksQueue = createStore<UserInfo[]>([]);
-const $isTaskRunning = createStore(false);
-const $taskStartTime = createStore<Date | null>(null);
-const clearTimeoutEvent = createEvent<number>();
-const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
-// REMOVE THESE LINES, as they're imported from stories-service.ts (if defined there)
-// const newTaskReceived = createEvent<UserInfo>();
-// const taskReadyToBeQueued = createEvent<UserInfo>(); // Keep this one, seems specific to webhook
-// const taskInitiated = createEvent<void>(); // Keep this one, seems specific to webhook
-// const taskStarted = createEvent<UserInfo>(); // Keep this one, seems specific to webhook
-// const tempMessageSent = createEvent<number>(); // REMOVE
-const taskDone = createEvent<void>(); // Keep this one, seems specific to webhook
-const checkTasks = createEvent<void>(); // Keep this one here if webhook is its primary owner
-// const cleanUpTempMessagesFired = createEvent(); // REMOVE
+const app = express(); // Initialize Express app
 
-// ... (rest of webhook.ts)
+// Stripe webhook endpoint
+app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) => {
+  const sig = req.headers['stripe-signature'] as string;
+  let event: Stripe.Event;
 
-// =============================================================================
-// EXPORTS
-// =============================================================================
-// REMOVE THIS BLOCK entirely, as it's causing conflicts or is redundant:
-// export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+  } catch (err: any) {
+    console.error('❌ Webhook signature verification failed:', err.message);
+    res.status(400).send(`Webhook Error: ${err.message}`);
+    return;
+  }
 
-// If you need to export checkTasks, do it explicitly here, or if it's imported from stories-service, remove it.
-// Given its usage here, it's likely intended to be internal to webhook or explicitly exported if needed by `index.ts`
-// For now, let's assume it's internal to webhook or handled by the `setTimeout` at the bottom.
+  // Handle successful payment event
+  // ... (rest of your event handling logic)
+  res.json({ received: true }); // Acknowledge receipt of the event
+});
+
+// You'll likely need to listen on a port:
+// const PORT = process.env.PORT || 3000;
+// app.listen(PORT, () => console.log(`Stripe webhook server listening on port ${PORT}`));
