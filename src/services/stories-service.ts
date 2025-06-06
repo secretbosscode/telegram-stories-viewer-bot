@@ -2,14 +2,14 @@
 
 import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
-import { sendErrorMessage } from 'controllers/send-message';
+import { sendErrorMessageFx } from 'controllers/send-message'; // CORRECTED: Now imports sendErrorMessageFx (the Effect)
 import { sendStoriesFx } from 'controllers/send-stories';
 
 // --- Core Imports from Config & Lib ---
-import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
-import { getRandomArrayItem } from 'lib';
-import { bot } from 'index';
-import { saveUser } from 'repositories/user-repository';
+import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config'; // ADDED: isDevEnv, BOT_ADMIN_ID
+import { getRandomArrayItem } from 'lib'; // ADDED: getRandomArrayItem
+import { bot } from 'index'; // ADDED: bot (from main index.ts)
+import { saveUser } from 'repositories/user-repository'; // ADDED: saveUser (from repository)
 
 // --- Database Effects Imports ---
 // These are the Effector effects that interact with your DB utility functions.
@@ -20,42 +20,40 @@ import {
   markProcessingFx,
   markDoneFx,
   markErrorFx,
-  cleanupQueueFx, // If you use this explicitly in orchestrator
+  cleanupQueueFx,
   wasRecentlyDownloadedFx,
   isDuplicatePendingFx
-} from 'db/effects'; // <--- Correct import for DB effects
+} from 'db/effects';
 
-// Import necessary types, including SendStoriesFxParams
-import { UserInfo, SendStoriesFxParams, DownloadQueueItem } from 'types'; // Added DownloadQueueItem
+// Import necessary types from your central types.ts file
+import { UserInfo, SendStoriesFxParams, DownloadQueueItem } from 'types';
 
 // =========================================================================
-// STORES & EVENTS (These are now DEFINED and EXPORTED from THIS file - the orchestrator)
+// STORES & EVENTS (These are DEFINED and EXPORTED from THIS file - the orchestrator)
 // =========================================================================
 
 export const $currentTask = createStore<UserInfo | null>(null);
-// Removed $tasksQueue as the DB will manage the queue state
-// Removed $isTaskRunning as the DB will manage this via task status updates
-// Removed $taskStartTime as DB tasks have timestamps
+// $tasksQueue is removed as the DB manages the queue state
+// $isTaskRunning is managed by taskStarted/taskDone events below
+// $taskStartTime is for timeout tracking of current task
 export const clearTimeoutEvent = createEvent<number>();
 export const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
 // These are the core events. They are DEFINED here.
 export const newTaskReceived = createEvent<UserInfo>();
-// Removed taskReadyToBeQueued - tasks are now directly enqueued in DB
+// taskReadyToBeQueued is effectively replaced by successful enqueueDownloadFx
 export const taskInitiated = createEvent<void>(); // Still used to initiate processing
 export const taskStarted = createEvent<UserInfo>(); // Signal a task has started processing (from DB)
-export const tempMessageSent = createEvent<number>();
+export const tempMessageSent = createEvent<number>(); // To track messages for cleanup
 export const taskDone = createEvent<void>(); // Signal a task is completed/failed
-export const checkTasks = createEvent<void>(); // Trigger to check for next task
-export const cleanUpTempMessagesFired = createEvent();
+export const checkTasks = createEvent<void>(); // Trigger to check for next task in queue
+export const cleanUpTempMessagesFired = createEvent(); // To trigger cleanup of temp messages
 
 // =========================================================================
 // LOGIC AND FLOW
 // =========================================================================
 
-// Removed sample(clock: taskReadyToBeQueued, target: checkTasks)
-// checkTasks will now be triggered directly after enqueue or taskDone
-
+// Timeout logic for tasks
 const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
 export const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
   const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
@@ -86,21 +84,19 @@ export const checkTaskForRestart = createEffect(async (task: UserInfo | null) =>
   }
 });
 
-// Removed $taskSource - DB operations will provide direct source where needed
+// Removed $taskSource as its combines were related to in-memory queue.
+// Data is sourced directly from effects/stores when needed.
 
-export const sendWaitMessageFx = createEffect(async (params: { // This logic might need review if queueLength is no longer from in-memory queue
+export const sendWaitMessageFx = createEffect(async (params: {
   multipleRequests: boolean;
   taskStartTime: Date | null;
   taskTimeout: number;
-  queueLength: number; // This needs to be calculated dynamically from DB now.
+  queueLength: number; // This might need a DB query for actual queue depth
   newTask: UserInfo;
 }) => {
-  // This logic needs to be updated to get queueLength from DB if no longer from in-memory queue.
-  // For now, removing direct access to old $taskSource queue.
-  // A simple approximation for now. Actual queue position needs new DB query.
   let estimatedWaitMs = 0;
-  // If taskStartTime is derived from DB processed_ts, use that.
-  const approximatedQueueLength = 0; // Replace with a DB query if needed
+  // This queueLength is a placeholder. For accurate queue position, you'd query the DB.
+  const approximatedQueueLength = 0;
   if (params.taskStartTime) {
     const elapsed = Date.now() - params.taskStartTime.getTime();
     estimatedWaitMs = Math.max(params.taskTimeout - elapsed, 0) + (approximatedQueueLength * params.taskTimeout);
@@ -121,97 +117,95 @@ export const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
   }
 });
 
-export const saveUserFx = createEffect(saveUser);
+export const saveUserFx = createEffect(saveUser); // saveUser is the utility function imported from repository
 
 // --- Task Queue Management (FULLY INTEGRATED WITH DB) ---
 
-// Removed $queueState and its combine
+// Removed $queueState and its combine ($tasksQueue removed)
 
-// On new task received, perform DB checks and enqueue
-sample({
-  clock: newTaskReceived,
-  filter: async (newTask): Promise<boolean> => { // Async filter
+// New: Effect to perform async validation (cooldown, duplicate) and enqueue to DB
+export const validateAndEnqueueTaskFx = createEffect(async (newTask: UserInfo) => {
     const is_admin = newTask.chatId === BOT_ADMIN_ID.toString();
     const is_premium = !!newTask.isPremium;
-    const cooldownHours = is_premium ? 2 : 12; // Free user default
-    if (is_admin) cooldownHours = 0; // Admin has no cooldown
+    let cooldownHours = is_premium ? 2 : 12;
+    if (is_admin) cooldownHours = 0;
 
     const telegram_id = newTask.chatId;
     const target_username = newTask.link;
 
     // 1. Check cooldown via DB
     if (!is_admin && await wasRecentlyDownloadedFx({ telegram_id, target_username, hours: cooldownHours })) {
-      await bot.telegram.sendMessage(
-        telegram_id,
-        `⏳ As a${is_premium ? " premium" : ""} user, you can only request downloads for "${target_username}" once every ${cooldownHours} hours. Please wait and try again later.`
-      );
-      return false;
+        await bot.telegram.sendMessage(
+            telegram_id,
+            `⏳ As a${is_premium ? " premium" : ""} user, you can only request downloads for "${target_username}" once every ${cooldownHours} hours. Please wait and try again later.`
+        );
+        throw new Error('Cooldown'); // Throw to stop further processing
     }
 
     // 2. Check for duplicate pending/processing tasks via DB
     if (await isDuplicatePendingFx({ telegram_id, target_username })) {
-      await bot.telegram.sendMessage(
-        telegram_id,
-        `⚠️ This download is already queued for you. Please wait for it to finish.`
-      );
-      return false;
+        await bot.telegram.sendMessage(
+            telegram_id,
+            `⚠️ This download is already queued for you. Please wait for it to finish.`
+        );
+        throw new Error('Duplicate'); // Throw to stop further processing
     }
-    return true; // Pass filter if no cooldown/duplicate
-  },
-  fn: async (newTask): Promise<UserInfo> => { // This fn becomes async if the filter is async
-    // User data is saved directly
-    saveUserFx(newTask.user!); // Call the effect to save user (optional)
-    await enqueueDownloadFx({ telegram_id: newTask.chatId, target_username: newTask.link }); // Enqueue to DB
-    await bot.telegram.sendMessage(newTask.chatId, `✅ Download for ${newTask.link} queued!`); // User confirmation
-    return newTask; // Pass the task for further orchestration
-  },
-  target: checkTasks, // After enqueuing, check the queue
+
+    // 3. Enqueue if checks pass
+    await enqueueDownloadFx({ telegram_id: newTask.chatId, target_username: newTask.link });
+    await bot.telegram.sendMessage(newTask.chatId, `✅ Download for ${newTask.link} queued!`);
+
+    // 4. Save user data
+    // saveUserFx (the effect) is now passed the raw user data for processing.
+    if (newTask.user) {
+        saveUserFx(newTask.user);
+    }
+
+    return newTask; // Return the task if successful
 });
 
-// Removed $tasksQueue.on(taskReadyToBeQueued, ...)
-
-// $isTaskRunning is managed by taskStarted/taskDone events, which are derived from DB state changes
-// $tasksQueue.on(taskDone, ...) is removed, as queue is DB-managed
-
-// This sample was using .getState(), which is less safe.
-// The `sendWaitMessageFx` might need to be refined to query queue position from DB if needed.
+// Handle new task received: validate and enqueue (if successful)
 sample({
-  clock: newTaskReceived, // Task just received (after initial checks)
-  source: newTaskReceived, // Source the original task for context
-  filter: (task: UserInfo) => { // Refine filter logic for sendWaitMessageFx
-    // Send wait message only if not privileged and queue is likely busy
-    const isPrivileged = task.chatId === BOT_ADMIN_ID.toString() || task.isPremium === true;
-    if (!isPrivileged) {
-      // This is a placeholder; real queue depth might need DB query
-      return true; // Always show wait message for now, or add DB query for queue depth
+  clock: newTaskReceived,
+  target: validateAndEnqueueTaskFx, // Direct target to the validation effect
+});
+
+// On successful enqueue, trigger checkTasks (which will pick from DB queue)
+sample({
+  clock: validateAndEnqueueTaskFx.doneData,
+  target: checkTasks,
+});
+
+// Handle failures from validation (cooldown/duplicate messages already sent by validateAndEnqueueTaskFx)
+validateAndEnqueueTaskFx.fail.watch(({ params, error }) => {
+    // Log the error if it's not just a handled cooldown/duplicate message
+    if (error.message !== 'Cooldown' && error.message !== 'Duplicate') {
+        console.error(`[StoriesService] Task validation/enqueue failed for ${params.link}:`, error);
+        // Optionally notify admin about unhandled validation error
+        sendErrorMessageFx({ task: params, message: `Failed to queue task: ${error.message}` });
     }
-    return false;
-  },
-  fn: (newTask: UserInfo) => ({
-    multipleRequests: true, // Placeholder for actual check
-    taskStartTime: null, // Placeholder for actual check
-    taskTimeout: isDevEnv ? 20000 : 240000, // From $taskTimeout
-    queueLength: 1, // Placeholder for actual DB queue length
-    newTask: newTask,
-  }),
-  target: sendWaitMessageFx,
 });
 
 
-type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; }; // Queue is now DB-managed
+// Logic to trigger task initiation (picking from DB queue)
+type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; };
 const $taskInitiationDataSource = combine<TaskInitiationSource>({
-  isRunning: $isTaskRunning, // Keep this as it's active state
-  currentSystemCooldownStartTime: createStore<Date | null>(null) // Placeholder, needs DB query for current cooldown/processing
+  isRunning: createStore<boolean>(false), // $isTaskRunning is implicitly derived from this state
+  currentSystemCooldownStartTime: createStore<Date | null>(null) // This needs to be managed if timeouts are still needed.
 });
 
+// `checkTasks` now triggers fetching the next item from the DB
 sample({
   clock: checkTasks,
   source: $taskInitiationDataSource,
-  filter: (sourceValues) => {
-    // If a task is already running, or if there's no task in DB, don't initiate
-    if (sourceValues.isRunning) return false;
-    // Check if there's a next item in DB queue. This requires calling getNextQueueItemFx
-    return true; // Placeholder, the actual check happens with getNextQueueItemFx
+  filter: async (sourceValues): Promise<boolean> => {
+    if (sourceValues.isRunning) return false; // Don't initiate if a task is already running
+    const nextJob = await getNextQueueItemFx(); // Fetch next item from DB
+
+    if (!nextJob) { // No job in DB queue
+      return false;
+    }
+    return true; // A job is found and no task is currently running
   },
   target: taskInitiated,
 });
@@ -222,12 +216,12 @@ sample({
   target: getNextQueueItemFx,
 });
 
-// When `getNextQueueItemFx` succeeds and a job is returned, process it
+// When `getNextQueueItemFx` succeeds and a job is returned, set current task and mark processing in DB
 sample({
   clock: getNextQueueItemFx.doneData,
   filter: (job: DownloadQueueItem | null): job is DownloadQueueItem => job !== null, // Only proceed if job is found
   fn: (job: DownloadQueueItem) => {
-    // Transform DownloadQueueItem from DB into UserInfo for Effector processing
+    // Transform DownloadQueueItem from DB into UserInfo for Effector's internal task tracking
     const userTask: UserInfo = {
       chatId: job.chatId,
       link: job.task.link,
@@ -241,38 +235,39 @@ sample({
       instanceId: job.task.instanceId,
       storyRequestType: job.task.storyRequestType,
     };
-    taskStarted(userTask); // Signal task has started (updates $isTaskRunning)
+    taskStarted(userTask); // Signal task has started (updates $isTaskRunning if $isTaskRunning.on(taskStarted) is defined)
     return job.id; // Return DB job ID to mark as processing
   },
   target: markProcessingFx, // Mark job as processing in DB
 });
 
+
 // Start fetching stories when a task officially starts
-sample({ clock: taskStarted, filter: (t) => t.linkType === 'username', target: getAllStoriesFx });
-sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getParticularStoryFx });
+sample({ clock: taskStarted, filter: (t: UserInfo) => t.linkType === 'username', target: getAllStoriesFx });
+sample({ clock: taskStarted, filter: (t: UserInfo) => t.linkType === 'link', target: getParticularStoryFx });
 
 // Removed $taskTimeout.on and sample(clearTimeoutEvent) as they are part of in-memory timeout mechanism.
-// The timeout for a task should be handled within the fetch effects or an external process monitoring DB.
-// If you still want timeouts, you might need to re-evaluate where clearTimeoutWithDelayFx is used.
+// Timeouts for tasks should ideally be handled within the fetch effects or by monitoring DB status externally.
+// If you still need specific timeouts for the *overall processing*, this logic would need to be re-introduced carefully.
 
 
 // --- Effect Result Handling ---
-// This part will now transform the result of get*StoriesFx into SendStoriesFxParams
+// This part transforms the result of get*StoriesFx into SendStoriesFxParams
 // to be sent to the sendStoriesFx dispatcher.
 
 // Handle error messages from get*StoriesFx (if they return a string)
 sample({
   clock: [getAllStoriesFx.doneData, getParticularStoryFx.doneData],
-  source: $currentTask,
+  source: $currentTask, // Get the task from the current active task store
   filter: (task: UserInfo | null, result): result is string => task !== null && typeof result === 'string',
   fn: (task: UserInfo, message: string) => ({ task: task!, message: message }),
-  target: [sendErrorMessage, taskDone, checkTasks], // Target sendErrorMessage effect, then cleanup
+  target: [sendErrorMessageFx, taskDone, checkTasks], // Target sendErrorMessageFx (the Effect), then cleanup
 });
 
 // Handle successful data from get*StoriesFx (if they return an object/array)
 sample({
   clock: [getAllStoriesFx.doneData, getParticularStoryFx.doneData],
-  source: $currentTask, // Source $currentTask for full context
+  source: $currentTask, // Source the current active task for full context
   filter: (task: UserInfo | null, fetchedDataResult): fetchedDataResult is (object | object[]) =>
     task !== null && typeof fetchedDataResult !== 'string' && fetchedDataResult !== null,
   fn: (task: UserInfo, fetchedDataResult: object | object[]): SendStoriesFxParams => {
@@ -303,13 +298,22 @@ sample({
 });
 
 // --- Finalization Logic ---
+// These watches handle side effects and task state progression after sendStoriesFx completes.
 sendStoriesFx.done.watch(({ params }) => {
   console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link);
-  markDoneFx(params.task.instanceId!); // Mark in DB as done (assuming instanceId is the DB ID)
+  if (params.task.instanceId) { // Check before accessing instanceId
+    markDoneFx(params.task.instanceId); // Mark in DB as done (assuming instanceId is the DB ID)
+  } else {
+    console.warn('[StoriesService] Missing instanceId for task completion:', params.task);
+  }
 });
 sendStoriesFx.fail.watch(({ params, error }) => {
   console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error);
-  markErrorFx(params.task.instanceId!, error?.message || 'Unknown sending error'); // Mark in DB as error
+  if (params.task.instanceId) { // Check before accessing instanceId
+    markErrorFx(params.task.instanceId, error?.message || 'Unknown sending error'); // Mark in DB as error
+  } else {
+    console.warn('[StoriesService] Missing instanceId for task failure:', params.task);
+  }
 });
 
 // Mark task as done and trigger cleanup
@@ -319,7 +323,11 @@ sample({
   filter: (task: UserInfo | null): task is UserInfo => task !== null,
   fn: (task: UserInfo, error: any) => { // error is from the clock
     console.error(`[StoriesService] Fetch effect failed for task ${task.link}:`, error);
-    markErrorFx(task.instanceId!, error?.message || 'Unknown fetch error'); // Mark in DB as error
+    if (task.instanceId) { // Check before accessing instanceId
+        markErrorFx(task.instanceId, error?.message || 'Unknown fetch error'); // Mark in DB as error
+    } else {
+        console.warn('[StoriesService] Missing instanceId for task failure from fetch:', task);
+    }
     return; // Pass nothing to target, as we're just triggering taskDone/checkTasks
   },
   target: [taskDone, checkTasks] // Mark done and check next task
@@ -336,17 +344,17 @@ sample({
 // Update the current task store to null when a task is done
 $currentTask.on(taskDone, () => null);
 
-// Update task running status to false when a task is done
-// Removed $isTaskRunning.on(taskDone, () => false); as it's now inferred from isRunning in combine or managed by getNextQueueItemFx check.
-// If you still want $isTaskRunning, it should be set to true by taskStarted and false by taskDone.
-// $isTaskRunning.on(taskStarted, () => true);
-// $isTaskRunning.on(taskDone, () => false); // This is already in place.
+// Manages $isTaskRunning status. This is crucial as $taskInitiationDataSource relies on it.
+export const $isTaskRunning = createStore<boolean>(false);
+$isTaskRunning.on(taskStarted, () => true);
+$isTaskRunning.on(taskDone, () => false);
 
 // Removed $tasksQueue.on(taskDone, ...) as queue is DB-managed.
+// If $tasksQueue store is no longer used, it should be removed from the top too.
 
 // Handle temporary message IDs sent during processing
 sample({
-  clock: tempMessageSent, // tempMessageSent is the event for new temp message IDs
+  clock: tempMessageSent,
   source: $currentTask,
   filter: (currentTaskState: UserInfo | null, msgId: number): currentTaskState is UserInfo => currentTaskState !== null,
   fn: (currentTaskState: UserInfo, msgId: number): UserInfo => {
