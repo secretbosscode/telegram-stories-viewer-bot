@@ -1,5 +1,5 @@
 # Use the official Node.js runtime as a secure and reliable base
-FROM node:22
+FROM node:22-slim
 
 # =========================================================================
 # STEP 1: Install system dependencies as ROOT
