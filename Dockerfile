@@ -1,36 +1,40 @@
 # =========================================================================
-# Stage 1: The "Builder" - Compile a secure `su-exec` binary
+# Stage 1: The "Builder" - Compile a secure `gosu` binary from source
 # =========================================================================
-# Use the lightweight Alpine image, which has the tools we need
-FROM alpine:latest as builder
+# Use the official Go image based on Debian Bookworm to perfectly match our final image's OS.
+FROM golang:1.24-bookworm as builder
 
-# Install git and the C compiler toolchain (build-base)
-RUN apk add --no-cache git build-base
+# Install git, which is needed to clone the gosu source code.
+RUN apt-get update && apt-get install -y --no-install-recommends git
 
-# Clone the su-exec repository
-RUN git clone https://github.com/ncopa/su-exec.git /su-exec
+# Set the version of gosu we want to build. 1.17 is the latest stable version.
+ENV GOSU_VERSION 1.17
 
-# =========================================================================
-# BUG FIX: Use `make` to compile, then the `install` command to place the binary.
-# The `su-exec` Makefile does not have an `install` rule, so we do it manually.
-# =========================================================================
-RUN cd /su-exec && make && install su-exec /usr/local/bin/
+# Clone the gosu repository, check out the specific version tag...
+RUN git clone https://github.com/tianon/gosu.git /gosu
+RUN cd /gosu && git checkout "$GOSU_VERSION"
+
+# ...and build it as a static binary, which is self-contained.
+# CGO_ENABLED=0 ensures no C libraries are linked.
+# -ldflags "-s -w" strips debug symbols, making the binary smaller.
+RUN cd /gosu && CGO_ENABLED=0 go build -v -ldflags="-s -w" -o /usr/local/bin/gosu .
+
 
 # =========================================================================
 # Stage 2: The "Final Image" - Our Node.js Application
 # =========================================================================
-# Use the official Node.js LTS slim runtime as our secure and reliable base
+# Use the official Node.js LTS slim runtime as our secure and reliable base.
 FROM node:22-slim
 
-# Copy the su-exec binary we just built and installed in the previous stage.
-COPY --from=builder /usr/local/bin/su-exec /usr/local/bin/su-exec
+# Copy the freshly compiled gosu binary from our builder stage.
+COPY --from=builder /usr/local/bin/gosu /usr/local/bin/gosu
 
-# Install only the remaining system dependencies
+# Install only the remaining system dependencies.
 RUN apt-get update && \
     apt-get install -y sqlite3 && \
     rm -rf /var/lib/apt/lists/*
 
-# Set the working directory inside the container
+# Set the working directory inside the container.
 WORKDIR /app
 
 # =========================================================================
@@ -56,7 +60,7 @@ EXPOSE 33444
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Set our script as the entrypoint for the container
+# Set our script as the entrypoint for the container.
 ENTRYPOINT ["entrypoint.sh"]
 
 # =========================================================================
