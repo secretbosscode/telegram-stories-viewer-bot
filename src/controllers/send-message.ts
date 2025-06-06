@@ -3,7 +3,7 @@
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
 // CORRECTED: Import UserInfo AND NotifyAdminParams from your central types.ts file
-import { UserInfo, NotifyAdminParams } from 'types';
+import { UserInfo, NotifyAdminParams } from 'types'; // This is now correct!
 
 /**
  * Notify the bot admin of important events (errors, info, start).
@@ -15,7 +15,7 @@ export async function notifyAdmin({
   status,
   errorInfo,
   baseInfo,
-}: NotifyAdminParams) { // <--- Using the imported NotifyAdminParams
+}: NotifyAdminParams) { // <--- This is now correct!
   if (task?.chatId === BOT_ADMIN_ID.toString()) return;
 
   // Build user info for logs/messages
@@ -76,7 +76,7 @@ export async function sendErrorMessage({
     task,
     status: 'error',
     errorInfo: { cause: message },
-  });
+  } as NotifyAdminParams); // Added assertion for notifyAdmin call
   try {
     await bot.telegram.sendMessage(task.chatId, message, {
       parse_mode: 'Markdown',
