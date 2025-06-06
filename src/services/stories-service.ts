@@ -46,6 +46,8 @@ const cleanUpTempMessagesFired = createEvent();
 
 // =========================================================================
 // CRITICAL LOGIC: Waking up the Service
+// DO NOT MODIFY without careful consideration.
+// -------------------------------------------------------------------------
 // This sample solves the "does nothing" bug. If a new task arrives and the
 // bot is idle, this explicitly calls `checkTasks` to evaluate the queue.
 // =========================================================================
@@ -121,7 +123,6 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
 
-
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -149,6 +150,11 @@ sample({
 
 // =========================================================================
 // CRITICAL LOGIC: Task Initiation State Machine
+// DO NOT MODIFY without careful consideration.
+// -------------------------------------------------------------------------
+// This section defines the core rules for when a new task can start.
+// The flow is: checkTasks -> taskInitiated -> taskStarted.
+// This was specifically designed to prevent bugs like immediate task restarts.
 // =========================================================================
 type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
 const $taskInitiationDataSource = combine<TaskInitiationSource>({
@@ -197,9 +203,6 @@ sample({
   fn: (task, { result }) => ({ task: task, ...(result as GetAllStoriesSuccessResult) }),
   target: sendStoriesFx,
 });
-
-// COMMENT: fail.watch is a direct, imperative way to handle hard failures.
-// It ensures that even if the effect promise rejects unexpectedly, we clean up.
 getAllStoriesFx.fail.watch(({ params, error }) => {
   console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
   taskDone();
@@ -213,7 +216,6 @@ sample({
   fn: (task, { result }) => ({ task, message: result as string }),
   target: [sendErrorMessageFx, taskDone, checkTasks],
 });
-
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
@@ -221,7 +223,6 @@ sample({
   fn: (task, { result }) => ({ task: task, ...(result as GetParticularStorySuccessResult) }),
   target: sendStoriesFx,
 });
-
 getParticularStoryFx.fail.watch(({ params, error }) => {
   console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
   taskDone();
@@ -230,16 +231,24 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
 
 // =========================================================================
 // CRITICAL LOGIC: Final Task Completion
-// This ensures that after a task is fully processed (by sendStoriesFx),
-// the system is cleaned up (`taskDone`) and explicitly checks for a new task.
 // =========================================================================
 sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
 sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
-
-// --- Final Cleanup and State Resets ---
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
+
+// --- Final State Resets on Task Done ---
 $currentTask.on(taskDone, () => null);
-$isTaskRunning.on(taskDone, () => false);
+$isTaskRunning.on(taskDone, () => false); // Redundant with the one above, but safe
+$tasksQueue.on(taskDone, (tasks) => tasks.slice(1)); // Pop from queue
+
+$currentTask.on(tempMessageSent, (prev, msgId) => {
+  if (!prev) {
+    console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
+    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId] } as UserInfo;
+  }
+  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
+});
+$currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMessages: [] } : null);
 
 // --- Interval Timers ---
 const intervalHasPassed = createEvent<void>();
