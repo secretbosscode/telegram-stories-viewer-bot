@@ -8,7 +8,6 @@ import { session, Telegraf } from 'telegraf';
 import { db } from './db';
 
 import { isUserPremium, addPremiumUser, removePremiumUser } from './services/premium-service';
-// CORRECTED: Import all necessary functions from the repository.
 import { saveUser, userHasStarted, findUserById } from './repositories/user-repository';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
@@ -23,6 +22,16 @@ bot.catch((error) => {
 const extraOptions: any = {
   link_preview_options: { is_disabled: true },
 };
+
+function isActivated(userId: number): boolean {
+  try {
+    const user = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(String(userId));
+    return !!user;
+  } catch (error) {
+    console.error(`[isActivated] Database check failed for user ${userId}:`, error);
+    return false;
+  }
+}
 
 // =============================
 //        USER COMMANDS
@@ -81,27 +90,26 @@ bot.on('message', async (ctx) => {
   const text = ctx.message.text;
   const userId = ctx.from.id;
 
-  const publicCommands = ['/start', '/help', '/premium'];
-  if (publicCommands.includes(text.split(' ')[0])) {
+  const command = text.split(' ')[0];
+
+  // Let Telegraf's dedicated handlers (`.start`, `.command`) process these first.
+  // This `on('message')` handler will act as a fallback for text that isn't a known command.
+  const knownCommands = ['/start', '/help', '/premium', '/setpremium', '/unsetpremium', '/ispremium', '/listpremium', '/users'];
+  if (knownCommands.includes(command)) {
     return;
   }
   
-  // CORRECTED: Use userHasStarted from the repository instead of the local isActivated function.
-  if (!userHasStarted(String(userId))) {
+  // For any other interactions, the user must have used /start first.
+  if (!isActivated(userId)) {
     await ctx.reply('👋 Please type /start to begin using the bot.');
     return;
   }
-  
-  const adminCommands = ['/setpremium', '/unsetpremium', '/ispremium', '/listpremium', '/users'];
-  if (adminCommands.includes(text.split(' ')[0])) {
-      return;
-  }
-  
+
+  // --- Core Story Request Logic ---
   const isStoryLink = text.startsWith('https') || text.startsWith('t.me/');
   const isUsername = text.startsWith('@') || text.startsWith('+');
 
   if (isUsername || isStoryLink) {
-    // CRITICAL FIX: Check the user's premium status from the database
     const isPremium = isUserPremium(String(userId));
 
     await newTaskReceived({
@@ -133,21 +141,73 @@ bot.on('message', async (ctx) => {
 // =============================
 
 bot.on('callback_query', async (ctx) => {
-  // ... This section can be improved later to also check premium status ...
+  if (!('data' in ctx.callbackQuery)) return;
+  const data = ctx.callbackQuery.data;
+
+  if (data.includes('&')) {
+    const isPremium = isUserPremium(String(ctx.from.id));
+    if (!isPremium) {
+        await ctx.answerCbQuery('This feature requires Premium access.', { show_alert: true });
+        return;
+    }
+    const [username, nextStoriesIds] = data.split('&');
+    await newTaskReceived({
+      chatId: String(ctx.from.id),
+      link: username,
+      linkType: 'username',
+      nextStoriesIds: nextStoriesIds ? JSON.parse(nextStoriesIds) : undefined,
+      locale: ctx.from.language_code || '',
+      user: ctx.from,
+      initTime: Date.now(),
+      isPremium: isPremium,
+    });
+    await ctx.answerCbQuery();
+    return;
+  }
+
+  if (data === RESTART_COMMAND && ctx.from.id === BOT_ADMIN_ID) {
+    await ctx.answerCbQuery('⏳ Restarting server...');
+    process.exit();
+  }
 });
+
 
 // =============================
 // ADMIN COMMANDS
+// These are now correctly processed because the `on('message')` handler ignores them,
+// allowing Telegraf to route them here.
 // =============================
-bot.command('setpremium', async (ctx) => { /* ...your logic... */ });
-bot.command('unsetpremium', async (ctx) => { /* ...your logic... */ });
-bot.command('ispremium', async (ctx) => { /* ...your logic... */ });
-bot.command('listpremium', async (ctx) => { /* ...your logic... */ });
-bot.command('users', async (ctx) => { /* ...your logic... */ });
+
+bot.command('setpremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  // ... your logic ...
+});
+
+bot.command('unsetpremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  // ... your logic ...
+});
+
+bot.command('ispremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  // ... your logic ...
+});
+
+bot.command('listpremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  // ... your logic ...
+});
+
+bot.command('users', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  // ... your logic ...
+});
+
 
 // =============================
 // BOT LAUNCH/SHUTDOWN
 // =============================
+
 bot.launch({ dropPendingUpdates: true }).then(() => {
   console.log('✅ Telegram bot started.');
 });
