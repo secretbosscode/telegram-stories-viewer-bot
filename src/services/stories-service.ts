@@ -118,9 +118,30 @@ const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
 const saveUserFx = createEffect(saveUser);
 
 // --- Task Queue Management ---
+// =========================================================================
+// BUG FIX: Prevent Duplicate Task Processing
+// -------------------------------------------------------------------------
+// This logic is updated to prevent duplicate tasks. It now checks if an
+// identical task is already waiting in the queue OR if it is the one
+// currently being processed. This prevents back-to-back processing of the
+// same request, which can be triggered by accidental double-taps or
+// client-side network retries.
+// =========================================================================
 $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
   const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
-  if (tasks.some(x => x.chatId === newTask.chatId && x.link === newTask.link)) return tasks;
+
+  // Check against the waiting queue
+  const isInQueue = tasks.some(x => x.chatId === newTask.chatId && x.link === newTask.link);
+
+  // Check against the currently running task
+  const currentTask = $currentTask.getState();
+  const isRunning = currentTask ? (currentTask.link === newTask.link && currentTask.chatId === newTask.chatId) : false;
+
+  if (isInQueue || isRunning) {
+    console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
+    return tasks; // Do not add the duplicate task
+  }
+
   return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
 });
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
