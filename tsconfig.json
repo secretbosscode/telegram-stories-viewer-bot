@@ -10,7 +10,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "strictPropertyInitialization": false,
-    "baseUrl": "./src",
+    "baseUrl": "./src", // Crucial: resolves non-relative imports from 'src'
     "paths": {
       "config/*": ["config/*"],
       "controllers/*": ["controllers/*"],
@@ -18,9 +18,10 @@
       "services/*": ["services/*"],
       "lib/*": ["lib/*"],
       "repositories/*": ["repositories/*"],
-      "types": ["types.ts"] // IMPORTANT: This maps 'types' directly to 'src/types.ts'
+      "types": ["types.ts"], // Maps 'types' alias directly to src/types.ts
+      "index": ["index.ts"] // Maps 'index' alias directly to src/index.ts
     },
-    "rootDir": "./src",
+    "rootDir": "./src", // Explicitly defines the root of your source files
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
