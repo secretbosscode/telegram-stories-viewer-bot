@@ -22,13 +22,13 @@ export interface UserInfo {
 }
 
 // =============================================================================
-// STORES & EVENTS - The Bot's State and Actions
+// STORES & EVENTS
 // =============================================================================
 
 const $currentTask = createStore<UserInfo | null>(null);
 const $tasksQueue = createStore<UserInfo[]>([]);
 const $isTaskRunning = createStore(false);
-const $taskStartTime = createStore<Date | null>(null); // For system-wide (non-privileged user) cooldown
+const $taskStartTime = createStore<Date | null>(null);
 const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
@@ -37,11 +37,11 @@ const taskInitiated = createEvent<void>();
 const taskStarted = createEvent<UserInfo>();
 const tempMessageSent = createEvent<number>();
 const taskDone = createEvent<void>();
-const checkTasks = createEvent<void>(); // The main trigger to check if a new task can be started
+const checkTasks = createEvent<void>();
 const cleanUpTempMessagesFired = createEvent();
 
 // =============================================================================
-// LOGIC AND FLOW - The Bot's Brain
+// LOGIC AND FLOW
 // =============================================================================
 
 sample({
@@ -126,8 +126,6 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
 
-// CORRECTED: This sample now uses a simple boolean filter and a non-null assertion `!`
-// in the `fn` to satisfy the TypeScript compiler.
 sample({
     clock: newTaskReceived,
     filter: (newTask) => !!newTask.user,
@@ -184,29 +182,21 @@ sample({ clock: taskStarted, filter: (t) => t.linkType === 'username', target: g
 sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getParticularStoryFx });
 
 // --- Effect Result Handling ---
-type GetAllStoriesSuccessResult = { activeStories: Api.TypeStoryItem[]; pinnedStories: Api.TypeStoryItem[]; paginatedStories?: Api.TypeStoryItem[]; };
-type GetParticularStorySuccessResult = { activeStories: Api.TypeStoryItem[]; pinnedStories: Api.TypeStoryItem[]; particularStory: Api.TypeStoryItem; };
 
-// CORRECTED: This sample now uses a type guard `result is string` on the `filter`
-// to correctly infer the type of `result` in the `fn`.
+// Handle getAllStoriesFx results
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
-  filter: (task, result): result is string => {
-      return task !== null && typeof result === 'string';
-  },
-  fn: (task, message) => ({ task: task!, message }),
+  filter: (task, result) => task !== null && typeof result === 'string',
+  fn: (task, message) => ({ task: task!, message: message as string }),
   target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 
-// CORRECTED: This sample uses a type guard to ensure `result` is an object.
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
-  filter: (task, result): result is GetAllStoriesSuccessResult => {
-      return task !== null && typeof result === 'object' && result !== null;
-  },
-  fn: (task, result) => ({ task: task!, ...result }),
+  filter: (task, result) => task !== null && typeof result === 'object' && result !== null,
+  fn: (task, result) => ({ task: task!, ...(result as object) }),
   target: sendStoriesFx,
 });
 
@@ -216,25 +206,20 @@ getAllStoriesFx.fail.watch(({ params, error }) => {
   checkTasks();
 });
 
-// CORRECTED: This sample now uses a type guard `result is string` on the `filter`.
+// Handle getParticularStoryFx results
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
-  filter: (task, result): result is string => {
-      return task !== null && typeof result === 'string';
-  },
-  fn: (task, message) => ({ task: task!, message }),
+  filter: (task, result) => task !== null && typeof result === 'string',
+  fn: (task, message) => ({ task: task!, message: message as string }),
   target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 
-// CORRECTED: This sample uses a type guard to ensure `result` is the correct object type.
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
-  filter: (task, result): result is GetParticularStorySuccessResult => {
-      return task !== null && typeof result === 'object' && result !== null && 'particularStory' in result;
-  },
-  fn: (task, result) => ({ task: task!, ...result }),
+  filter: (task, result) => task !== null && typeof result === 'object' && result !== null,
+  fn: (task, result) => ({ task: task!, ...(result as object) }),
   target: sendStoriesFx,
 });
 
@@ -244,12 +229,13 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
   checkTasks();
 });
 
+
+// --- Finalization Logic ---
 sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
 sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
 sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
 sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 
-// --- Final Cleanup and State Resets ---
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 $currentTask.on(taskDone, () => null);
 $isTaskRunning.on(taskDone, () => false);
@@ -270,7 +256,7 @@ sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserI
 setInterval(() => intervalHasPassed(), 30_000);
 
 // =========================================================================
-//  EXPORTS - DO NOT REMOVE
+//  EXPORTS
 // =========================================================================
 export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
 
