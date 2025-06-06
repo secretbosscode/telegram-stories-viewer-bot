@@ -9,11 +9,12 @@ import { newTaskReceived, UserInfo } from 'services/stories-service';
 import { session, Telegraf } from 'telegraf';
 import { db } from './db';
 
+// Service and Repository imports
 import { isUserPremium, addPremiumUser, removePremiumUser } from './services/premium-service';
 import { saveUser, userHasStarted, findUserById } from './repositories/user-repository';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
-const RESTART_COMMAND = 'restart'; // This is used for the callback_data on the button
+const RESTART_COMMAND = 'restart';
 
 // --- Middleware ---
 bot.use(session());
@@ -35,11 +36,13 @@ function isActivated(userId: number): boolean {
 }
 
 
-// =============================
+// =========================================================================
 //  COMMAND HANDLERS
-// =============================
-// By defining all specific commands first, Telegraf will match them before
-// falling back to the general `bot.on('text')` handler.
+// =========================================================================
+// COMMENT: All specific command handlers are defined here, BEFORE general
+// event handlers like `on('text')`. This is the correct, robust order for Telegraf.
+
+// --- Public Commands ---
 
 bot.start(async (ctx) => {
   saveUser(ctx.from);
@@ -68,7 +71,6 @@ bot.command('help', async (ctx) => {
       '`/ispremium <ID or @username>` \\- Check if user is premium\n' +
       '`/listpremium` \\- List all premium users\n' +
       '`/users` \\- List all users\n' +
-      // CORRECTED: Updated help text to reflect the /restart command
       '`/restart` \\- Shows the restart confirmation button\n';
   }
   await ctx.reply(finalHelpText, { parse_mode: 'MarkdownV2' });
@@ -88,7 +90,6 @@ bot.command('premium', async (ctx) => {
 
 // --- Admin Commands ---
 
-// COMMENT: Changed from plain text to a proper /restart command for consistency.
 bot.command('restart', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) return;
   await ctx.reply('Are you sure you want to restart?', {
@@ -98,16 +99,137 @@ bot.command('restart', async (ctx) => {
   });
 });
 
-bot.command('setpremium', async (ctx) => { /* ...your existing correct logic... */ });
-bot.command('unsetpremium', async (ctx) => { /* ...your existing correct logic... */ });
-bot.command('ispremium', async (ctx) => { /* ...your existing correct logic... */ });
-bot.command('listpremium', async (ctx) => { /* ...your existing correct logic... */ });
-bot.command('users', async (ctx) => { /* ...your existing correct logic... */ });
+bot.command('setpremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+
+  try {
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args.length) return ctx.reply('Usage: /setpremium <telegram_id | @username>');
+    
+    let telegramId: string | undefined;
+    let username: string | undefined;
+
+    if (args[0].startsWith('@')) {
+      username = args[0].replace('@', '');
+      const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username) as { telegram_id?: string };
+      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      telegramId = row.telegram_id;
+    } else if (/^\d+$/.test(args[0])) {
+      telegramId = args[0];
+    } else {
+      return ctx.reply('Invalid argument. Provide a Telegram user ID or @username.');
+    }
+
+    if (!telegramId) return ctx.reply('Could not resolve telegram ID.');
+    
+    addPremiumUser(telegramId, username);
+    await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium!`);
+  } catch (e) {
+    console.error("Error in /setpremium:", e);
+    await ctx.reply("An error occurred processing this command.");
+  }
+});
+
+bot.command('unsetpremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  
+  try {
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args.length) return ctx.reply('Usage: /unsetpremium <telegram_id | @username>');
+    let telegramId: string | undefined;
+    let username: string | undefined;
+
+    if (args[0].startsWith('@')) {
+      username = args[0].replace('@', '');
+      const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username) as { telegram_id?: string };
+      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      telegramId = row.telegram_id;
+    } else if (/^\d+$/.test(args[0])) {
+      telegramId = args[0];
+    } else {
+      return ctx.reply('Invalid argument. Provide a Telegram user ID or @username.');
+    }
+
+    if (!telegramId) return ctx.reply('Could not resolve telegram ID.');
+    
+    removePremiumUser(telegramId);
+    await ctx.reply(`✅ User ${username ? '@'+username : telegramId} is no longer premium.`);
+  } catch (e) {
+    console.error("Error in /unsetpremium:", e);
+    await ctx.reply("An error occurred processing this command.");
+  }
+});
+
+bot.command('ispremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  
+  try {
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args.length) return ctx.reply('Usage: /ispremium <telegram_id | @username>');
+    let telegramId: string | undefined;
+    let username: string | undefined;
+
+    if (args[0].startsWith('@')) {
+      username = args[0].replace('@', '');
+      const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username) as { telegram_id?: string };
+      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      telegramId = row.telegram_id;
+    } else if (/^\d+$/.test(args[0])) {
+      telegramId = args[0];
+    } else {
+      return ctx.reply('Invalid argument. Provide a Telegram user ID or @username.');
+    }
+    
+    if (!telegramId) return ctx.reply('Could not resolve telegram ID.');
+    
+    const premium = isUserPremium(telegramId);
+    await ctx.reply(premium ? `✅ User ${username ? '@'+username : telegramId} is PREMIUM.` : `❌ User ${username ? '@'+username : telegramId} is NOT premium.`);
+  } catch (e) {
+    console.error("Error in /ispremium:", e);
+    await ctx.reply("An error occurred processing this command.");
+  }
+});
+
+bot.command('listpremium', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  
+  try {
+    const rows = db.prepare('SELECT telegram_id, username FROM users WHERE is_premium = 1').all() as any[];
+    if (!rows.length) return ctx.reply('No premium users found.');
+    let msg = `🌟 Premium users (${rows.length}):\n`;
+    rows.forEach((u, i) => { msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id}\n`; });
+    await ctx.reply(msg);
+  } catch (e) {
+    console.error("Error in /listpremium:", e);
+    await ctx.reply("An error occurred while fetching premium users.");
+  }
+});
+
+bot.command('users', async (ctx) => {
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+
+  try {
+    const rows = db.prepare('SELECT telegram_id, username, is_premium FROM users').all() as any[];
+    if (!rows.length) return ctx.reply('No users found in the database.');
+
+    let msg = `👥 Users (${rows.length}):\n`;
+    rows.forEach((u, i) => { msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${u.is_premium ? 'PREMIUM' : 'FREE'}]\n`; });
+    await ctx.reply(msg);
+  } catch (e) {
+    console.error("Error in /users command:", e);
+    await ctx.reply("An error occurred while fetching users from the database.");
+  }
+});
 
 
-// =============================
+// =========================================================================
 //  EVENT & FALLBACK HANDLERS
-// =============================
+// =========================================================================
 
 bot.on('callback_query', async (ctx) => {
   if (!('data' in ctx.callbackQuery)) return;
@@ -119,7 +241,17 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (data.includes('&')) {
-    // ... pagination logic unchanged ...
+    const isPremium = isUserPremium(String(ctx.from.id));
+    if (!isPremium) {
+        return ctx.answerCbQuery('This feature requires Premium access.', { show_alert: true });
+    }
+    const [username, nextStoriesIds] = data.split('&');
+    await newTaskReceived({
+      chatId: String(ctx.from.id), link: username, linkType: 'username',
+      nextStoriesIds: nextStoriesIds ? JSON.parse(nextStoriesIds) : undefined,
+      locale: ctx.from.language_code || '', user: ctx.from, initTime: Date.now(), isPremium: isPremium,
+    });
+    await ctx.answerCbQuery();
   }
 });
 
@@ -131,8 +263,12 @@ bot.on('text', async (ctx) => {
     return ctx.reply('👋 Please type /start to begin using the bot.');
   }
 
-  // COMMENT: The plain-text 'restart' check is no longer needed here.
-  // It is now handled by bot.command('restart', ...) above.
+  // Handle plain-text admin command 'restart'
+  if (userId === BOT_ADMIN_ID && text === RESTART_COMMAND) {
+    return ctx.reply('Are you sure you want to restart?', {
+      reply_markup: { inline_keyboard: [[{ text: 'Yes, Restart', callback_data: RESTART_COMMAND }]] },
+    });
+  }
 
   // Handle story requests
   const isStoryLink = text.startsWith('https') || text.startsWith('t.me/');
@@ -141,18 +277,13 @@ bot.on('text', async (ctx) => {
   if (isUsername || isStoryLink) {
     const isPremium = isUserPremium(String(userId));
     await newTaskReceived({
-      chatId: String(ctx.chat.id),
-      link: text,
-      linkType: isStoryLink ? 'link' : 'username',
-      locale: ctx.from.language_code || '',
-      user: ctx.from,
-      initTime: Date.now(),
-      isPremium: isPremium,
+      chatId: String(ctx.chat.id), link: text, linkType: isStoryLink ? 'link' : 'username',
+      locale: ctx.from.language_code || '', user: ctx.from, initTime: Date.now(), isPremium: isPremium,
     });
     return;
   }
 
-  // If the text was not a command and not a story request, send this fallback.
+  // Fallback for unrecognized text
   await ctx.reply('🚫 Invalid input. Send a username like `@durov` or a story link. Type /help for more info.');
 });
 
@@ -160,6 +291,7 @@ bot.on('text', async (ctx) => {
 // =============================
 // BOT LAUNCH/SHUTDOWN
 // =============================
+
 bot.launch({ dropPendingUpdates: true }).then(() => {
   console.log('✅ Telegram bot started.');
 });
