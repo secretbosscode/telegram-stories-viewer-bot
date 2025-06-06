@@ -2,7 +2,7 @@ import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
 import { sendStoriesFx } from 'controllers/send-stories';
-import { createEffect, createEvent, createStore, sample, combine, StoreValue } from 'effector';
+import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
 import { saveUser } from 'repositories/user-repository';
@@ -32,7 +32,11 @@ const $taskStartTime = createStore<Date | null>(null);
 const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
+// This is the raw event from the outside world
 const newTaskReceived = createEvent<UserInfo>();
+// This is the new, pre-filtered event that is guaranteed to be non-duplicate
+const taskReadyToBeQueued = createEvent<UserInfo>();
+
 const taskInitiated = createEvent<void>();
 const taskStarted = createEvent<UserInfo>();
 const tempMessageSent = createEvent<number>();
@@ -45,7 +49,7 @@ const cleanUpTempMessagesFired = createEvent();
 // =============================================================================
 
 sample({
-  clock: newTaskReceived,
+  clock: taskReadyToBeQueued,
   target: checkTasks,
 });
 
@@ -118,40 +122,51 @@ const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
 const saveUserFx = createEffect(saveUser);
 
 // --- Task Queue Management ---
+
 // =========================================================================
-// BUG FIX: Prevent Duplicate Task Processing
+// BUG FIX: Prevent Duplicate Task Processing (Race Condition Fix)
 // -------------------------------------------------------------------------
-// This logic is updated to prevent duplicate tasks. It now checks if an
-// identical task is already waiting in the queue OR if it is the one
-// currently being processed. This prevents back-to-back processing of the
-// same request, which can be triggered by accidental double-taps or
-// client-side network retries.
+// This new logic uses `combine` and `sample` to create a new, pre-filtered
+// event (`taskReadyToBeQueued`). This ensures we always check against the
+// absolute latest state of the queue and the currently running task,
+// preventing the race condition that allowed duplicates before.
 // =========================================================================
-$tasksQueue.on(newTaskReceived, (tasks, newTask) => {
+const $queueState = combine({
+  tasks: $tasksQueue,
+  current: $currentTask,
+});
+
+sample({
+  clock: newTaskReceived,
+  source: $queueState,
+  filter: (state, newTask) => {
+    const isInQueue = state.tasks.some(t => t.link === newTask.link && t.chatId === newTask.chatId);
+    const isRunning = state.current ? (state.current.link === newTask.link && state.current.chatId === newTask.chatId) : false;
+
+    if (isInQueue || isRunning) {
+      console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
+      return false; // This task is a duplicate, filter it out
+    }
+    return true; // This task is valid
+  },
+  fn: (_, newTask) => newTask, // Pass along the new task data if the filter is true
+  target: taskReadyToBeQueued,
+});
+
+// The queue now ONLY listens to the pre-filtered, safe event.
+$tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
   const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
-
-  // Check against the waiting queue
-  const isInQueue = tasks.some(x => x.chatId === newTask.chatId && x.link === newTask.link);
-
-  // Check against the currently running task
-  const currentTask = $currentTask.getState();
-  const isRunning = currentTask ? (currentTask.link === newTask.link && currentTask.chatId === newTask.chatId) : false;
-
-  if (isInQueue || isRunning) {
-    console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
-    return tasks; // Do not add the duplicate task
-  }
-
   return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
 });
+
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
 
 sample({
-    clock: newTaskReceived,
-    filter: (newTask) => !!newTask.user,
-    fn: (newTask) => newTask.user!,
-    target: saveUserFx,
+  clock: newTaskReceived,
+  filter: (newTask) => !!newTask.user,
+  fn: (newTask) => newTask.user!,
+  target: saveUserFx,
 });
 
 sample({
