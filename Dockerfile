@@ -10,9 +10,11 @@ RUN apk add --no-cache git build-base
 # Clone the su-exec repository
 RUN git clone https://github.com/ncopa/su-exec.git /su-exec
 
-# BUG FIX: Use 'make install' to compile and place the binary in a standard path
-# The 'make' command on its own only compiles; 'make install' puts it in /usr/local/bin
-RUN cd /su-exec && make install
+# =========================================================================
+# BUG FIX: Use `make` to compile, then the `install` command to place the binary.
+# The `su-exec` Makefile does not have an `install` rule, so we do it manually.
+# =========================================================================
+RUN cd /su-exec && make && install su-exec /usr/local/bin/
 
 # =========================================================================
 # Stage 2: The "Final Image" - Our Node.js Application
@@ -20,8 +22,7 @@ RUN cd /su-exec && make install
 # Use the official Node.js LTS slim runtime as our secure and reliable base
 FROM node:22-slim
 
-# Copy the su-exec binary we just built AND installed in the previous stage.
-# It is now in a standard, predictable location.
+# Copy the su-exec binary we just built and installed in the previous stage.
 COPY --from=builder /usr/local/bin/su-exec /usr/local/bin/su-exec
 
 # Install only the remaining system dependencies
