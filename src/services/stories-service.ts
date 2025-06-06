@@ -21,9 +21,9 @@ export interface UserInfo {
   isPremium?: boolean;
 }
 
-// =========================================================================
+// =============================================================================
 // STORES & EVENTS
-// =========================================================================
+// =============================================================================
 
 const $currentTask = createStore<UserInfo | null>(null);
 const $tasksQueue = createStore<UserInfo[]>([]);
@@ -44,9 +44,9 @@ const taskDone = createEvent<void>();
 const checkTasks = createEvent<void>();
 const cleanUpTempMessagesFired = createEvent();
 
-// =========================================================================
+// =============================================================================
 // LOGIC AND FLOW
-// =========================================================================
+// =============================================================================
 
 sample({
   clock: taskReadyToBeQueued,
@@ -125,6 +125,11 @@ const saveUserFx = createEffect(saveUser);
 
 // =========================================================================
 // BUG FIX: Prevent Duplicate Task Processing (Race Condition Fix)
+// -------------------------------------------------------------------------
+// This new logic uses `combine` and `sample` to create a new, pre-filtered
+// event (`taskReadyToBeQueued`). This ensures we always check against the
+// absolute latest state of the queue and the currently running task,
+// preventing the race condition that allowed duplicates before.
 // =========================================================================
 const $queueState = combine({
   tasks: $tasksQueue,
@@ -144,7 +149,7 @@ sample({
     }
     return true; // This task is valid
   },
-  // If the filter passes, the clock's payload (the new task) is passed to the target.
+  fn: (_, newTask) => newTask, // Pass along the new task data if the filter is true
   target: taskReadyToBeQueued,
 });
 
@@ -164,15 +169,12 @@ sample({
   target: saveUserFx,
 });
 
-// This sample was using .getState(), which is less safe. It has been left as is,
-// but the core queue logic is now protected.
 sample({
   clock: newTaskReceived,
   source: $taskSource,
   filter: (sourceData, newTask) => {
     const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
     if (!isPrivileged) {
-      // Using .getState() here is less ideal but acceptable for this non-critical path.
       return ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId) || (sourceData.taskStartTime instanceof Date);
     }
     return false;
@@ -217,6 +219,7 @@ sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getPa
 
 // --- Effect Result Handling ---
 
+// Handle getAllStoriesFx results
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
@@ -239,6 +242,7 @@ getAllStoriesFx.fail.watch(({ params, error }) => {
   checkTasks();
 });
 
+// Handle getParticularStoryFx results
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
@@ -261,6 +265,7 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
   checkTasks();
 });
 
+
 // --- Finalization Logic ---
 sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
 sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
@@ -270,7 +275,7 @@ sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 $currentTask.on(taskDone, () => null);
 $isTaskRunning.on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
+$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
   if (!prev) {
