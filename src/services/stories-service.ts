@@ -19,6 +19,8 @@ export interface UserInfo {
   tempMessages?: number[];
   initTime: number;
   isPremium?: boolean;
+  // --- Add instanceId for uniqueness ---
+  instanceId?: string;
 }
 
 // =============================================================================
@@ -32,17 +34,52 @@ const $taskStartTime = createStore<Date | null>(null);
 const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
-// This is the raw event from the outside world
 const newTaskReceived = createEvent<UserInfo>();
-// This is the new, pre-filtered event that is guaranteed to be non-duplicate
 const taskReadyToBeQueued = createEvent<UserInfo>();
-
 const taskInitiated = createEvent<void>();
 const taskStarted = createEvent<UserInfo>();
 const tempMessageSent = createEvent<number>();
-const taskDone = createEvent<void>();
 const checkTasks = createEvent<void>();
 const cleanUpTempMessagesFired = createEvent();
+
+// =============================================================================
+// INTERNAL: Unique task creation and instanceId
+// =============================================================================
+function createTask(userInfo: UserInfo): UserInfo {
+  return {
+    ...userInfo,
+    instanceId: `${userInfo.chatId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  };
+}
+
+// =============================================================================
+// DOUBLE-FIRE/RACE CONDITION GUARD
+// =============================================================================
+
+let isTaskFinalizing = false;
+
+function finalizeTaskAndProceed() {
+  if (isTaskFinalizing) {
+    console.warn('[StoriesService] finalizeTaskAndProceed called while already finalizing! Skipping.');
+    return;
+  }
+  isTaskFinalizing = true;
+
+  const prevTask = $currentTask.getState();
+  const queue = $tasksQueue.getState();
+
+  // Remove from queue if still present at front (atomic clear)
+  if (queue.length > 0 && prevTask && queue[0].link === prevTask.link && queue[0].chatId === prevTask.chatId) {
+    $tasksQueue.setState(queue.slice(1));
+  }
+  $currentTask.setState(null);
+  $isTaskRunning.setState(false);
+
+  setTimeout(() => {
+    isTaskFinalizing = false;
+    checkTasks();
+  }, 0); // microtask lets state settle
+}
 
 // =============================================================================
 // LOGIC AND FLOW
@@ -121,15 +158,8 @@ const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
 
 const saveUserFx = createEffect(saveUser);
 
-// --- Task Queue Management ---
-
 // =========================================================================
 // BUG FIX: Prevent Duplicate Task Processing (Race Condition Fix)
-// -------------------------------------------------------------------------
-// This new logic uses `combine` and `sample` to create a new, pre-filtered
-// event (`taskReadyToBeQueued`). This ensures we always check against the
-// absolute latest state of the queue and the currently running task,
-// preventing the race condition that allowed duplicates before.
 // =========================================================================
 const $queueState = combine({
   tasks: $tasksQueue,
@@ -142,25 +172,23 @@ sample({
   filter: (state, newTask) => {
     const isInQueue = state.tasks.some(t => t.link === newTask.link && t.chatId === newTask.chatId);
     const isRunning = state.current ? (state.current.link === newTask.link && state.current.chatId === newTask.chatId) : false;
-
     if (isInQueue || isRunning) {
       console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
-      return false; // This task is a duplicate, filter it out
+      return false; // duplicate, filter out
     }
-    return true; // This task is valid
+    return true;
   },
-  fn: (_, newTask) => newTask, // Pass along the new task data if the filter is true
+  fn: (_, newTask) => createTask(newTask),
   target: taskReadyToBeQueued,
 });
 
-// The queue now ONLY listens to the pre-filtered, safe event.
+// Only listen to pre-filtered, safe event
 $tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
   const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
   return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
 });
-
-$isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
+$isTaskRunning.on(taskStarted, () => true);
+$tasksQueue.on(finalizeTaskAndProceed, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
 
 sample({
   clock: newTaskReceived,
@@ -209,25 +237,55 @@ sample({
   target: taskInitiated,
 });
 
-sample({ clock: taskInitiated, source: $tasksQueue, filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(), fn: (q) => q[0], target: [$currentTask, taskStarted]});
-sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: () => new Date(), target: $taskStartTime });
-sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: (t) => t, target: clearTimeoutWithDelayFx });
+sample({
+  clock: taskInitiated,
+  source: $tasksQueue,
+  filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(),
+  fn: (q) => q[0],
+  target: [$currentTask, taskStarted]
+});
+sample({
+  clock: taskInitiated,
+  source: $taskTimeout,
+  filter: (t): t is number => t > 0,
+  fn: () => new Date(),
+  target: $taskStartTime
+});
+sample({
+  clock: taskInitiated,
+  source: $taskTimeout,
+  filter: (t): t is number => t > 0,
+  fn: (t) => t,
+  target: clearTimeoutWithDelayFx
+});
 $taskTimeout.on(clearTimeoutEvent, (_, n) => n);
-sample({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
-sample({ clock: taskStarted, filter: (t) => t.linkType === 'username', target: getAllStoriesFx });
-sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getParticularStoryFx });
+sample({
+  clock: clearTimeoutEvent,
+  fn: () => null,
+  target: [$taskStartTime, checkTasks]
+});
+sample({
+  clock: taskStarted,
+  filter: (t) => t.linkType === 'username',
+  target: getAllStoriesFx
+});
+sample({
+  clock: taskStarted,
+  filter: (t) => t.linkType === 'link',
+  target: getParticularStoryFx
+});
 
 // --- Effect Result Handling ---
+// No direct sample from .done to checkTasks anymore!
+// All finalization goes through finalizeTaskAndProceed
 
-// Handle getAllStoriesFx results
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
+  target: [sendErrorMessageFx],
 });
-
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
@@ -235,22 +293,16 @@ sample({
   fn: (task, result) => ({ task: task!, ...(result as object) }),
   target: sendStoriesFx,
 });
+getAllStoriesFx.done.watch(() => finalizeTaskAndProceed());
+getAllStoriesFx.fail.watch(() => finalizeTaskAndProceed());
 
-getAllStoriesFx.fail.watch(({ params, error }) => {
-  console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
-  taskDone();
-  checkTasks();
-});
-
-// Handle getParticularStoryFx results
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
+  target: [sendErrorMessageFx],
 });
-
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
@@ -258,24 +310,23 @@ sample({
   fn: (task, result) => ({ task: task!, ...(result as object) }),
   target: sendStoriesFx,
 });
-
-getParticularStoryFx.fail.watch(({ params, error }) => {
-  console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
-  taskDone();
-  checkTasks();
-});
-
+getParticularStoryFx.done.watch(() => finalizeTaskAndProceed());
+getParticularStoryFx.fail.watch(() => finalizeTaskAndProceed());
 
 // --- Finalization Logic ---
-sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
-sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
-sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
-sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
+sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link, params.task.instanceId));
+sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, params.task.instanceId, 'Error:', error));
+// No sample from sendStoriesFx.done/fail to taskDone or checkTasks!
 
-sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
-$currentTask.on(taskDone, () => null);
-$isTaskRunning.on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
+sample({
+  clock: finalizeTaskAndProceed,
+  source: $currentTask,
+  filter: (t): t is UserInfo => t !== null,
+  target: cleanupTempMessagesFx
+});
+$currentTask.on(finalizeTaskAndProceed, () => null);
+$isTaskRunning.on(finalizeTaskAndProceed, () => false);
+$tasksQueue.on(finalizeTaskAndProceed, (tasks) => tasks.slice(1));
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
   if (!prev) {
@@ -288,7 +339,12 @@ $currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMess
 
 // --- Interval Timers ---
 const intervalHasPassed = createEvent<void>();
-sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: checkTaskForRestart });
+sample({
+  clock: intervalHasPassed,
+  source: $currentTask,
+  filter: (t): t is UserInfo => t !== null,
+  target: checkTaskForRestart
+});
 setInterval(() => intervalHasPassed(), 30_000);
 
 // =========================================================================
@@ -296,4 +352,6 @@ setInterval(() => intervalHasPassed(), 30_000);
 // =========================================================================
 export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
 
+// Trigger the queue on startup
 setTimeout(() => checkTasks(), 100);
+
