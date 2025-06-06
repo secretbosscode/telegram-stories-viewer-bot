@@ -9,6 +9,8 @@ import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
 import { Api } from 'telegram';
 
+console.log('[DEBUG] StoriesService file loaded.');
+
 export interface UserInfo {
   chatId: string;
   link: string;
@@ -32,17 +34,25 @@ const $taskStartTime = createStore<Date | null>(null);
 const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
-// This is the raw event from the outside world
-const newTaskReceived = createEvent<UserInfo>();
-// This is the new, pre-filtered event that is guaranteed to be non-duplicate
-const taskReadyToBeQueued = createEvent<UserInfo>();
+const newTaskReceived = createEvent<UserInfo>('[newTaskReceived]');
+const taskReadyToBeQueued = createEvent<UserInfo>('[taskReadyToBeQueued]');
+const taskInitiated = createEvent<void>('[taskInitiated]');
+const taskStarted = createEvent<UserInfo>('[taskStarted]');
+const tempMessageSent = createEvent<number>('[tempMessageSent]');
+const taskDone = createEvent<void>('[taskDone]');
+const checkTasks = createEvent<void>('[checkTasks]');
+const cleanUpTempMessagesFired = createEvent<void>('[cleanUpTempMessagesFired]');
 
-const taskInitiated = createEvent<void>();
-const taskStarted = createEvent<UserInfo>();
-const tempMessageSent = createEvent<number>();
-const taskDone = createEvent<void>();
-const checkTasks = createEvent<void>();
-const cleanUpTempMessagesFired = createEvent();
+// =============================================================================
+// DEBUG LOGGING - Attaching watchers to stores
+// =============================================================================
+$currentTask.watch(task => console.log(`[DEBUG] Store changed: $currentTask is now ->`, task?.link ?? 'null'));
+$tasksQueue.watch(tasks => console.log(`[DEBUG] Store changed: $tasksQueue now has ${tasks.length} item(s).`));
+$isTaskRunning.watch(isRunning => console.log(`[DEBUG] Store changed: $isTaskRunning is now -> ${isRunning}`));
+taskDone.watch(() => console.log('[DEBUG] Event fired: taskDone'));
+newTaskReceived.watch(payload => console.log('[DEBUG] Event fired: newTaskReceived for ->', payload.link));
+checkTasks.watch(() => console.log('[DEBUG] Event fired: checkTasks'));
+
 
 // =============================================================================
 // LOGIC AND FLOW
@@ -50,6 +60,7 @@ const cleanUpTempMessagesFired = createEvent();
 
 sample({
   clock: taskReadyToBeQueued,
+  fn: () => console.log('[DEBUG] taskReadyToBeQueued is triggering checkTasks.'),
   target: checkTasks,
 });
 
@@ -122,15 +133,6 @@ const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
 const saveUserFx = createEffect(saveUser);
 
 // --- Task Queue Management ---
-
-// =========================================================================
-// BUG FIX: Prevent Duplicate Task Processing (Race Condition Fix)
-// -------------------------------------------------------------------------
-// This new logic uses `combine` and `sample` to create a new, pre-filtered
-// event (`taskReadyToBeQueued`). This ensures we always check against the
-// absolute latest state of the queue and the currently running task,
-// preventing the race condition that allowed duplicates before.
-// =========================================================================
 const $queueState = combine({
   tasks: $tasksQueue,
   current: $currentTask,
@@ -139,28 +141,39 @@ const $queueState = combine({
 sample({
   clock: newTaskReceived,
   source: $queueState,
-  filter: (state, newTask) => {
+  fn: (state, newTask) => {
+    console.log(`[DEBUG] Duplicate check for ${newTask.link}. Current task: ${state.current?.link ?? 'null'}. Queue length: ${state.tasks.length}`);
+    return { state, newTask };
+  },
+  filter: ({ state, newTask }) => {
     const isInQueue = state.tasks.some(t => t.link === newTask.link && t.chatId === newTask.chatId);
     const isRunning = state.current ? (state.current.link === newTask.link && state.current.chatId === newTask.chatId) : false;
 
     if (isInQueue || isRunning) {
-      console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
+      console.log(`[DEBUG] Task for ${newTask.link} REJECTED as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
       return false; // This task is a duplicate, filter it out
     }
+    console.log(`[DEBUG] Task for ${newTask.link} is VALID.`);
     return true; // This task is valid
   },
-  fn: (_, newTask) => newTask, // Pass along the new task data if the filter is true
+  fn: ({ newTask }) => newTask, // Pass along the new task data if the filter is true
   target: taskReadyToBeQueued,
 });
 
-// The queue now ONLY listens to the pre-filtered, safe event.
 $tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
+  console.log(`[DEBUG] Reducer: Adding task for ${newTask.link} to queue.`);
   const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
   return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
 });
 
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
+$tasksQueue.on(taskDone, (tasks) => {
+  if (tasks.length > 0) {
+    console.log('[DEBUG] Reducer: Removing completed task from head of queue.');
+    return tasks.slice(1);
+  }
+  return tasks;
+});
 
 sample({
   clock: newTaskReceived,
@@ -199,6 +212,10 @@ const $taskInitiationDataSource = combine<TaskInitiationSource>({
 sample({
   clock: checkTasks,
   source: $taskInitiationDataSource,
+  fn: (sourceValues) => {
+    console.log(`[DEBUG] checkTasks: Checking if a new task can be initiated. isRunning: ${sourceValues.isRunning}, queue length: ${sourceValues.queue.length}`);
+    return sourceValues;
+  },
   filter: (sourceValues) => {
     if (sourceValues.isRunning || sourceValues.queue.length === 0) return false;
     const nextTaskInQueue = sourceValues.queue[0];
@@ -206,6 +223,7 @@ sample({
     const isPrivileged = nextTaskInQueue.chatId === BOT_ADMIN_ID.toString() || nextTaskInQueue.isPremium === true;
     return isPrivileged || sourceValues.currentSystemCooldownStartTime === null;
   },
+  fn: (sourceValues) => console.log(`[DEBUG] checkTasks: Filter passed. Initiating task for ${sourceValues.queue[0].link}`),
   target: taskInitiated,
 });
 
@@ -219,7 +237,6 @@ sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getPa
 
 // --- Effect Result Handling ---
 
-// Handle getAllStoriesFx results
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
@@ -242,7 +259,6 @@ getAllStoriesFx.fail.watch(({ params, error }) => {
   checkTasks();
 });
 
-// Handle getParticularStoryFx results
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
@@ -265,17 +281,21 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
   checkTasks();
 });
 
-
 // --- Finalization Logic ---
-sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
-sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
+sendStoriesFx.done.watch(({ params }) => {
+    console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link);
+    console.log('[DEBUG] sendStoriesFx.done is triggering taskDone and checkTasks.');
+});
+sendStoriesFx.fail.watch(({ params, error }) => {
+    console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error);
+    console.log('[DEBUG] sendStoriesFx.fail is triggering taskDone and checkTasks.');
+});
 sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
 sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 $currentTask.on(taskDone, () => null);
 $isTaskRunning.on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
   if (!prev) {
