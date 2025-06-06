@@ -3,7 +3,7 @@
 import { createEffect, createEvent, createStore, sample } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
-import { UserInfo } from 'types'; // adjust path if needed
+import { UserInfo } from 'types'; // This path needs to be correct in tsconfig.json
 
 // Keep a store of "temporary" message IDs, so you can delete or clean them up later
 export const $tempMessages = createStore<number[]>([]);
@@ -33,9 +33,9 @@ export const handleStoryRequest = createEffect(async (task: UserInfo) => {
 // When a story request succeeds, send the stories
 sample({
   clock: handleStoryRequest.doneData,
-  source: newTaskReceived,
+  source: newTaskReceived, // This 'source' will be 'task' here
   filter: (_, result) => typeof result === 'object' && !!result,
-  fn: (task, result) => ({ ...result, task }),
+  fn: (task, result) => ({ ...result, task }), // 'task' is the original 'newTaskReceived' data
   target: sendStoriesFx,
 });
 
@@ -49,10 +49,10 @@ sendStoriesFx.fail.watch(() => {
   cleanUpTempMessagesFired();
 });
 
-// Export ONLY ONCE
-export {
-  newTaskReceived,
-  handleStoryRequest,
-  cleanUpTempMessagesFired,
-  tempMessageSent
-};
+// REMOVE THIS BLOCK entirely:
+// export {
+//   newTaskReceived,
+//   handleStoryRequest,
+//   cleanUpTempMessagesFired,
+//   tempMessageSent
+// };
