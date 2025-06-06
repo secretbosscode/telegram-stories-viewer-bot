@@ -7,6 +7,7 @@ import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
 import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
+import { Api } from 'telegram';
 
 export interface UserInfo {
   chatId: string;
@@ -20,9 +21,10 @@ export interface UserInfo {
   isPremium?: boolean;
 }
 
-// ---------------------------------------------------------------------
+// =============================================================================
 // STORES & EVENTS
-// ---------------------------------------------------------------------
+// =============================================================================
+
 const $currentTask = createStore<UserInfo | null>(null);
 const $tasksQueue = createStore<UserInfo[]>([]);
 const $isTaskRunning = createStore(false);
@@ -30,8 +32,11 @@ const $taskStartTime = createStore<Date | null>(null);
 const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
+// Raw event from outside world
 const newTaskReceived = createEvent<UserInfo>();
+// New, pre-filtered event (guaranteed non-duplicate)
 const taskReadyToBeQueued = createEvent<UserInfo>();
+
 const taskInitiated = createEvent<void>();
 const taskStarted = createEvent<UserInfo>();
 const tempMessageSent = createEvent<number>();
@@ -39,23 +44,44 @@ const taskDone = createEvent<void>();
 const checkTasks = createEvent<void>();
 const cleanUpTempMessagesFired = createEvent();
 
-// ---------------------------------------------------------------------
+// =============================================================================
 // LOGIC AND FLOW
-// ---------------------------------------------------------------------
+// =============================================================================
 
+// Add debug for new task events
+newTaskReceived.watch((task) => {
+  console.log('[DEBUG] newTaskReceived:', task.link, task.chatId);
+});
+taskReadyToBeQueued.watch((task) => {
+  console.log('[DEBUG] taskReadyToBeQueued:', task.link, task.chatId);
+});
+$tasksQueue.watch((queue) => {
+  console.log('[DEBUG] $tasksQueue changed. Now:', queue.map(t => `${t.link}:${t.chatId}`));
+});
+$currentTask.watch((task) => {
+  if (task) {
+    console.log('[DEBUG] $currentTask set:', task.link, task.chatId);
+  } else {
+    console.log('[DEBUG] $currentTask cleared');
+  }
+});
+$isTaskRunning.watch((is) => {
+  console.log('[DEBUG] $isTaskRunning:', is);
+});
+
+// Wire queue events
 sample({
   clock: taskReadyToBeQueued,
   target: checkTasks,
 });
 
-// Timed requeue/timeout management
 const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
 const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
   const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
   setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
 });
 
-const MAX_WAIT_TIME = 7;
+const MAX_WAIT_TIME = 7; // 7 minutes
 
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   if (task) {
@@ -117,9 +143,8 @@ const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
 
 const saveUserFx = createEffect(saveUser);
 
-// ---------------------------------------------------------------------
-// Task Queue Management (deduplication, fair queueing)
-// ---------------------------------------------------------------------
+// --- Task Queue Management ---
+
 const $queueState = combine({
   tasks: $tasksQueue,
   current: $currentTask,
@@ -131,16 +156,18 @@ sample({
   filter: (state, newTask) => {
     const isInQueue = state.tasks.some(t => t.link === newTask.link && t.chatId === newTask.chatId);
     const isRunning = state.current ? (state.current.link === newTask.link && state.current.chatId === newTask.chatId) : false;
+
     if (isInQueue || isRunning) {
       console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
-      return false;
+      return false; // This task is a duplicate, filter it out
     }
-    return true;
+    return true; // This task is valid
   },
-  fn: (_, newTask) => newTask,
+  fn: (_, newTask) => newTask, // Pass along the new task data if the filter is true
   target: taskReadyToBeQueued,
 });
 
+// The queue now ONLY listens to the pre-filtered, safe event.
 $tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
   const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
   return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
@@ -149,7 +176,6 @@ $tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
 
-// Save user every new task if possible
 sample({
   clock: newTaskReceived,
   filter: (newTask) => !!newTask.user,
@@ -157,7 +183,6 @@ sample({
   target: saveUserFx,
 });
 
-// Warn users about wait if non-privileged, not first in line
 sample({
   clock: newTaskReceived,
   source: $taskSource,
@@ -198,77 +223,79 @@ sample({
   target: taskInitiated,
 });
 
-sample({ clock: taskInitiated, source: $tasksQueue, filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(), fn: (q) => q[0], target: [$currentTask, taskStarted]});
-sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: () => new Date(), target: $taskStartTime });
-sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: (t) => t, target: clearTimeoutWithDelayFx });
+sample({ 
+  clock: taskInitiated,
+  source: $tasksQueue,
+  filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(),
+  fn: (q) => q[0],
+  target: [$currentTask, taskStarted]
+});
+sample({
+  clock: taskInitiated,
+  source: $taskTimeout,
+  filter: (t): t is number => t > 0,
+  fn: () => new Date(),
+  target: $taskStartTime
+});
+sample({
+  clock: taskInitiated,
+  source: $taskTimeout,
+  filter: (t): t is number => t > 0,
+  fn: (t) => t,
+  target: clearTimeoutWithDelayFx
+});
 $taskTimeout.on(clearTimeoutEvent, (_, n) => n);
 sample({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
 sample({ clock: taskStarted, filter: (t) => t.linkType === 'username', target: getAllStoriesFx });
 sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getParticularStoryFx });
 
-// ---------------------------------------------------------------------
-// EFFECT RESULT HANDLING — Bulletproof and TS Safe!
-// ---------------------------------------------------------------------
+// --- Effect Result Handling ---
 
-function isPlainObject(result: unknown): result is Record<string, unknown> {
-  return typeof result === 'object' && result !== null && !Array.isArray(result);
-}
-
-// Debug all result events for traceability
-getAllStoriesFx.doneData.watch((result) => console.log('[DEBUG] getAllStoriesFx.doneData:', result));
-getParticularStoryFx.doneData.watch((result) => console.log('[DEBUG] getParticularStoryFx.doneData:', result));
-
-// Handle getAllStoriesFx string result (error)
+// Handle getAllStoriesFx results
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
-  filter: (task, result): result is string => typeof result === 'string' && !!task,
+  filter: (task, result): result is string => !!task && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message }),
   target: [sendErrorMessageFx, taskDone, checkTasks],
 });
-
-// Handle getAllStoriesFx object result (actual data)
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
-  filter: (task, result): result is Record<string, unknown> => isPlainObject(result) && !!task,
-  fn: (task, result) => ({ task: task!, ...result }),
+  filter: (task, result): result is Record<string, unknown> =>
+    !!task && typeof result === 'object' && result !== null && !Array.isArray(result),
+  fn: (task, result) => ({ task: task!, ...(result as Record<string, unknown>) }),
   target: sendStoriesFx,
 });
-
 getAllStoriesFx.fail.watch(({ params, error }) => {
   console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
   taskDone();
   checkTasks();
 });
 
-// Handle getParticularStoryFx string result (error)
+// Handle getParticularStoryFx results
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
-  filter: (task, result): result is string => typeof result === 'string' && !!task,
+  filter: (task, result): result is string => !!task && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message }),
   target: [sendErrorMessageFx, taskDone, checkTasks],
 });
-
-// Handle getParticularStoryFx object result (actual data)
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
-  filter: (task, result): result is Record<string, unknown> => isPlainObject(result) && !!task,
-  fn: (task, result) => ({ task: task!, ...result }),
+  filter: (task, result): result is Record<string, unknown> =>
+    !!task && typeof result === 'object' && result !== null && !Array.isArray(result),
+  fn: (task, result) => ({ task: task!, ...(result as Record<string, unknown>) }),
   target: sendStoriesFx,
 });
-
 getParticularStoryFx.fail.watch(({ params, error }) => {
   console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
   taskDone();
   checkTasks();
 });
 
-// ---------------------------------------------------------------------
-// Finalization Logic & Temp Cleanup
-// ---------------------------------------------------------------------
+// --- Finalization Logic ---
 sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
 sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
 sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
@@ -277,9 +304,8 @@ sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 $currentTask.on(taskDone, () => null);
 $isTaskRunning.on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
+$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
-// Temp message handling
 $currentTask.on(tempMessageSent, (prev, msgId) => {
   if (!prev) {
     console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
@@ -289,16 +315,15 @@ $currentTask.on(tempMessageSent, (prev, msgId) => {
 });
 $currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMessages: [] } : null);
 
-// ---------------------------------------------------------------------
-// Interval-based health/restart checks
-// ---------------------------------------------------------------------
+// --- Interval Timers ---
 const intervalHasPassed = createEvent<void>();
 sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: checkTaskForRestart });
 setInterval(() => intervalHasPassed(), 30_000);
 
-// ---------------------------------------------------------------------
-// EXPORTS & Startup
-// ---------------------------------------------------------------------
+// =========================================================================
+//  EXPORTS
+// =========================================================================
 export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
 
 setTimeout(() => checkTasks(), 100);
+
