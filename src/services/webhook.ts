@@ -19,7 +19,6 @@ export interface UserInfo {
   tempMessages?: number[];
   initTime: number;
   isPremium?: boolean;
-  instanceId?: string;
 }
 
 // =============================================================================
@@ -41,16 +40,6 @@ const tempMessageSent = createEvent<number>();
 const taskDone = createEvent<void>();
 const checkTasks = createEvent<void>();
 const cleanUpTempMessagesFired = createEvent();
-
-// =============================================================================
-// INTERNAL: Unique task creation and instanceId
-// =============================================================================
-function createTask(userInfo: UserInfo): UserInfo {
-  return {
-    ...userInfo,
-    instanceId: `${userInfo.chatId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  };
-}
 
 // =============================================================================
 // LOGIC AND FLOW
@@ -129,9 +118,8 @@ const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
 
 const saveUserFx = createEffect(saveUser);
 
-// =============================================================================
-// Prevent Duplicate Task Processing (Race Condition Fix)
-// =============================================================================
+// --- Task Queue Management ---
+
 const $queueState = combine({
   tasks: $tasksQueue,
   current: $currentTask,
@@ -143,23 +131,17 @@ sample({
   filter: (state, newTask) => {
     const isInQueue = state.tasks.some(t => t.link === newTask.link && t.chatId === newTask.chatId);
     const isRunning = state.current ? (state.current.link === newTask.link && state.current.chatId === newTask.chatId) : false;
+
     if (isInQueue || isRunning) {
       console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
-      return false; // duplicate, filter out
+      return false;
     }
     return true;
   },
-  fn: (_, newTask) => createTask(newTask),
+  fn: (_, newTask) => newTask,
   target: taskReadyToBeQueued,
 });
 
-// DO NOT:
-//   - Use .setState on Effector stores (it does not exist!)
-//   - Mutate arrays in stores directly (always return new array copies in .on)
-//   - Use plain functions as clocks in sample (must be effector events or effects)
-//   - Use .getState inside sample/filter except for read-only logging/debug, not logic
-
-// The queue now ONLY listens to the pre-filtered, safe event.
 $tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
   const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
   return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
@@ -167,9 +149,6 @@ $tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
 
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
-
-// DO NOT: call getState inside reducers to decide how to update (Effector is declarative and async, race-prone if you do)
-// DO: always update state by returning new value based only on the old state and the event payload
 
 sample({
   clock: newTaskReceived,
@@ -218,43 +197,13 @@ sample({
   target: taskInitiated,
 });
 
-sample({
-  clock: taskInitiated,
-  source: $tasksQueue,
-  filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(),
-  fn: (q) => q[0],
-  target: [$currentTask, taskStarted]
-});
-sample({
-  clock: taskInitiated,
-  source: $taskTimeout,
-  filter: (t): t is number => t > 0,
-  fn: () => new Date(),
-  target: $taskStartTime
-});
-sample({
-  clock: taskInitiated,
-  source: $taskTimeout,
-  filter: (t): t is number => t > 0,
-  fn: (t) => t,
-  target: clearTimeoutWithDelayFx
-});
+sample({ clock: taskInitiated, source: $tasksQueue, filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(), fn: (q) => q[0], target: [$currentTask, taskStarted]});
+sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: () => new Date(), target: $taskStartTime });
+sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: (t) => t, target: clearTimeoutWithDelayFx });
 $taskTimeout.on(clearTimeoutEvent, (_, n) => n);
-sample({
-  clock: clearTimeoutEvent,
-  fn: () => null,
-  target: [$taskStartTime, checkTasks]
-});
-sample({
-  clock: taskStarted,
-  filter: (t) => t.linkType === 'username',
-  target: getAllStoriesFx
-});
-sample({
-  clock: taskStarted,
-  filter: (t) => t.linkType === 'link',
-  target: getParticularStoryFx
-});
+sample({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
+sample({ clock: taskStarted, filter: (t) => t.linkType === 'username', target: getAllStoriesFx });
+sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getParticularStoryFx });
 
 // --- Effect Result Handling ---
 
@@ -263,7 +212,7 @@ sample({
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
+  target: [sendErrorMessageFx, taskDone],
 });
 
 sample({
@@ -277,7 +226,6 @@ sample({
 getAllStoriesFx.fail.watch(({ params, error }) => {
   console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
   taskDone();
-  checkTasks();
 });
 
 sample({
@@ -285,7 +233,7 @@ sample({
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
+  target: [sendErrorMessageFx, taskDone],
 });
 
 sample({
@@ -299,20 +247,23 @@ sample({
 getParticularStoryFx.fail.watch(({ params, error }) => {
   console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
   taskDone();
-  checkTasks();
 });
+
+// --- Finalization Logic ---
 
 sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
 sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
-sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
-sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 
-sample({
-  clock: taskDone,
-  source: $currentTask,
-  filter: (t): t is UserInfo => t !== null,
-  target: cleanupTempMessagesFx,
+// -- KEY CHANGE: Trigger checkTasks asynchronously after taskDone to avoid race --
+taskDone.watch(() => {
+  setTimeout(() => checkTasks(), 0); // Ensures state is up-to-date before next run!
 });
+
+sample({ clock: sendStoriesFx.done, target: taskDone });
+sample({ clock: sendStoriesFx.fail, target: taskDone });
+// (Removed direct [taskDone, checkTasks] sample! This is what fixes the race.)
+
+sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 $currentTask.on(taskDone, () => null);
 $isTaskRunning.on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
@@ -328,12 +279,7 @@ $currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMess
 
 // --- Interval Timers ---
 const intervalHasPassed = createEvent<void>();
-sample({
-  clock: intervalHasPassed,
-  source: $currentTask,
-  filter: (t): t is UserInfo => t !== null,
-  target: checkTaskForRestart
-});
+sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: checkTaskForRestart });
 setInterval(() => intervalHasPassed(), 30_000);
 
 // =========================================================================
@@ -343,12 +289,8 @@ export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks 
 
 setTimeout(() => checkTasks(), 100);
 
-// =============================================================================
-// DO NOT ATTEMPT (EVER!)
-// =============================================================================
-//  - No .setState, ever (not in Effector)
-//  - No direct mutation (no .push, .pop, .shift on state!)
-//  - No plain function as sample clock (use only events/effects)
-//  - No imperative queue processing! All state flows by event, all queue changes by .on()
-//  - If you need debug logs, only put them in event watches, effects, or safe sample() callbacks
-// =============================================================================
+/* 
+ * DO NOT revert to the old pattern of calling checkTasks and taskDone simultaneously.
+ * DO NOT put checkTasks inside any .on reducer or before queue updates.
+ * Only use setTimeout for async tick after store updates.
+ */
