@@ -1,7 +1,9 @@
+// src/controllers/download-stories.ts
+
 import { Userbot } from 'config/userbot';
 import { timeout } from 'lib';
 import { Api } from 'telegram';
-import pLimit from 'p-limit'; // Ensure: yarn add p-limit
+import pLimit from 'p-limit'; // Ensure: yarn add p-limit (if not already)
 
 // --- Configuration for Concurrency ---
 // If you get FLOOD_WAIT errors from Telegram, lower this.
@@ -9,21 +11,14 @@ const DOWNLOAD_CONCURRENCY_LIMIT = 3;
 const limit = pLimit(DOWNLOAD_CONCURRENCY_LIMIT);
 
 // ===============================
-// Type Definitions
+// Type Definitions - MOVED TO src/types.ts
 // ===============================
+// These type definitions (MappedStoryItem and StoriesModel) should now be in src/types.ts
+// and imported from there.
 
-export type MappedStoryItem = {
-  id: number;
-  caption?: string;
-  media: Api.StoryItem['media'];
-  mediaType: 'photo' | 'video';
-  date: Date;
-  buffer?: Buffer;
-  bufferSize?: number; // Size in MB
-  noforwards?: boolean;
-};
+// CORRECTED: Import MappedStoryItem and StoriesModel from your central types.ts file
+import { MappedStoryItem, StoriesModel } from 'types'; // <--- Corrected import path
 
-export type StoriesModel = MappedStoryItem[];
 
 // ===============================
 // Download Stories (Concurrency-Safe)
@@ -34,7 +29,7 @@ export type StoriesModel = MappedStoryItem[];
  * Skips stories without media.
  */
 export async function downloadStories(
-  stories: StoriesModel,
+  stories: StoriesModel, // Already MappedStoryItem[]
   storiesType: 'active' | 'pinned'
 ): Promise<void> {
   if (!stories || stories.length === 0) {
@@ -45,7 +40,7 @@ export async function downloadStories(
   const client = await Userbot.getInstance();
   console.log(`[DownloadStories] Starting download of ${stories.length} ${storiesType} stories. Concurrency: ${DOWNLOAD_CONCURRENCY_LIMIT}.`);
 
-  const downloadPromises = stories.map((storyItem) =>
+  const downloadPromises = stories.map((storyItem: MappedStoryItem) => // Explicitly type storyItem
     limit(async () => {
       const mediaExists = !!storyItem.media;
       const isNoforwards = !!storyItem.noforwards;
@@ -63,6 +58,7 @@ export async function downloadStories(
       try {
         console.log(`[DownloadStories] Attempting download for story ID ${storyItem.id} (${storiesType})`);
 
+        // storyItem.media is Api.StoryItem['media'] type
         const buffer = await client.downloadMedia(storyItem.media);
 
         if (buffer instanceof Buffer && buffer.length > 0) {
@@ -72,7 +68,7 @@ export async function downloadStories(
         } else {
           console.log(`[DownloadStories] Story ID ${storyItem.id} (${storiesType}): Empty or invalid buffer.`);
         }
-      } catch (error: any) {
+      } catch (error: any) { // Explicitly type error as any for now
         console.error(`[DownloadStories] Error downloading story ID ${storyItem.id} (${storiesType}): ${error.message}`);
         if (error.errorMessage && error.errorMessage.startsWith('FLOOD_WAIT_')) {
           const waitSeconds = parseInt(error.errorMessage.split('_').pop() || '30');
@@ -107,7 +103,7 @@ export async function downloadStories(
 export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
   const mappedStories: MappedStoryItem[] = [];
 
-  stories.forEach((x) => {
+  stories.forEach((x: Api.TypeStoryItem) => { // Explicitly type x
     if (!x || !('id' in x)) return;
 
     if (!('media' in x) || !x.media || typeof x.media !== 'object') return;
