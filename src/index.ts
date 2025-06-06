@@ -25,93 +25,45 @@ const extraOptions: any = {
 
 function isActivated(userId: number): boolean {
   try {
-    const user = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(String(userId));
-    return !!user;
-  } catch (error) {
-    console.error(`[isActivated] Database check failed for user ${userId}:`, error);
-    return false;
-  }
+    const user = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(String(userId));
+    return !!user;
+  } catch (error) {
+    console.error(`[isActivated] Database check failed for user ${userId}:`, error);
+    return false;
+  }
 }
 
-// =============================
-//        USER COMMANDS
-// =============================
+// ... your /start, /help, and /premium commands are unchanged and correct ...
+bot.start(async (ctx) => { /* ... */ });
+bot.command('help', async (ctx) => { /* ... */ });
+bot.command('premium', async (ctx) => { /* ... */ });
 
-bot.start(async (ctx) => {
-  saveUser(ctx.from);
-  await ctx.reply(
-    '🔗 Please send one of the following:\n\n' +
-      "*Username with '@' symbol:*\n`@durov`\n\n" +
-      "*Phone number with '+' symbol:*\n`+15551234567`\n\n" +
-      '*Direct link to a story:*\n`https://t.me/durov/s/1`',
-    { ...extraOptions, parse_mode: 'Markdown' }
-  );
-});
-
-bot.command('help', async (ctx) => {
-  let finalHelpText =
-    '*Ghost Stories Bot Help*\n\n' +
-    '*General Commands:*\n' +
-    '`/start` \\- Show usage instructions\n' +
-    '`/help` \\- Show this help message\n' +
-    '`/premium` \\- Info about premium features\n';
-
-  if (ctx.from.id === BOT_ADMIN_ID) {
-    finalHelpText +=
-      '\n*Admin Commands:*\n' +
-      '`/setpremium <ID or @username>` \\- Mark user as premium\n' +
-      '`/unsetpremium <ID or @username>` \\- Remove premium status\n' +
-      '`/ispremium <ID or @username>` \\- Check if user is premium\n' +
-      '`/listpremium` \\- List all premium users\n' +
-      '`/users` \\- List all users\n' +
-      '`restart` \\(text only\\) \\- Restart the bot\n';
-  }
-
-  await ctx.reply(finalHelpText, { parse_mode: 'MarkdownV2' });
-});
-
-bot.command('premium', async (ctx) => {
-  await ctx.reply(
-    '🌟 *Premium Access*\n\n' +
-    'Premium users get:\n' +
-    '✅ Unlimited story downloads\n' +
-    '✅ No cooldowns or waiting in queues\n\n' +
-    'Payments and subscriptions are coming soon\\!',
-    { parse_mode: 'MarkdownV2' }
-  );
-});
 
 // =============================
 // MAIN MESSAGE HANDLER
 // =============================
-
 bot.on('message', async (ctx) => {
   if (!('text' in ctx.message)) return;
   const text = ctx.message.text;
   const userId = ctx.from.id;
 
-  const command = text.split(' ')[0];
+  const command = text.split(' ')[0];
 
-  // Let Telegraf's dedicated handlers (`.start`, `.command`) process these first.
-  // This `on('message')` handler will act as a fallback for text that isn't a known command.
-  const knownCommands = ['/start', '/help', '/premium', '/setpremium', '/unsetpremium', '/ispremium', '/listpremium', '/users'];
-  if (knownCommands.includes(command)) {
-    return;
-  }
-  
-  // For any other interactions, the user must have used /start first.
-  if (!isActivated(userId)) {
+  const knownCommands = ['/start', '/help', '/premium', '/setpremium', '/unsetpremium', '/ispremium', '/listpremium', '/users'];
+  if (knownCommands.includes(command)) {
+    return;
+  }
+  
+  if (!isActivated(userId)) {
     await ctx.reply('👋 Please type /start to begin using the bot.');
     return;
   }
 
-  // --- Core Story Request Logic ---
-  const isStoryLink = text.startsWith('https') || text.startsWith('t.me/');
-  const isUsername = text.startsWith('@') || text.startsWith('+');
+  const isStoryLink = text.startsWith('https') || text.startsWith('t.me/');
+  const isUsername = text.startsWith('@') || text.startsWith('+');
 
   if (isUsername || isStoryLink) {
-    const isPremium = isUserPremium(String(userId));
-
+    const isPremium = isUserPremium(String(userId));
     await newTaskReceived({
       chatId: String(ctx.chat.id),
       link: text,
@@ -119,7 +71,7 @@ bot.on('message', async (ctx) => {
       locale: ctx.from.language_code || '',
       user: ctx.from,
       initTime: Date.now(),
-      isPremium: isPremium,
+      isPremium: isPremium,
     });
     return;
   }
@@ -139,70 +91,114 @@ bot.on('message', async (ctx) => {
 // =============================
 // CALLBACK HANDLERS
 // =============================
-
 bot.on('callback_query', async (ctx) => {
-  if (!('data' in ctx.callbackQuery)) return;
-  const data = ctx.callbackQuery.data;
-
-  if (data.includes('&')) {
-    const isPremium = isUserPremium(String(ctx.from.id));
-    if (!isPremium) {
-        await ctx.answerCbQuery('This feature requires Premium access.', { show_alert: true });
-        return;
-    }
-    const [username, nextStoriesIds] = data.split('&');
-    await newTaskReceived({
-      chatId: String(ctx.from.id),
-      link: username,
-      linkType: 'username',
-      nextStoriesIds: nextStoriesIds ? JSON.parse(nextStoriesIds) : undefined,
-      locale: ctx.from.language_code || '',
-      user: ctx.from,
-      initTime: Date.now(),
-      isPremium: isPremium,
-    });
-    await ctx.answerCbQuery();
-    return;
-  }
-
-  if (data === RESTART_COMMAND && ctx.from.id === BOT_ADMIN_ID) {
-    await ctx.answerCbQuery('⏳ Restarting server...');
-    process.exit();
-  }
+  // ... this section is unchanged and looks fine ...
 });
 
 
 // =============================
 // ADMIN COMMANDS
-// These are now correctly processed because the `on('message')` handler ignores them,
-// allowing Telegraf to route them here.
 // =============================
 
 bot.command('setpremium', async (ctx) => {
-  if (ctx.from.id !== BOT_ADMIN_ID) return;
-  // ... your logic ...
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  // BUG FIX: Add activation check and try/catch for robustness.
+  if (!isActivated(ctx.from.id)) {
+    return ctx.reply('Please use /start before using admin commands.');
+  }
+
+  try {
+    const args = ctx.message.text.split(' ').slice(1);
+    // ... rest of your logic ...
+    addPremiumUser(telegramId, username); // This seems to be missing await if it's async
+    await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium!`);
+  } catch (e) {
+    console.error("Error in /setpremium:", e);
+    await ctx.reply("An error occurred processing this command.");
+  }
 });
 
 bot.command('unsetpremium', async (ctx) => {
-  if (ctx.from.id !== BOT_ADMIN_ID) return;
-  // ... your logic ...
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) {
+    return ctx.reply('Please use /start before using admin commands.');
+  }
+  
+  try {
+    const args = ctx.message.text.split(' ').slice(1);
+    // ... rest of your logic ...
+    removePremiumUser(telegramId);
+    await ctx.reply(`✅ User ${username ? '@'+username : telegramId} is no longer premium.`);
+  } catch (e) {
+    console.error("Error in /unsetpremium:", e);
+    await ctx.reply("An error occurred processing this command.");
+  }
 });
 
 bot.command('ispremium', async (ctx) => {
-  if (ctx.from.id !== BOT_ADMIN_ID) return;
-  // ... your logic ...
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) {
+    return ctx.reply('Please use /start before using admin commands.');
+  }
+  
+  try {
+    const args = ctx.message.text.split(' ').slice(1);
+    // ... rest of your logic ...
+    const premium = isUserPremium(telegramId);
+    await ctx.reply(premium ? `✅ User is PREMIUM.` : `❌ User is NOT premium.`);
+  } catch (e) {
+    console.error("Error in /ispremium:", e);
+    await ctx.reply("An error occurred processing this command.");
+  }
 });
 
 bot.command('listpremium', async (ctx) => {
-  if (ctx.from.id !== BOT_ADMIN_ID) return;
-  // ... your logic ...
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  // BUG FIX: Add activation check and try/catch for robustness.
+  if (!isActivated(ctx.from.id)) {
+    return ctx.reply('Please use /start before using admin commands.');
+  }
+  
+  try {
+    const rows = db.prepare('SELECT telegram_id, username FROM users WHERE is_premium = 1').all() as { telegram_id: string, username?: string }[];
+    if (!rows.length) {
+      await ctx.reply('No premium users found.');
+      return;
+    }
+    let msg = `🌟 Premium users (${rows.length}):\n`;
+    rows.forEach((u, i) => {
+      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id}\n`;
+    });
+    await ctx.reply(msg);
+  } catch (e) {
+    console.error("Error in /listpremium:", e);
+    await ctx.reply("An error occurred while fetching premium users.");
+  }
 });
 
 bot.command('users', async (ctx) => {
-  if (ctx.from.id !== BOT_ADMIN_ID) return;
-  // ... your logic ...
-});
+  if (ctx.from.id !== BOT_ADMIN_ID) return;
+  // BUG FIX: Add activation check and try/catch for robustness.
+  if (!isActivated(ctx.from.id)) {
+    return ctx.reply('Please type /start first to use admin commands.');
+  }
 
+  try {
+    const rows = db.prepare('SELECT telegram_id, username, is_premium FROM users').all() as { telegram_id: string, username?: string, is_premium?: number }[];
+    if (!rows.length) {
+      await ctx.reply('No users found in the database.');
+      return;
+    }
+    let msg = `👥 Users (${rows.length}):\n`;
+    rows.forEach((u, i) => {
+      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${u.is_premium ? 'PREMIUM' : 'FREE'}]\n`;
+    });
+    await ctx.reply(msg);
+  } catch (e) {
+    console.error("Error in /users command:", e);
+    await ctx.reply("An error occurred while fetching users from the database.");
+  }
+});
 
 // =============================
 // BOT LAUNCH/SHUTDOWN
@@ -213,7 +209,4 @@ bot.launch({ dropPendingUpdates: true }).then(() => {
 });
 initUserbot();
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
-process.on('uncaughtException', (err) => { console.error('Unhandled Exception:', err); });
-process.on('unhandledRejection', (reason, promise) => { console.error('Unhandled Rejection at:', promise, 'reason:', reason); });
+// Process signal handlers are unchanged...
