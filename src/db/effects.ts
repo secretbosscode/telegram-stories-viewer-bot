@@ -23,7 +23,6 @@ export const markProcessingFx = createEffect(
   }
 );
 
-// Add explicit typing for other effects as well:
 export const markDoneFx = createEffect(
   async (jobId: string): Promise<void> => {
     return db.markDone(jobId);
