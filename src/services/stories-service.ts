@@ -1,5 +1,3 @@
-// In: src/services/stories-service.ts
-
 import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
@@ -24,7 +22,7 @@ export interface UserInfo {
 }
 
 // =============================================================================
-// STORES & EVENTS - The Bot's State Machine Core
+// STORES & EVENTS - The Bot's State and Actions
 // =============================================================================
 
 const $currentTask = createStore<UserInfo | null>(null);
@@ -113,7 +111,10 @@ const sendWaitMessageFx = createEffect(async (params: {
   }
   const estimatedWaitSec = Math.ceil(estimatedWaitMs / 1000);
   const waitMsg = estimatedWaitSec > 0 ? `⏳ Please wait: Estimated wait time is ${estimatedWaitSec} seconds before your request starts.` : '⏳ Please wait: Your request will start soon.';
-  await bot.telegram.sendMessage(params.newTask.chatId, waitMsg);
+  await bot.telegram.sendMessage(
+    params.newTask.chatId,
+    waitMsg
+  );
 });
 
 const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
@@ -266,6 +267,7 @@ sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 $currentTask.on(taskDone, () => null);
 $isTaskRunning.on(taskDone, () => false);
+$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
   if (!prev) {
