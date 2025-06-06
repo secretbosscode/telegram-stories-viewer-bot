@@ -1,69 +1,58 @@
-// stories-service.ts
+// src/services/stories-service.ts
 
-import { handleNewTask } from 'services/queue-manager'; // Main DB-backed queue logic
-import { saveUser } from 'repositories/user-repository'; // Save Telegram user for analytics/CRM
-import { bot } from 'index';
-import { User } from 'telegraf/typings/core/types/typegram';
+import { createEffect, createEvent, createStore, sample } from 'effector';
+import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
+import { sendStoriesFx } from 'controllers/send-stories';
+import { UserInfo } from 'types'; // adjust path if needed
 
-/**
- * Represents information about a user's download request.
- * This should be consistent with how your bot receives requests.
- */
-export interface UserInfo {
-  chatId: string;                        // Telegram chat/user ID
-  link: string;                          // Username or link to download from
-  linkType: 'username' | 'link';         // Type of target (for routing logic)
-  nextStoriesIds?: number[];             // (Optional) For partial/batched downloads
-  locale: string;                        // User locale, for i18n
-  user?: User;                           // Telegraf user object (for user DB)
-  tempMessages?: number[];               // Message IDs to delete after (UX cleanup)
-  initTime: number;                      // Timestamp when request initiated
-  isPremium?: boolean;                   // Is the user premium?
-  instanceId?: string;                   // (Optional) Unique per request instance
-}
+// Keep a store of "temporary" message IDs, so you can delete or clean them up later
+export const $tempMessages = createStore<number[]>([]);
 
-// --- Optional: Track temporary messages for later cleanup (UX)
-const tempMessageMap = new Map<string, number[]>();
+// Add message ID to temp messages (exported so others can call it)
+export const tempMessageSent = createEvent<number>();
+$tempMessages.on(tempMessageSent, (list, id) => [...list, id]);
 
-/**
- * Entry point: Handles a new story download request from a user.
- * - Saves the user in DB for analytics/premium support
- * - Enqueues the request (persistent DB, via queue-manager)
- * - Tracks temporary messages for optional UX cleanup
- */
-export async function handleStoryRequest(userInfo: UserInfo) {
-  // 1. Save the Telegram user to your DB for stats, premium, etc.
-  if (userInfo.user) {
-    saveUser(userInfo.user);
+// Clear temp messages (used after sending a batch)
+export const cleanUpTempMessagesFired = createEvent();
+$tempMessages.on(cleanUpTempMessagesFired, () => []);
+
+// The queue manager triggers this event when a new story task is received
+export const newTaskReceived = createEvent<UserInfo>();
+
+// Main handler for processing a story task
+export const handleStoryRequest = createEffect(async (task: UserInfo) => {
+  // Figure out if this is a particular story or all stories
+  if (task.linkType === 'link' && task.link.includes('/s/')) {
+    // Single story by link
+    return getParticularStoryFx(task);
   }
+  // All stories for a user
+  return getAllStoriesFx(task);
+});
 
-  // 2. Track any temporary message IDs for this user (if any, optional)
-  if (userInfo.tempMessages && userInfo.tempMessages.length > 0) {
-    tempMessageMap.set(userInfo.chatId, userInfo.tempMessages);
-  }
+// When a story request succeeds, send the stories
+sample({
+  clock: handleStoryRequest.doneData,
+  source: newTaskReceived,
+  filter: (_, result) => typeof result === 'object' && !!result,
+  fn: (task, result) => ({ ...result, task }),
+  target: sendStoriesFx,
+});
 
-  // 3. Main logic: Pass the request to queue-manager (handles duplicates, limits, privilege, etc)
-  await handleNewTask(userInfo);
-}
+// After any sendStoriesFx call, clean up temp messages
+sendStoriesFx.finally.watch(() => {
+  cleanUpTempMessagesFired();
+});
 
-/**
- * Optionally clean up any temporary "please wait"/progress messages for a user.
- * Call after a user's request is finished (in queue-manager or on-demand).
- */
-export async function cleanupTempMessages(chatId: string) {
-  const tempMessages = tempMessageMap.get(chatId) || [];
-  if (tempMessages.length === 0) return;
+// After any sendStoriesFx fails, clean up temp messages (to unstick queue)
+sendStoriesFx.fail.watch(() => {
+  cleanUpTempMessagesFired();
+});
 
-  await Promise.allSettled(
-    tempMessages.map((id) =>
-      bot.telegram.deleteMessage(chatId, id).catch(() => null)
-    )
-  );
-  tempMessageMap.delete(chatId);
-}
-
-// --- (Optional) You could also add helpers here for further UX improvements ---
-// e.g., expose a sendProgressMessage(chatId, msg) function, etc.
-
-// Export the entrypoints for use in your bot
-export { handleStoryRequest, cleanupTempMessages };
+// Export ONLY ONCE
+export {
+  newTaskReceived,
+  handleStoryRequest,
+  cleanUpTempMessagesFired,
+  tempMessageSent
+};
