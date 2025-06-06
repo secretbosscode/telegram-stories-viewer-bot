@@ -31,7 +31,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       const from = i + 1;
       const to = Math.min(i + PER_PAGE, mapped.length);
       // CORRECTED LINE: Removed LaTeX delimiters
-      nextStories[`<span class="math-inline">\{from\}\-</span>{to}`] = mapped.slice(i, i + PER_PAGE).map((x) => x.id);
+      nextStories[`${from}-${to}`] = mapped.slice(i, i + PER_PAGE).map((x) => x.id);
     }
     mapped = currentStories;
   }
@@ -88,4 +88,49 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     } else {
       await bot.telegram.sendMessage(
         task.chatId,
-        '❌ Cannot download Active stories,
+        '❌ Cannot download Active stories, most likely they are too large to send via bot.'
+      );
+    }
+
+    // --- If more pages, offer buttons for the rest ---
+    if (hasMorePages) {
+      const btns = Object.entries(nextStories).map(
+        ([pages, nextStoriesIds]) => ({
+          text: `📥 ${pages} 📥`,
+          // CORRECTED LINE: Removed LaTeX delimiters
+          callback_data: `${task.link}&${JSON.stringify(nextStoriesIds)}`,
+        })
+      );
+      // Chunk 3 buttons per row
+      const keyboard = btns.reduce((acc: Markup.InlineKeyboardButton[][], curr: Markup.InlineKeyboardButton, index: number) => {
+        const chunkIndex = Math.floor(index / 3);
+        if (!acc[chunkIndex]) acc[chunkIndex] = [];
+        acc[chunkIndex].push(curr);
+        return acc;
+      }, []);
+      await bot.telegram.sendMessage(
+        task.chatId,
+        // CORRECTED LINE: Removed LaTeX delimiters
+        `Uploaded ${PER_PAGE}/${stories.length} active stories ✅`,
+        Markup.inlineKeyboard(keyboard)
+      );
+    }
+
+    notifyAdmin({
+      status: 'info',
+      baseInfo: `📥 ${uploadableStories.length} Active stories uploaded to user!`,
+    } as NotifyAdminParams);
+
+  } catch (error) { // <--- The file was truncated here, fixed in previous turn
+    notifyAdmin({
+      task,
+      status: 'error',
+      errorInfo: { cause: error },
+    } as NotifyAdminParams);
+    console.error('[sendActiveStories] Error sending ACTIVE stories:', error);
+    try {
+      await bot.telegram.sendMessage(task.chatId, 'An error occurred while sending stories. The admin has been notified.').catch(() => null);
+    } catch (_) {/* ignore */}
+    throw error;
+  }
+} // <--- Added this closing brace if it was missing in your file (from previous turn)
