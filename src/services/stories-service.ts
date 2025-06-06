@@ -60,3 +60,69 @@ sample({
     // Logic to populate SendStoriesFxParams based on the return type of get*StoriesFx
     if (typeof fetchedDataResult === 'object' && fetchedDataResult !== null) {
       if ('particularStory' in fetchedDataResult && fetchedDataResult.particularStory) {
+        params.particularStory = (fetchedDataResult as { particularStory: any }).particularStory;
+      }
+      // --- THE MISSING ELSE IF BLOCK AND ITS CLOSING BRACE ---
+      else if ('activeStories' in fetchedDataResult || 'pinnedStories' in fetchedDataResult || 'paginatedStories' in fetchedDataResult) {
+        const data = fetchedDataResult as {
+          activeStories?: any[];
+          pinnedStories?: any[];
+          paginatedStories?: any[];
+        };
+        if (data.activeStories) params.activeStories = data.activeStories;
+        if (data.pinnedStories) params.pinnedStories = data.pinnedStories;
+        if (data.paginatedStories) params.paginatedStories = data.paginatedStories;
+      }
+      // --- END OF THE MISSING ELSE IF BLOCK ---
+      else {
+        console.error('[stories-service] Unexpected result type from handleStoryRequest.doneData:', fetchedDataResult);
+        throw new Error('Unexpected story data type received from fetch effect for sending.');
+      }
+    } else {
+      console.error('[stories-service] handleStoryRequest.doneData produced non-object/non-array:', fetchedDataResult);
+      throw new Error('Invalid data type received from fetch effect.');
+    }
+
+    return params;
+  },
+  target: sendStoriesFx,
+});
+
+// After any sendStoriesFx call, clean up temp messages
+sendStoriesFx.finally.watch(() => {
+  cleanUpTempMessagesFired();
+});
+
+// After any sendStoriesFx fails, clean up temp messages (to unstick queue)
+sendStoriesFx.fail.watch(() => {
+  cleanUpTempMessagesFired();
+});
+
+// --- Finalization Logic (Task state progression) ---
+sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
+sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
+sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
+sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
+
+// When a task is marked done, trigger cleanupTempMessagesFx
+sample({
+  clock: taskDone,
+  source: $currentTask, // Source the current task state
+  filter: (t: UserInfo | null): t is UserInfo => t !== null, // Ensure task is not null
+  target: cleanupTempMessagesFx.prepend(task => task) // Prepend the task to the cleanup effect
+});
+
+// Update the current task store when a task is done
+$currentTask.on(taskDone, () => null);
+
+// Update task running status when a task is done
+$isTaskRunning.on(taskDone, () => false);
+
+// Remove the completed task from the queue when done
+$tasksQueue.on(taskDone, (tasks: UserInfo[]) => tasks.length > 0 ? tasks.slice(1) : []);
+
+// Handle temporary message IDs sent during processing
+$currentTask.on(tempMessageSent, (prev: UserInfo | null, msgId: number) => {
+  if (!prev) {
+    console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
+    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime
