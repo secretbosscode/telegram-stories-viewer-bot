@@ -1,7 +1,8 @@
-// index.ts
+// src/db/index.ts
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import { DownloadQueueItem } from 'types'; // Import DownloadQueueItem from your types file
 
 const DB_PATH = path.join(__dirname, '../../data/database.db');
 
@@ -39,7 +40,7 @@ db.exec(`
 
 // ===== DB UTILS =====
 
-export function enqueueDownload(telegram_id: string, target_username: string) {
+export function enqueueDownload(telegram_id: string, target_username: string): boolean {
   const now = Math.floor(Date.now() / 1000);
   try {
     db.prepare(`
@@ -52,61 +53,40 @@ export function enqueueDownload(telegram_id: string, target_username: string) {
   }
 }
 
-export function getNextQueueItem() {
-  // Prioritize admin, then premium, then free
-  const row = db.prepare(`
+// Corrected return type and mapped properties from DB row to DownloadQueueItem
+export function getNextQueueItem(): DownloadQueueItem | null {
+  const row: any = db.prepare(`
     SELECT q.*, u.is_premium
     FROM download_queue q
     LEFT JOIN users u ON u.telegram_id = q.telegram_id
     WHERE q.status = 'pending'
-    ORDER BY 
-      CASE WHEN q.telegram_id = ? THEN 0 ELSE 1 END,  -- admin first
-      u.is_premium DESC, 
+    ORDER BY
+      CASE WHEN q.telegram_id = ? THEN 0 ELSE 1 END,
+      u.is_premium DESC,
       q.enqueued_ts ASC
     LIMIT 1
   `).get(process.env.BOT_ADMIN_ID || '');
-  return row;
+
+  // Map the raw database row to the DownloadQueueItem interface
+  if (row) {
+    return {
+      id: row.id.toString(), // Convert number ID from DB to string as per DownloadQueueItem interface
+      chatId: row.telegram_id, // Map telegram_id from DB to chatId in interface
+      task: {
+        chatId: row.telegram_id, // Redundant but explicit, UserInfo is also expected in task
+        link: row.target_username, // Map target_username to link
+        linkType: 'username', // Default, or infer if possible from DB data
+        locale: 'en', // Default, or get from user table if stored
+        user: undefined, // No user object from this query, set to undefined
+        initTime: row.enqueued_ts * 1000, // Convert seconds to milliseconds
+        isPremium: row.is_premium === 1, // Convert INTEGER 0/1 to boolean
+      },
+      status: row.status as 'pending' | 'in_progress' | 'done' | 'error', // Cast DB string to union type
+    };
+  }
+  return null;
 }
 
-export function markProcessing(id: number) {
-  db.prepare(`UPDATE download_queue SET status = 'processing' WHERE id = ?`).run(id);
-}
-export function markDone(id: number) {
-  db.prepare(`UPDATE download_queue SET status = 'done', processed_ts = ? WHERE id = ?`).run(Math.floor(Date.now() / 1000), id);
-}
-export function markError(id: number, error: string) {
-  db.prepare(`UPDATE download_queue SET status = 'error', error = ?, processed_ts = ? WHERE id = ?`).run(error, Math.floor(Date.now() / 1000), id);
-}
-export function cleanupQueue() {
-  // Remove all but the last 50 per user, or anything older than 3 days
-  db.prepare(`
-    DELETE FROM download_queue 
-    WHERE id IN (
-      SELECT id FROM download_queue
-      WHERE processed_ts IS NOT NULL AND processed_ts < (strftime('%s','now') - 259200)
-    )
-  `).run();
-}
-
-export function wasRecentlyDownloaded(telegram_id: string, target_username: string, hours: number) {
-  if (hours <= 0) return false;
-  const cutoff = Math.floor(Date.now() / 1000) - (hours * 3600);
-  const row = db.prepare(`
-    SELECT id FROM download_queue
-    WHERE telegram_id = ? AND target_username = ? 
-      AND status = 'done' AND processed_ts > ?
-    ORDER BY processed_ts DESC LIMIT 1
-  `).get(telegram_id, target_username, cutoff);
-  return !!row;
-}
-
-export function isDuplicatePending(telegram_id: string, target_username: string) {
-  // Prevents same user/target combo being in queue at once
-  const row = db.prepare(`
-    SELECT id FROM download_queue 
-    WHERE telegram_id = ? AND target_username = ? 
-      AND (status = 'pending' OR status = 'processing')
-    LIMIT 1
-  `).get(telegram_id, target_username);
-  return !!row;
-}
+// Corrected parameter type for id from number to string
+export function markProcessing(id: string): void {
+  db.prepare(`UPDATE download_queue SET status = 'processing' WHERE
