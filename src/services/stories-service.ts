@@ -2,7 +2,7 @@ import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
 import { sendStoriesFx } from 'controllers/send-stories';
-import { createEffect, createEvent, createStore, sample, combine, Event, StoreValue, EventCallable } from 'effector';
+import { createEffect, createEvent, createStore, sample, combine, StoreValue } from 'effector';
 import { bot } from 'index';
 import { getRandomArrayItem } from 'lib';
 import { saveUser } from 'repositories/user-repository';
@@ -10,15 +10,15 @@ import { User } from 'telegraf/typings/core/types/typegram';
 import { Api } from 'telegram';
 
 export interface UserInfo {
-  chatId: string;
-  link: string;
-  linkType: 'username' | 'link';
-  nextStoriesIds?: number[];
-  locale: string;
-  user?: User;
-  tempMessages?: number[];
-  initTime: number;
-  isPremium?: boolean;
+  chatId: string;
+  link: string;
+  linkType: 'username' | 'link';
+  nextStoriesIds?: number[];
+  locale: string;
+  user?: User;
+  tempMessages?: number[];
+  initTime: number;
+  isPremium?: boolean;
 }
 
 // =============================================================================
@@ -53,115 +53,115 @@ const cleanUpTempMessagesFired = createEvent();
 // pattern that prevents the queue from stalling.
 // =========================================================================
 sample({
-  clock: newTaskReceived,
-  target: checkTasks,
+  clock: newTaskReceived,
+  target: checkTasks,
 });
 
 const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
 const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
-  const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
-  setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
+  const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
+  setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
 });
 
 const MAX_WAIT_TIME = 7;
 const LARGE_ITEM_THRESHOLD = 100;
 
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
-  if (task) {
-    const minsFromStart = Math.floor((Date.now() - task.initTime) / 60000);
-    if (minsFromStart >= MAX_WAIT_TIME) {
-      const isPrivileged = task.chatId === BOT_ADMIN_ID.toString() || task.isPremium === true;
-      if (isPrivileged) {
-        console.warn(`[StoriesService] Privileged task for ${task.link} (User: ${task.chatId}) running for ${minsFromStart} mins.`);
-        try {
-          await bot.telegram.sendMessage(task.chatId, `🔔 Your long task for "${task.link}" is still running (${minsFromStart} mins).`).catch(() => {});
-        } catch (e) { /* Error sending notification */ }
-      } else {
-        console.error('[StoriesService] Non-privileged task took too long, exiting:', JSON.stringify(task));
-        await bot.telegram.sendMessage(
-          BOT_ADMIN_ID,
-          "❌ Bot took too long for a non-privileged task and was shut down:\n\n" + JSON.stringify(task, null, 2)
-        );
-        process.exit(1);
-      }
-    }
-  }
+  if (task) {
+    const minsFromStart = Math.floor((Date.now() - task.initTime) / 60000);
+    if (minsFromStart >= MAX_WAIT_TIME) {
+      const isPrivileged = task.chatId === BOT_ADMIN_ID.toString() || task.isPremium === true;
+      if (isPrivileged) {
+        console.warn(`[StoriesService] Privileged task for ${task.link} (User: ${task.chatId}) running for ${minsFromStart} mins.`);
+        try {
+          await bot.telegram.sendMessage(task.chatId, `🔔 Your long task for "${task.link}" is still running (${minsFromStart} mins).`).catch(() => {});
+        } catch (e) { /* Error sending notification */ }
+      } else {
+        console.error('[StoriesService] Non-privileged task took too long, exiting:', JSON.stringify(task));
+        await bot.telegram.sendMessage(
+          BOT_ADMIN_ID,
+          "❌ Bot took too long for a non-privileged task and was shut down:\n\n" + JSON.stringify(task, null, 2)
+        );
+        process.exit(1);
+      }
+    }
+  }
 });
 
 const $taskSource = combine({
-  currentTask: $currentTask,
-  taskStartTime: $taskStartTime,
-  taskTimeout: $taskTimeout,
-  queue: $tasksQueue,
-  user: $currentTask.map(task => task?.user ?? null),
+  currentTask: $currentTask,
+  taskStartTime: $taskStartTime,
+  taskTimeout: $taskTimeout,
+  queue: $tasksQueue,
+  user: $currentTask.map(task => task?.user ?? null),
 });
 type TaskSourceSnapshot = StoreValue<typeof $taskSource>;
 
 const sendWaitMessageFx = createEffect(async (params: {
-  multipleRequests: boolean;
-  taskStartTime: Date | null;
-  taskTimeout: number;
-  queueLength: number;
-  newTask: UserInfo;
+  multipleRequests: boolean;
+  taskStartTime: Date | null;
+  taskTimeout: number;
+  queueLength: number;
+  newTask: UserInfo;
 }) => {
-  let estimatedWaitMs = 0;
-  if (params.taskStartTime) {
-    const elapsed = Date.now() - params.taskStartTime.getTime();
-    estimatedWaitMs = Math.max(params.taskTimeout - elapsed, 0) + (params.queueLength * params.taskTimeout);
-  }
-  const estimatedWaitSec = Math.ceil(estimatedWaitMs / 1000);
-  const waitMsg = estimatedWaitSec > 0 ? `⏳ Please wait: Estimated wait time is ${estimatedWaitSec} seconds before your request starts.` : '⏳ Please wait: Your request will start soon.';
-  await bot.telegram.sendMessage(
-    params.newTask.chatId,
-    waitMsg
-  );
+  let estimatedWaitMs = 0;
+  if (params.taskStartTime) {
+    const elapsed = Date.now() - params.taskStartTime.getTime();
+    estimatedWaitMs = Math.max(params.taskTimeout - elapsed, 0) + (params.queueLength * params.taskTimeout);
+  }
+  const estimatedWaitSec = Math.ceil(estimatedWaitMs / 1000);
+  const waitMsg = estimatedWaitSec > 0 ? `⏳ Please wait: Estimated wait time is ${estimatedWaitSec} seconds before your request starts.` : '⏳ Please wait: Your request will start soon.';
+  await bot.telegram.sendMessage(
+    params.newTask.chatId,
+    waitMsg
+  );
 });
 
 const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
-  if (task.tempMessages && task.tempMessages.length > 0) {
-    await Promise.allSettled(
-      task.tempMessages.map(id => bot.telegram.deleteMessage(task.chatId, id).catch(() => null))
-    );
-  }
+  if (task.tempMessages && task.tempMessages.length > 0) {
+    await Promise.allSettled(
+      task.tempMessages.map(id => bot.telegram.deleteMessage(task.chatId, id).catch(() => null))
+    );
+  }
 });
 
 const saveUserFx = createEffect(saveUser);
 
 // --- Task Queue Management ---
 $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
-  const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
-  if (tasks.some(x => x.chatId === newTask.chatId && x.link === newTask.link)) return tasks;
-  return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
+  const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
+  if (tasks.some(x => x.chatId === newTask.chatId && x.link === newTask.link)) return tasks;
+  return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
 });
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
 
 sample({
-  clock: newTaskReceived,
-  source: $taskSource,
-  filter: (sourceData): sourceData is TaskSourceSnapshot & { user: User } => !!sourceData.user,
-  fn: (sourceData): User => sourceData.user,
-  target: saveUserFx,
+    clock: newTaskReceived,
+    // Ensure user exists before attempting to save
+    filter: (newTask): newTask is UserInfo & { user: User } => !!newTask.user,
+    fn: (newTask) => newTask.user,
+    target: saveUserFx,
 });
 
 sample({
-  clock: newTaskReceived,
-  source: $taskSource,
-  filter: (sourceData, newTask) => {
-    const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
-    if (!isPrivileged) {
-      return ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId) || (sourceData.taskStartTime instanceof Date);
-    }
-    return false;
-  },
-  fn: (sourceData, newTask) => ({
-    multipleRequests: ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId),
-    taskStartTime: sourceData.taskStartTime,
-    taskTimeout: sourceData.taskTimeout,
-    queueLength: sourceData.queue.filter(t => t.chatId !== newTask.chatId && t.link !== newTask.link).length,
-    newTask,
-  }),
-  target: sendWaitMessageFx,
+  clock: newTaskReceived,
+  source: $taskSource,
+  filter: (sourceData, newTask) => {
+    const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
+    if (!isPrivileged) {
+      return ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId) || (sourceData.taskStartTime instanceof Date);
+    }
+    return false;
+  },
+  fn: (sourceData, newTask) => ({
+    multipleRequests: ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId),
+    taskStartTime: sourceData.taskStartTime,
+    taskTimeout: sourceData.taskTimeout,
+    queueLength: sourceData.queue.filter(t => t.chatId !== newTask.chatId && t.link !== newTask.link).length,
+    newTask,
+  }),
+  target: sendWaitMessageFx,
 });
 
 // =========================================================================
@@ -175,22 +175,22 @@ sample({
 // =========================================================================
 type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
 const $taskInitiationDataSource = combine<TaskInitiationSource>({
-  isRunning: $isTaskRunning,
-  currentSystemCooldownStartTime: $taskStartTime,
-  queue: $tasksQueue
+  isRunning: $isTaskRunning,
+  currentSystemCooldownStartTime: $taskStartTime,
+  queue: $tasksQueue
 });
 
 sample({
-  clock: checkTasks,
-  source: $taskInitiationDataSource,
-  filter: (sourceValues) => {
-    if (sourceValues.isRunning || sourceValues.queue.length === 0) return false;
-    const nextTaskInQueue = sourceValues.queue[0];
-    if (!nextTaskInQueue) return false;
-    const isPrivileged = nextTaskInQueue.chatId === BOT_ADMIN_ID.toString() || nextTaskInQueue.isPremium === true;
-    return isPrivileged || sourceValues.currentSystemCooldownStartTime === null;
-  },
-  target: taskInitiated,
+  clock: checkTasks,
+  source: $taskInitiationDataSource,
+  filter: (sourceValues) => {
+    if (sourceValues.isRunning || sourceValues.queue.length === 0) return false;
+    const nextTaskInQueue = sourceValues.queue[0];
+    if (!nextTaskInQueue) return false;
+    const isPrivileged = nextTaskInQueue.chatId === BOT_ADMIN_ID.toString() || nextTaskInQueue.isPremium === true;
+    return isPrivileged || sourceValues.currentSystemCooldownStartTime === null;
+  },
+  target: taskInitiated,
 });
 
 sample({ clock: taskInitiated, source: $tasksQueue, filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(), fn: (q) => q[0], target: [$currentTask, taskStarted]});
@@ -205,48 +205,50 @@ sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getPa
 // COMMENT: This logic correctly associates an effect's result with the task that is
 // currently running by sourcing `$currentTask`. This pattern is stable.
 type GetAllStoriesSuccessResult = { activeStories: Api.TypeStoryItem[]; pinnedStories: Api.TypeStoryItem[]; paginatedStories?: Api.TypeStoryItem[]; };
-type GetParticularStorySuccessResult = { activeStories: Api.TypeStoryItem[]; pinnedStories: Api.TypeStoryItem[]; paginatedStories?: Api.TypeStoryItem[]; particularStory: Api.TypeStoryItem; };
-type EffectDoneResult<SuccessT> = SuccessT | string;
+type GetParticularStorySuccessResult = { activeStories: Api.TypeStoryItem[]; pinnedStories: Api.TypeStoryItem[]; particularStory: Api.TypeStoryItem; };
 
 sample({
-  clock: getAllStoriesFx.doneData,
-  source: $currentTask,
-  filter: (task, effectResult): task is UserInfo => task !== null && typeof effectResult.result === 'string',
-  fn: (task, { result }) => ({ task, message: result as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
+    clock: getAllStoriesFx.doneData,
+    source: $currentTask,
+    filter: (task, result): task is UserInfo => task !== null && typeof result === 'string',
+    fn: (task, result) => ({ task: task!, message: result }), // task is guarded by filter
+    target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 
 sample({
-  clock: getAllStoriesFx.doneData,
-  source: $currentTask,
-  filter: (task, effectResult): task is UserInfo => task !== null && typeof effectResult.result === 'object' && effectResult.result !== null,
-  fn: (task, { result }) => ({ task: task, ...(result as GetAllStoriesSuccessResult) }),
-  target: sendStoriesFx,
+    clock: getAllStoriesFx.doneData,
+    source: $currentTask,
+    filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null,
+    fn: (task, result) => ({ task: task!, ...(result as GetAllStoriesSuccessResult) }),
+    target: sendStoriesFx,
 });
+
 getAllStoriesFx.fail.watch(({ params, error }) => {
-  console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
-  taskDone();
-  checkTasks();
+  console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
+  taskDone();
+  checkTasks();
 });
 
 sample({
-  clock: getParticularStoryFx.doneData,
-  source: $currentTask,
-  filter: (task, effectResult): task is UserInfo => task !== null && typeof effectResult.result === 'string',
-  fn: (task, { result }) => ({ task, message: result as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
+    clock: getParticularStoryFx.doneData,
+    source: $currentTask,
+    filter: (task, result): task is UserInfo => task !== null && typeof result === 'string',
+    fn: (task, result) => ({ task: task!, message: result }),
+    target: [sendErrorMessageFx, taskDone, checkTasks],
 });
+
 sample({
-  clock: getParticularStoryFx.doneData,
-  source: $currentTask,
-  filter: (task, effectResult): task is UserInfo => task !== null && typeof effectResult.result === 'object' && effectResult.result !== null && 'particularStory' in effectResult.result,
-  fn: (task, { result }) => ({ task, ...(result as GetParticularStorySuccessResult) }),
-  target: sendStoriesFx,
+    clock: getParticularStoryFx.doneData,
+    source: $currentTask,
+    filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null && 'particularStory' in result,
+    fn: (task, result) => ({ task: task!, ...(result as GetParticularStorySuccessResult) }),
+    target: sendStoriesFx,
 });
+
 getParticularStoryFx.fail.watch(({ params, error }) => {
-  console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
-  taskDone();
-  checkTasks();
+  console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
+  taskDone();
+  checkTasks();
 });
 
 // =========================================================================
@@ -270,11 +272,11 @@ $isTaskRunning.on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
-  if (!prev) {
-    console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
-    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId] } as UserInfo;
-  }
-  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
+  if (!prev) {
+    console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
+    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId] } as UserInfo;
+  }
+  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
 });
 $currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMessages: [] } : null);
 
@@ -286,6 +288,6 @@ setInterval(() => intervalHasPassed(), 30_000);
 // =========================================================================
 //  EXPORTS - DO NOT REMOVE
 // =========================================================================
-export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks, UserInfo };
+export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
 
 setTimeout(() => checkTasks(), 100);
