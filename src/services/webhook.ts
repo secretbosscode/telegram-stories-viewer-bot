@@ -1,50 +1,354 @@
-import express from 'express';
-import Stripe from 'stripe';
-import bodyParser from 'body-parser';
-import dotenv from 'dotenv';
-import { addPremiumUser } from './premium-service';
+import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
+import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
+import { sendErrorMessageFx } from 'controllers/send-message';
+import { sendStoriesFx } from 'controllers/send-stories';
+import { createEffect, createEvent, createStore, sample, combine } from 'effector';
+import { bot } from 'index';
+import { getRandomArrayItem } from 'lib';
+import { saveUser } from 'repositories/user-repository';
+import { User } from 'telegraf/typings/core/types/typegram';
+import { Api } from 'telegram';
 
-dotenv.config(); // Load .env variables
+export interface UserInfo {
+  chatId: string;
+  link: string;
+  linkType: 'username' | 'link';
+  nextStoriesIds?: number[];
+  locale: string;
+  user?: User;
+  tempMessages?: number[];
+  initTime: number;
+  isPremium?: boolean;
+  instanceId?: string;
+}
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-05-28.basil', // CHANGED LINE HERE
+// =============================================================================
+// STORES & EVENTS
+// =============================================================================
+
+const $currentTask = createStore<UserInfo | null>(null);
+const $tasksQueue = createStore<UserInfo[]>([]);
+const $isTaskRunning = createStore(false);
+const $taskStartTime = createStore<Date | null>(null);
+const clearTimeoutEvent = createEvent<number>();
+const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
+
+const newTaskReceived = createEvent<UserInfo>();
+const taskReadyToBeQueued = createEvent<UserInfo>();
+const taskInitiated = createEvent<void>();
+const taskStarted = createEvent<UserInfo>();
+const tempMessageSent = createEvent<number>();
+const taskDone = createEvent<void>();
+const checkTasks = createEvent<void>();
+const cleanUpTempMessagesFired = createEvent();
+
+// =============================================================================
+// INTERNAL: Unique task creation and instanceId
+// =============================================================================
+function createTask(userInfo: UserInfo): UserInfo {
+  return {
+    ...userInfo,
+    instanceId: `${userInfo.chatId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  };
+}
+
+// =============================================================================
+// LOGIC AND FLOW
+// =============================================================================
+
+sample({
+  clock: taskReadyToBeQueued,
+  target: checkTasks,
 });
 
-const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;
-const app = express();
+const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
+const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
+  const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
+  setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
+});
 
-// Stripe requires the raw body to verify webhook signatures
-app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) => {
-  const sig = req.headers['stripe-signature'] as string;
-  let event: Stripe.Event;
+const MAX_WAIT_TIME = 7;
 
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-  } catch (err: any) {
-    console.error('❌ Webhook signature verification failed:', err.message);
-    res.status(400).send(`Webhook Error: ${err.message}`);
-    return;
-  }
-
-  // Handle successful payment event
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object as Stripe.Checkout.Session;
-    const telegramId = session.metadata?.telegram_id;
-    const username = session.metadata?.username;
-
-    if (telegramId) {
-      addPremiumUser(telegramId, username);
-      console.log(`✅ Premium access granted to Telegram ID: ${telegramId} (${username})`);
-    } else {
-      console.warn('⚠️ Missing telegram_id in session metadata');
+const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
+  if (task) {
+    const minsFromStart = Math.floor((Date.now() - task.initTime) / 60000);
+    if (minsFromStart >= MAX_WAIT_TIME) {
+      const isPrivileged = task.chatId === BOT_ADMIN_ID.toString() || task.isPremium === true;
+      if (isPrivileged) {
+        console.warn(`[StoriesService] Privileged task for ${task.link} (User: ${task.chatId}) running for ${minsFromStart} mins.`);
+        try {
+          await bot.telegram.sendMessage(task.chatId, `🔔 Your long task for "${task.link}" is still running (${minsFromStart} mins).`).catch(() => {});
+        } catch (e) { /* Error sending notification */ }
+      } else {
+        console.error('[StoriesService] Non-privileged task took too long, exiting:', JSON.stringify(task));
+        await bot.telegram.sendMessage(
+          BOT_ADMIN_ID,
+          "❌ Bot took too long for a non-privileged task and was shut down:\n\n" + JSON.stringify(task, null, 2)
+        );
+        process.exit(1);
+      }
     }
   }
-
-  res.sendStatus(200);
 });
 
-// Start webhook server
-const PORT = process.env.PORT || 33001;
-app.listen(PORT, () => {
-  console.log(`🚀 Webhook running on http://localhost:${PORT}/webhook`);
+const $taskSource = combine({
+  currentTask: $currentTask,
+  taskStartTime: $taskStartTime,
+  taskTimeout: $taskTimeout,
+  queue: $tasksQueue,
+  user: $currentTask.map(task => task?.user ?? null),
 });
+
+const sendWaitMessageFx = createEffect(async (params: {
+  multipleRequests: boolean;
+  taskStartTime: Date | null;
+  taskTimeout: number;
+  queueLength: number;
+  newTask: UserInfo;
+}) => {
+  let estimatedWaitMs = 0;
+  if (params.taskStartTime) {
+    const elapsed = Date.now() - params.taskStartTime.getTime();
+    estimatedWaitMs = Math.max(params.taskTimeout - elapsed, 0) + (params.queueLength * params.taskTimeout);
+  }
+  const estimatedWaitSec = Math.ceil(estimatedWaitMs / 1000);
+  const waitMsg = estimatedWaitSec > 0 ? `⏳ Please wait: Estimated wait time is ${estimatedWaitSec} seconds before your request starts.` : '⏳ Please wait: Your request will start soon.';
+  await bot.telegram.sendMessage(
+    params.newTask.chatId,
+    waitMsg
+  );
+});
+
+const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
+  if (task.tempMessages && task.tempMessages.length > 0) {
+    await Promise.allSettled(
+      task.tempMessages.map(id => bot.telegram.deleteMessage(task.chatId, id).catch(() => null))
+    );
+  }
+});
+
+const saveUserFx = createEffect(saveUser);
+
+// =============================================================================
+// Prevent Duplicate Task Processing (Race Condition Fix)
+// =============================================================================
+const $queueState = combine({
+  tasks: $tasksQueue,
+  current: $currentTask,
+});
+
+sample({
+  clock: newTaskReceived,
+  source: $queueState,
+  filter: (state, newTask) => {
+    const isInQueue = state.tasks.some(t => t.link === newTask.link && t.chatId === newTask.chatId);
+    const isRunning = state.current ? (state.current.link === newTask.link && state.current.chatId === newTask.chatId) : false;
+    if (isInQueue || isRunning) {
+      console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
+      return false; // duplicate, filter out
+    }
+    return true;
+  },
+  fn: (_, newTask) => createTask(newTask),
+  target: taskReadyToBeQueued,
+});
+
+// DO NOT:
+//   - Use .setState on Effector stores (it does not exist!)
+//   - Mutate arrays in stores directly (always return new array copies in .on)
+//   - Use plain functions as clocks in sample (must be effector events or effects)
+//   - Use .getState inside sample/filter except for read-only logging/debug, not logic
+
+// The queue now ONLY listens to the pre-filtered, safe event.
+$tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
+  const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
+  return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
+});
+
+$isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
+$tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
+
+// DO NOT: call getState inside reducers to decide how to update (Effector is declarative and async, race-prone if you do)
+// DO: always update state by returning new value based only on the old state and the event payload
+
+sample({
+  clock: newTaskReceived,
+  filter: (newTask) => !!newTask.user,
+  fn: (newTask) => newTask.user!,
+  target: saveUserFx,
+});
+
+sample({
+  clock: newTaskReceived,
+  source: $taskSource,
+  filter: (sourceData, newTask) => {
+    const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
+    if (!isPrivileged) {
+      return ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId) || (sourceData.taskStartTime instanceof Date);
+    }
+    return false;
+  },
+  fn: (sourceData, newTask) => ({
+    multipleRequests: ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId),
+    taskStartTime: sourceData.taskStartTime,
+    taskTimeout: sourceData.taskTimeout,
+    queueLength: sourceData.queue.filter(t => t.chatId !== newTask.chatId && t.link !== newTask.link).length,
+    newTask,
+  }),
+  target: sendWaitMessageFx,
+});
+
+type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
+const $taskInitiationDataSource = combine<TaskInitiationSource>({
+  isRunning: $isTaskRunning,
+  currentSystemCooldownStartTime: $taskStartTime,
+  queue: $tasksQueue
+});
+
+sample({
+  clock: checkTasks,
+  source: $taskInitiationDataSource,
+  filter: (sourceValues) => {
+    if (sourceValues.isRunning || sourceValues.queue.length === 0) return false;
+    const nextTaskInQueue = sourceValues.queue[0];
+    if (!nextTaskInQueue) return false;
+    const isPrivileged = nextTaskInQueue.chatId === BOT_ADMIN_ID.toString() || nextTaskInQueue.isPremium === true;
+    return isPrivileged || sourceValues.currentSystemCooldownStartTime === null;
+  },
+  target: taskInitiated,
+});
+
+sample({
+  clock: taskInitiated,
+  source: $tasksQueue,
+  filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(),
+  fn: (q) => q[0],
+  target: [$currentTask, taskStarted]
+});
+sample({
+  clock: taskInitiated,
+  source: $taskTimeout,
+  filter: (t): t is number => t > 0,
+  fn: () => new Date(),
+  target: $taskStartTime
+});
+sample({
+  clock: taskInitiated,
+  source: $taskTimeout,
+  filter: (t): t is number => t > 0,
+  fn: (t) => t,
+  target: clearTimeoutWithDelayFx
+});
+$taskTimeout.on(clearTimeoutEvent, (_, n) => n);
+sample({
+  clock: clearTimeoutEvent,
+  fn: () => null,
+  target: [$taskStartTime, checkTasks]
+});
+sample({
+  clock: taskStarted,
+  filter: (t) => t.linkType === 'username',
+  target: getAllStoriesFx
+});
+sample({
+  clock: taskStarted,
+  filter: (t) => t.linkType === 'link',
+  target: getParticularStoryFx
+});
+
+// --- Effect Result Handling ---
+
+sample({
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task, result) => task !== null && typeof result === 'string',
+  fn: (task, message) => ({ task: task!, message: message as string }),
+  target: [sendErrorMessageFx, taskDone, checkTasks],
+});
+
+sample({
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task, result) => task !== null && typeof result === 'object' && result !== null,
+  fn: (task, result) => ({ task: task!, ...(result as object) }),
+  target: sendStoriesFx,
+});
+
+getAllStoriesFx.fail.watch(({ params, error }) => {
+  console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
+  taskDone();
+  checkTasks();
+});
+
+sample({
+  clock: getParticularStoryFx.doneData,
+  source: $currentTask,
+  filter: (task, result) => task !== null && typeof result === 'string',
+  fn: (task, message) => ({ task: task!, message: message as string }),
+  target: [sendErrorMessageFx, taskDone, checkTasks],
+});
+
+sample({
+  clock: getParticularStoryFx.doneData,
+  source: $currentTask,
+  filter: (task, result) => task !== null && typeof result === 'object' && result !== null,
+  fn: (task, result) => ({ task: task!, ...(result as object) }),
+  target: sendStoriesFx,
+});
+
+getParticularStoryFx.fail.watch(({ params, error }) => {
+  console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
+  taskDone();
+  checkTasks();
+});
+
+sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
+sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
+sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
+sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
+
+sample({
+  clock: taskDone,
+  source: $currentTask,
+  filter: (t): t is UserInfo => t !== null,
+  target: cleanupTempMessagesFx,
+});
+$currentTask.on(taskDone, () => null);
+$isTaskRunning.on(taskDone, () => false);
+$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
+
+$currentTask.on(tempMessageSent, (prev, msgId) => {
+  if (!prev) {
+    console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
+    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId] } as UserInfo;
+  }
+  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
+});
+$currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMessages: [] } : null);
+
+// --- Interval Timers ---
+const intervalHasPassed = createEvent<void>();
+sample({
+  clock: intervalHasPassed,
+  source: $currentTask,
+  filter: (t): t is UserInfo => t !== null,
+  target: checkTaskForRestart
+});
+setInterval(() => intervalHasPassed(), 30_000);
+
+// =========================================================================
+//  EXPORTS
+// =========================================================================
+export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
+
+setTimeout(() => checkTasks(), 100);
+
+// =============================================================================
+// DO NOT ATTEMPT (EVER!)
+// =============================================================================
+//  - No .setState, ever (not in Effector)
+//  - No direct mutation (no .push, .pop, .shift on state!)
+//  - No plain function as sample clock (use only events/effects)
+//  - No imperative queue processing! All state flows by event, all queue changes by .on()
+//  - If you need debug logs, only put them in event watches, effects, or safe sample() callbacks
+// =============================================================================
