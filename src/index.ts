@@ -14,22 +14,11 @@ import { session, Telegraf } from 'telegraf';
 import { callbackQuery, message } from 'telegraf/filters';
 
 import { db } from './db'; // DO NOT REMOVE - main user db connection
+import { saveUser } from 'repositories/user-repository';
 import { isUserPremium, addPremiumUser, removePremiumUser } from 'services/premium-service';
-import { saveUser } from 'repositories/user-repository'; // <-- Make sure this import is correct!
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
 const RESTART_COMMAND = 'restart';
-
-// --------------------------------
-//    GLOBAL USER LOGGING MIDDLEWARE
-//    DO NOT REMOVE THIS BLOCK!!!
-// --------------------------------
-
-bot.use((ctx, next) => {
-  // Logs every user who interacts with the bot (any command, any text, any callback, etc.)
-  if (ctx.from) saveUser(ctx.from);
-  return next();
-});
 
 // --------------------------------
 //       Middleware and Handlers
@@ -50,13 +39,14 @@ const extraOptions: any = {
 };
 
 // =============================
-//         USER COMMANDS
+//        /start HANDLER
 // =============================
 
 /**
- * /start - Shows instructions for using the bot.
+ * /start - Shows instructions and adds user to DB.
  */
 bot.start(async (ctx) => {
+  saveUser(ctx.from); // ONLY add user here
   await ctx.reply(
     '🔗 Please send 1 of the next options:\n\n' +
       "username (with '@' symbol):\n@chupapee\n\n" +
@@ -66,10 +56,56 @@ bot.start(async (ctx) => {
   );
 });
 
+// =============================
+//      AUTHORIZED USER CHECK
+// =============================
+
+/**
+ * Checks if user is registered in the DB.
+ * Returns true if so, false otherwise.
+ */
+function isRegisteredUser(ctx): boolean {
+  const telegramId = ctx.from?.id?.toString();
+  if (!telegramId) return false;
+  const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(telegramId);
+  return !!exists;
+}
+
+/**
+ * Middleware: Only allow further commands/messages if user is registered.
+ * Otherwise, prompt them to use /start.
+ */
+bot.use(async (ctx, next) => {
+  // Always allow /start (so new users can register)
+  if (ctx.message && ctx.message.text && ctx.message.text.startsWith('/start')) {
+    return next();
+  }
+  if (ctx.callbackQuery) {
+    // Allow admin to restart bot via callback if needed
+    if (
+      ctx.callbackQuery.data === RESTART_COMMAND &&
+      ctx?.from?.id === BOT_ADMIN_ID
+    ) {
+      return next();
+    }
+  }
+  // Block everything else for unregistered users
+  if (!isRegisteredUser(ctx)) {
+    if (ctx.message && ctx.message.text && ctx.message.text.startsWith('/')) {
+      await ctx.reply('Please type /start to begin using this bot.');
+    }
+    // Don't proceed to handlers
+    return;
+  }
+  return next();
+});
+
+// =============================
+//         USER COMMANDS
+// =============================
+
 /**
  * /help - Lists available commands.
- * Shows admin commands if the user is the admin.
- * If you add more commands, update this section!
  */
 bot.command('help', async (ctx) => {
   let helpText =
@@ -90,7 +126,7 @@ bot.command('help', async (ctx) => {
       '/restart - (text only) Restart the bot\n';
   }
 
-  // Use MarkdownV2, escape problematic characters
+  // Escape MarkdownV2 characters
   helpText = helpText
     .replace(/\./g, '\\.')
     .replace(/\-/g, '\\-')
@@ -117,7 +153,7 @@ bot.command('help', async (ctx) => {
 });
 
 // =============================
-//    STORY PROCESSING SECTION
+//   STORY PROCESSING SECTION
 //   DO NOT TOUCH UNLESS YOU 
 //   NEED TO CHANGE USER INPUT
 // =============================
@@ -126,7 +162,7 @@ bot.on(message('text'), async (ctx) => {
   const text = ctx.message.text;
   console.log('Received text:', text, 'from:', ctx.from?.id);
 
-  // [Core functionality] Handle username or phone number search
+  // Handle username or phone number search
   if (text.startsWith('@') || text.startsWith('+')) {
     console.log('Processing username/phone:', text);
     await newTaskReceived({
@@ -140,7 +176,7 @@ bot.on(message('text'), async (ctx) => {
     return;
   }
 
-  // [Core functionality] Handle story links
+  // Handle story links
   if (text.startsWith('https') || text.startsWith('t.me/')) {
     const paths = text.split('/');
     if (
@@ -161,7 +197,7 @@ bot.on(message('text'), async (ctx) => {
     }
   }
 
-  // [Core functionality] Handle /restart confirmation
+  // Handle /restart confirmation
   if (ctx.from.id === BOT_ADMIN_ID && ctx.message.text === RESTART_COMMAND) {
     await ctx.reply('Are you sure?', {
       reply_markup: {
@@ -171,7 +207,7 @@ bot.on(message('text'), async (ctx) => {
     return;
   }
 
-  // [Default] For all other text input not matching above
+  // Default: Input didn't match any command or pattern
   await ctx.reply(
     '🚫 Please send a valid link to user (username or phone number)'
   );
@@ -213,11 +249,6 @@ bot.on(callbackQuery('data'), async (ctx) => {
 //     DO NOT TOUCH CORE DB LOGIC
 // =============================
 
-/**
- * /setpremium <telegram_id | @username>
- * Admin: Sets user as premium in the database.
- * Only callable by BOT_ADMIN_ID.
- */
 bot.command('setpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -253,10 +284,6 @@ bot.command('setpremium', async (ctx) => {
   await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium!`);
 });
 
-/**
- * /unsetpremium <telegram_id | @username>
- * Admin: Removes premium status from a user.
- */
 bot.command('unsetpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -292,10 +319,6 @@ bot.command('unsetpremium', async (ctx) => {
   await ctx.reply(`✅ User ${username ? '@'+username : telegramId} is no longer premium.`);
 });
 
-/**
- * /ispremium <telegram_id | @username>
- * Admin: Checks if a user is marked as premium.
- */
 bot.command('ispremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -335,10 +358,6 @@ bot.command('ispremium', async (ctx) => {
   );
 });
 
-/**
- * /listpremium
- * Admin: Lists all premium users in the database.
- */
 bot.command('listpremium', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -356,10 +375,6 @@ bot.command('listpremium', async (ctx) => {
   await ctx.reply(msg);
 });
 
-/**
- * /users
- * Admin: Lists all users in the database.
- */
 bot.command('users', async (ctx) => {
   if (ctx.from.id !== BOT_ADMIN_ID) {
     await ctx.reply('🚫 You are not authorized to use this command.');
@@ -400,14 +415,3 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
-
-/*
-=====================================================================================
-  NOTE FOR MAINTAINERS:
-  - The global user-tracking middleware at the top is critical: DO NOT REMOVE!
-  - Core database logic (addPremiumUser, removePremiumUser, etc) should not be edited
-    unless you are *certain* you understand the downstream effects.
-  - If you add new commands, update /help as well.
-  - Any changes to user/privilege logic should be coordinated with database structure.
-=====================================================================================
-*/
