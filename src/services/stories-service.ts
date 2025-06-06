@@ -44,14 +44,6 @@ const cleanUpTempMessagesFired = createEvent();
 // LOGIC AND FLOW - The Bot's Brain
 // =============================================================================
 
-// =========================================================================
-// CRITICAL LOGIC: Waking up the Service from an Idle State
-// DO NOT MODIFY without careful consideration.
-// -------------------------------------------------------------------------
-// This sample solves the "does nothing" bug. If a new task arrives, it
-// explicitly calls `checkTasks` to evaluate the queue. This is a robust
-// pattern that prevents the queue from stalling.
-// =========================================================================
 sample({
   clock: newTaskReceived,
   target: checkTasks,
@@ -64,7 +56,6 @@ const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
 });
 
 const MAX_WAIT_TIME = 7;
-const LARGE_ITEM_THRESHOLD = 100;
 
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
   if (task) {
@@ -95,7 +86,6 @@ const $taskSource = combine({
   queue: $tasksQueue,
   user: $currentTask.map(task => task?.user ?? null),
 });
-type TaskSourceSnapshot = StoreValue<typeof $taskSource>;
 
 const sendWaitMessageFx = createEffect(async (params: {
   multipleRequests: boolean;
@@ -136,11 +126,12 @@ $tasksQueue.on(newTaskReceived, (tasks, newTask) => {
 $isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
 $tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
 
+// CORRECTED: This sample now uses a simple boolean filter and a non-null assertion `!`
+// in the `fn` to satisfy the TypeScript compiler.
 sample({
     clock: newTaskReceived,
-    // Ensure user exists before attempting to save
-    filter: (newTask): newTask is UserInfo & { user: User } => !!newTask.user,
-    fn: (newTask) => newTask.user,
+    filter: (newTask) => !!newTask.user,
+    fn: (newTask) => newTask.user!,
     target: saveUserFx,
 });
 
@@ -164,15 +155,6 @@ sample({
   target: sendWaitMessageFx,
 });
 
-// =========================================================================
-// CRITICAL LOGIC: Task Initiation State Machine
-// DO NOT MODIFY without careful consideration.
-// -------------------------------------------------------------------------
-// This section defines the core rules for when a new task can start.
-// The flow is: checkTasks -> taskInitiated -> taskStarted.
-// This was specifically designed to prevent bugs like immediate task restarts.
-// The `clock` for this sample is ONLY `checkTasks` to prevent race conditions.
-// =========================================================================
 type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
 const $taskInitiationDataSource = combine<TaskInitiationSource>({
   isRunning: $isTaskRunning,
@@ -202,25 +184,30 @@ sample({ clock: taskStarted, filter: (t) => t.linkType === 'username', target: g
 sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getParticularStoryFx });
 
 // --- Effect Result Handling ---
-// COMMENT: This logic correctly associates an effect's result with the task that is
-// currently running by sourcing `$currentTask`. This pattern is stable.
 type GetAllStoriesSuccessResult = { activeStories: Api.TypeStoryItem[]; pinnedStories: Api.TypeStoryItem[]; paginatedStories?: Api.TypeStoryItem[]; };
 type GetParticularStorySuccessResult = { activeStories: Api.TypeStoryItem[]; pinnedStories: Api.TypeStoryItem[]; particularStory: Api.TypeStoryItem; };
 
+// CORRECTED: This sample now uses a type guard `result is string` on the `filter`
+// to correctly infer the type of `result` in the `fn`.
 sample({
-    clock: getAllStoriesFx.doneData,
-    source: $currentTask,
-    filter: (task, result): task is UserInfo => task !== null && typeof result === 'string',
-    fn: (task, result) => ({ task: task!, message: result }), // task is guarded by filter
-    target: [sendErrorMessageFx, taskDone, checkTasks],
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task, result): result is string => {
+      return task !== null && typeof result === 'string';
+  },
+  fn: (task, message) => ({ task: task!, message }),
+  target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 
+// CORRECTED: This sample uses a type guard to ensure `result` is an object.
 sample({
-    clock: getAllStoriesFx.doneData,
-    source: $currentTask,
-    filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null,
-    fn: (task, result) => ({ task: task!, ...(result as GetAllStoriesSuccessResult) }),
-    target: sendStoriesFx,
+  clock: getAllStoriesFx.doneData,
+  source: $currentTask,
+  filter: (task, result): result is GetAllStoriesSuccessResult => {
+      return task !== null && typeof result === 'object' && result !== null;
+  },
+  fn: (task, result) => ({ task: task!, ...result }),
+  target: sendStoriesFx,
 });
 
 getAllStoriesFx.fail.watch(({ params, error }) => {
@@ -229,20 +216,26 @@ getAllStoriesFx.fail.watch(({ params, error }) => {
   checkTasks();
 });
 
+// CORRECTED: This sample now uses a type guard `result is string` on the `filter`.
 sample({
-    clock: getParticularStoryFx.doneData,
-    source: $currentTask,
-    filter: (task, result): task is UserInfo => task !== null && typeof result === 'string',
-    fn: (task, result) => ({ task: task!, message: result }),
-    target: [sendErrorMessageFx, taskDone, checkTasks],
+  clock: getParticularStoryFx.doneData,
+  source: $currentTask,
+  filter: (task, result): result is string => {
+      return task !== null && typeof result === 'string';
+  },
+  fn: (task, message) => ({ task: task!, message }),
+  target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 
+// CORRECTED: This sample uses a type guard to ensure `result` is the correct object type.
 sample({
-    clock: getParticularStoryFx.doneData,
-    source: $currentTask,
-    filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null && 'particularStory' in result,
-    fn: (task, result) => ({ task: task!, ...(result as GetParticularStorySuccessResult) }),
-    target: sendStoriesFx,
+  clock: getParticularStoryFx.doneData,
+  source: $currentTask,
+  filter: (task, result): result is GetParticularStorySuccessResult => {
+      return task !== null && typeof result === 'object' && result !== null && 'particularStory' in result;
+  },
+  fn: (task, result) => ({ task: task!, ...result }),
+  target: sendStoriesFx,
 });
 
 getParticularStoryFx.fail.watch(({ params, error }) => {
@@ -251,15 +244,6 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
   checkTasks();
 });
 
-// =========================================================================
-// CRITICAL LOGIC: Final Task Completion
-// DO NOT MODIFY without careful consideration.
-// -------------------------------------------------------------------------
-// This section ensures that after a task is fully processed (by sendStoriesFx),
-// the system is cleaned up (`taskDone`) and explicitly checks for the next
-// available task in the queue (`checkTasks`). This is essential for the
-// queue to advance correctly and reliably.
-// =========================================================================
 sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
 sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
 sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
