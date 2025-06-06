@@ -1,34 +1,42 @@
 import { Userbot } from 'config/userbot';
 import { timeout } from 'lib';
 import { Api } from 'telegram';
-// Import p-limit (ensure you've installed it: yarn add p-limit)
-import pLimit from 'p-limit';
+import pLimit from 'p-limit'; // Ensure: yarn add p-limit
 
 // --- Configuration for Concurrency ---
-// START VERY LOW (e.g., 2 or 3) for userbots.
-// Monitor for FLOOD_WAIT errors from Telegram. If you get them, reduce this.
-const DOWNLOAD_CONCURRENCY_LIMIT = 3; // Adjust this value based on testing
+// If you get FLOOD_WAIT errors from Telegram, lower this.
+const DOWNLOAD_CONCURRENCY_LIMIT = 3;
 const limit = pLimit(DOWNLOAD_CONCURRENCY_LIMIT);
 
-// Define the structure of your 'mapped' story items
-// This matches the return type of your mapStories function.
+// ===============================
+// Type Definitions
+// ===============================
+
 export type MappedStoryItem = {
   id: number;
   caption?: string;
-  media: Api.StoryItem['media']; // Assuming media is always present after initial mapping/filtering
+  media: Api.StoryItem['media'];
   mediaType: 'photo' | 'video';
   date: Date;
   buffer?: Buffer;
   bufferSize?: number; // Size in MB
-  noforwards?: boolean; // If you track this property
+  noforwards?: boolean;
 };
 
 export type StoriesModel = MappedStoryItem[];
 
+// ===============================
+// Download Stories (Concurrency-Safe)
+// ===============================
+
+/**
+ * Downloads story media for each mapped story item, mutating the `stories` array in place.
+ * Skips stories without media.
+ */
 export async function downloadStories(
   stories: StoriesModel,
   storiesType: 'active' | 'pinned'
-): Promise<void> { // The function modifies the stories array by reference
+): Promise<void> {
   if (!stories || stories.length === 0) {
     console.log(`[DownloadStories] No ${storiesType} stories to download.`);
     return;
@@ -38,130 +46,105 @@ export async function downloadStories(
   console.log(`[DownloadStories] Starting download of ${stories.length} ${storiesType} stories. Concurrency: ${DOWNLOAD_CONCURRENCY_LIMIT}.`);
 
   const downloadPromises = stories.map((storyItem) =>
-    // Each story download is a task managed by p-limit
     limit(async () => {
       const mediaExists = !!storyItem.media;
       const isNoforwards = !!storyItem.noforwards;
-      console.log(`[DownloadStories] Checking story ${storyItem.id} (${storiesType}): Media Exists? ${mediaExists}, Is Noforwards? ${isNoforwards}`);
 
-      // MODIFIED: Now only skips if media does not exist. It will attempt to download even if noforwards is true.
+      // If media doesn't exist, skip (do not skip just for noforwards)
       if (!mediaExists) {
-        console.log(`[DownloadStories] Story ${storyItem.id} (${storiesType}): Skipping. Reason: Media Exists=${mediaExists}. (Noforwards flag is now ignored for download attempts)`);
-        if (storyItem.media) {
-            // console.log(`[DownloadStories] Story ${storyItem.id} Media details:`, JSON.stringify(storyItem.media).substring(0, 200));
-        }
-        return; // Story item remains unmodified
+        console.log(`[DownloadStories] Story ${storyItem.id} (${storiesType}): Skipping, media missing.`);
+        return;
       }
-      
-      // Log if we are attempting to download a 'noforwards' story
+
       if (isNoforwards) {
-        console.log(`[DownloadStories] Note: Attempting to download story ${storyItem.id} which is marked 'noforwards'.`);
+        console.log(`[DownloadStories] Note: Attempting to download story ${storyItem.id} marked 'noforwards'.`);
       }
 
       try {
         console.log(`[DownloadStories] Attempting download for story ID ${storyItem.id} (${storiesType})`);
 
-        const buffer = await client.downloadMedia(storyItem.media, {
-          // progressCallback: (progress) => console.log(`[DownloadStories] Story ${storyItem.id} Progress: ${Math.round(progress * 100)}%`),
-        });
+        const buffer = await client.downloadMedia(storyItem.media);
 
         if (buffer instanceof Buffer && buffer.length > 0) {
           storyItem.buffer = buffer;
-          // Calculate size in MB and round to 2 decimal places
           storyItem.bufferSize = parseFloat((buffer.byteLength / (1024 * 1024)).toFixed(2));
           console.log(`[DownloadStories] Downloaded story ID ${storyItem.id} (${storiesType}), Type: ${storyItem.mediaType}, Size: ${storyItem.bufferSize} MB.`);
         } else {
-          console.log(`[DownloadStories] Story ID ${storyItem.id} (${storiesType}): Downloaded empty or invalid buffer. Buffer:`, buffer);
+          console.log(`[DownloadStories] Story ID ${storyItem.id} (${storiesType}): Empty or invalid buffer.`);
         }
       } catch (error: any) {
         console.error(`[DownloadStories] Error downloading story ID ${storyItem.id} (${storiesType}): ${error.message}`);
         if (error.errorMessage && error.errorMessage.startsWith('FLOOD_WAIT_')) {
           const waitSeconds = parseInt(error.errorMessage.split('_').pop() || '30');
-          console.warn(`[DownloadStories] Hit FLOOD_WAIT for ${waitSeconds}s. Download for story ${storyItem.id} failed for this attempt.`);
+          console.warn(`[DownloadStories] Hit FLOOD_WAIT for ${waitSeconds}s on story ${storyItem.id}.`);
         }
-        // Story item remains without buffer on error.
       }
-      // Optional: A small delay after each download attempt (success or fail)
-      // await timeout(200); // e.g., 200ms delay
+      // Optional throttle after each download
+      // await timeout(200);
     })
   );
 
-  // Wait for all download operations managed by p-limit to settle (complete or fail)
   const results = await Promise.allSettled(downloadPromises);
 
   let successfulDownloads = 0;
   let failedDownloads = 0;
   results.forEach(result => {
-    if (result.status === 'fulfilled') {
-      successfulDownloads++;
-    } else {
-      failedDownloads++;
-    }
+    if (result.status === 'fulfilled') successfulDownloads++;
+    else failedDownloads++;
   });
 
-  console.log(`[DownloadStories] Finished all download attempts for ${stories.length} ${storiesType} stories. Operations run (fulfilled by p-limit): ${successfulDownloads}, Operations failed in p-limit: ${failedDownloads}.`);
+  console.log(`[DownloadStories] Finished all download attempts for ${stories.length} ${storiesType} stories. Success: ${successfulDownloads}, Failed: ${failedDownloads}.`);
 }
 
+// ===============================
+// Map Stories Utility
+// ===============================
+
+/**
+ * Maps Telegram API stories to the internal MappedStoryItem type.
+ * Skips stories with no media, no valid date, or unknown media type.
+ */
 export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
   const mappedStories: MappedStoryItem[] = [];
 
   stories.forEach((x) => {
-    if (!x || !('id' in x)) {
-        // console.warn('[MapStories] Skipping potentially invalid story item (no id):', x);
-        return;
-    }
+    if (!x || !('id' in x)) return;
 
-    // Check for media presence early
-    if (!('media' in x) || !x.media || typeof x.media !== 'object') {
-        // console.warn(`[MapStories] Story ID ${x.id}: Media is missing or not an object. Skipping.`);
-        return;
-    }
+    if (!('media' in x) || !x.media || typeof x.media !== 'object') return;
 
-    const story: Partial<MappedStoryItem> = {};
-    story.id = x.id;
-    story.media = x.media; // x.media is Api.TypeMessageMedia
+    const story: Partial<MappedStoryItem> = { id: x.id, media: x.media };
 
     // Determine mediaType
     if ('photo' in x.media && x.media.photo && typeof x.media.photo === 'object') {
-        story.mediaType = 'photo';
+      story.mediaType = 'photo';
     } else if ('document' in x.media && x.media.document && typeof x.media.document === 'object') {
-        const doc = x.media.document as Api.Document; 
-        if (doc.mimeType && typeof doc.mimeType === 'string' && doc.mimeType.startsWith('video/')) {
-            story.mediaType = 'video';
-        } else {
-            // console.warn(`[MapStories] Story ID ${x.id}: Media is a document but not a recognized video. mimeType: ${doc.mimeType}. Skipping.`);
-            return; 
-        }
+      const doc = x.media.document as Api.Document;
+      if (doc.mimeType && typeof doc.mimeType === 'string' && doc.mimeType.startsWith('video/')) {
+        story.mediaType = 'video';
+      } else {
+        return; // Not a video document
+      }
     } else {
-        // console.warn(`[MapStories] Story ID ${x.id}: Unknown or unsupported media structure. Skipping.`);
-        return; 
+      return; // Unknown or unsupported media structure
     }
 
     if ('date' in x && typeof x.date === 'number') {
-        story.date = new Date(x.date * 1000);
+      story.date = new Date(x.date * 1000);
     } else {
-        // console.warn(`[MapStories] Story ID ${x.id}: Date is missing or invalid. Skipping.`);
-        return; 
+      return;
     }
 
     if ('caption' in x && typeof x.caption === 'string') {
-        story.caption = x.caption;
-    }
-    
-    // Still map the noforwards flag, but downloadStories will ignore it for skipping
-    if ('noforwards' in x && typeof x.noforwards === 'boolean') {
-        story.noforwards = x.noforwards;
-    } else {
-        story.noforwards = false; 
+      story.caption = x.caption;
     }
 
+    story.noforwards = 'noforwards' in x && typeof x.noforwards === 'boolean' ? x.noforwards : false;
 
     if (story.id && story.media && story.mediaType && story.date) {
-        mappedStories.push(story as MappedStoryItem);
-    } else {
-        // console.warn(`[MapStories] Story item for ID ${x.id} was not fully mappable after checks. Skipping.`);
+      mappedStories.push(story as MappedStoryItem);
     }
   });
+
   console.log(`[MapStories] Mapped ${mappedStories.length} out of ${stories.length} initial stories.`);
   return mappedStories;
 }
