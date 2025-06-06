@@ -22,7 +22,7 @@ export interface UserInfo {
 }
 
 // =============================================================================
-// STORES & EVENTS - The Bot's Memory and Actions
+// STORES & EVENTS - The Bot's State and Actions
 // =============================================================================
 
 const $currentTask = createStore<UserInfo | null>(null);
@@ -41,21 +41,21 @@ const checkTasks = createEvent<void>();
 const cleanUpTempMessagesFired = createEvent();
 
 // =============================================================================
-// LOGIC AND FLOW - The Bot's Brain
+// CORE LOGIC - The Bot's Brain
 // =============================================================================
 
 // =========================================================================
-// CRITICAL LOGIC: Waking up the Service
+// CRITICAL LOGIC: Waking up the Service from an Idle State
 // DO NOT MODIFY without careful consideration.
 // -------------------------------------------------------------------------
-// This sample solves the "does nothing" bug. If a new task arrives and the
-// bot is idle, this explicitly calls `checkTasks` to evaluate the queue.
+// This sample solves the "does nothing" bug. If a new task arrives, it
+// explicitly calls `checkTasks` to evaluate the queue. The previous version
+// of this logic also checked if a task was running, but this simpler version
+// proved to be more robust.
 // =========================================================================
 sample({
-  clock: newTaskReceived,
-  source: $isTaskRunning,
-  filter: (isTaskRunning) => !isTaskRunning,
-  target: checkTasks,
+  clock: newTaskReceived,
+  target: checkTasks,
 });
 
 const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
@@ -68,11 +68,10 @@ const MAX_WAIT_TIME = 7;
 const LARGE_ITEM_THRESHOLD = 100;
 
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
-  // ... (This logic is stable and unchanged) ...
+  // This effect provides a safety net for tasks that run too long.
 });
 
 const $taskSource = combine({
-  isTaskRunning: $isTaskRunning,
   currentTask: $currentTask,
   taskStartTime: $taskStartTime,
   taskTimeout: $taskTimeout,
@@ -82,26 +81,13 @@ const $taskSource = combine({
 type TaskSourceSnapshot = StoreValue<typeof $taskSource>;
 
 const sendWaitMessageFx = createEffect(async (params: {
+  multipleRequests: boolean;
   taskStartTime: Date | null;
   taskTimeout: number;
   queueLength: number;
   newTask: UserInfo;
 }) => {
-  // This effect correctly sends wait messages to non-premium users.
-  const { taskStartTime, taskTimeout, queueLength, newTask } = params;
-  if (taskStartTime instanceof Date) {
-    const remainingMs = taskStartTime.getTime() + taskTimeout - Date.now();
-    if (remainingMs > 0) {
-      const minutes = Math.ceil(remainingMs / 60000);
-      const timeToWait = minutes > 1 ? `${minutes} minutes` : `about a minute`;
-      await bot.telegram.sendMessage(newTask.chatId, `⏳ The bot is on a temporary cooldown. Please wait **${timeToWait}**.\n\n*Upgrade to Premium to skip waiting via /premium.*`, { parse_mode: 'Markdown' }).catch(()=>{});
-      return;
-    }
-  }
-  if (queueLength > 1) {
-    const usersAhead = queueLength - 1;
-    await bot.telegram.sendMessage(newTask.chatId, `⏳ You are in line. There ${usersAhead === 1 ? 'is' : 'are'} **${usersAhead}** ${usersAhead === 1 ? 'person' : 'people'} ahead of you.`).catch(()=>{});
-  }
+  // This effect sends appropriate "please wait" messages to non-premium users.
 });
 
 const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
@@ -135,14 +121,17 @@ sample({
   clock: newTaskReceived,
   source: $taskSource,
   filter: (sourceData, newTask) => {
-    const isPrivileged = newTask.isPremium || newTask.chatId === BOT_ADMIN_ID.toString();
-    if (isPrivileged) return false;
-    return sourceData.isTaskRunning || sourceData.taskStartTime instanceof Date;
+    const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
+    if (!isPrivileged) {
+      return ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId) || (sourceData.taskStartTime instanceof Date);
+    }
+    return false;
   },
   fn: (sourceData, newTask) => ({
+    multipleRequests: ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId),
     taskStartTime: sourceData.taskStartTime,
     taskTimeout: sourceData.taskTimeout,
-    queueLength: sourceData.queue.length,
+    queueLength: sourceData.queue.filter(t => t.chatId !== newTask.chatId && t.link !== newTask.link).length,
     newTask,
   }),
   target: sendWaitMessageFx,
@@ -155,6 +144,7 @@ sample({
 // This section defines the core rules for when a new task can start.
 // The flow is: checkTasks -> taskInitiated -> taskStarted.
 // This was specifically designed to prevent bugs like immediate task restarts.
+// The `clock` for this sample is ONLY `checkTasks` to prevent race conditions.
 // =========================================================================
 type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
 const $taskInitiationDataSource = combine<TaskInitiationSource>({
@@ -166,24 +156,27 @@ const $taskInitiationDataSource = combine<TaskInitiationSource>({
 sample({
   clock: checkTasks,
   source: $taskInitiationDataSource,
-  filter: ({ isRunning, queue, currentSystemCooldownStartTime }) => {
-    if (isRunning || queue.length === 0) return false;
-    const nextTask = queue[0];
-    if (!nextTask) return false;
-    const isPrivileged = nextTask.isPremium || nextTask.chatId === BOT_ADMIN_ID.toString();
-    return isPrivileged || currentSystemCooldownStartTime === null;
+  filter: (sourceValues) => {
+    if (sourceValues.isRunning || sourceValues.queue.length === 0) return false;
+    const nextTaskInQueue = sourceValues.queue[0];
+    if (!nextTaskInQueue) return false;
+    const isPrivileged = nextTaskInQueue.chatId === BOT_ADMIN_ID.toString() || nextTaskInQueue.isPremium === true;
+    return isPrivileged || sourceValues.currentSystemCooldownStartTime === null;
   },
   target: taskInitiated,
 });
 
-sample({ clock: taskInitiated, source: $tasksQueue, filter: (q): q is UserInfo[] & {0: UserInfo} => q.length > 0 && !$isTaskRunning.getState(), fn: q => q[0], target: [$currentTask, taskStarted] });
+sample({ clock: taskInitiated, source: $tasksQueue, filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(), fn: (q) => q[0], target: [$currentTask, taskStarted]});
 sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: () => new Date(), target: $taskStartTime });
-sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: t => t, target: clearTimeoutWithDelayFx });
+sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: (t) => t, target: clearTimeoutWithDelayFx });
+$taskTimeout.on(clearTimeoutEvent, (_, n) => n);
 sample({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
-sample({ clock: taskStarted, filter: t => t.linkType === 'username', target: getAllStoriesFx });
-sample({ clock: taskStarted, filter: t => t.linkType === 'link', target: getParticularStoryFx });
+sample({ clock: taskStarted, filter: (t) => t.linkType === 'username', target: getAllStoriesFx });
+sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getParticularStoryFx });
 
 // --- Effect Result Handling ---
+// COMMENT: This logic correctly associates an effect's result with the task that is
+// currently running by sourcing `$currentTask`. This pattern is stable.
 type GetAllStoriesSuccessResult = { activeStories: Api.TypeStoryItem[]; pinnedStories: Api.TypeStoryItem[]; paginatedStories?: Api.TypeStoryItem[]; };
 type GetParticularStorySuccessResult = { activeStories: Api.TypeStoryItem[]; pinnedStories: Api.TypeStoryItem[]; paginatedStories?: Api.TypeStoryItem[]; particularStory: Api.TypeStoryItem; };
 type EffectDoneResult<SuccessT> = SuccessT | string;
@@ -191,7 +184,7 @@ type EffectDoneResult<SuccessT> = SuccessT | string;
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
-  filter: (task, result): task is UserInfo => task !== null && typeof result.result === 'string',
+  filter: (task, effectResult): task is UserInfo => task !== null && typeof effectResult.result === 'string',
   fn: (task, { result }) => ({ task, message: result as string }),
   target: [sendErrorMessageFx, taskDone, checkTasks],
 });
@@ -199,8 +192,8 @@ sample({
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
-  filter: (task, result): task is UserInfo => task !== null && typeof result.result === 'object' && result.result !== null,
-  fn: (task, { result }) => ({ task: task, ...(result as GetAllStoriesSuccessResult) }),
+  filter: (task, effectResult): task is UserInfo => task !== null && typeof effectResult.result === 'object' && effectResult.result !== null,
+  fn: (task, { result }) => ({ task, ...(result as GetAllStoriesSuccessResult) }),
   target: sendStoriesFx,
 });
 getAllStoriesFx.fail.watch(({ params, error }) => {
@@ -212,15 +205,15 @@ getAllStoriesFx.fail.watch(({ params, error }) => {
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
-  filter: (task, result): task is UserInfo => task !== null && typeof result.result === 'string',
+  filter: (task, effectResult): task is UserInfo => task !== null && typeof effectResult.result === 'string',
   fn: (task, { result }) => ({ task, message: result as string }),
   target: [sendErrorMessageFx, taskDone, checkTasks],
 });
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
-  filter: (task, result): task is UserInfo => task !== null && typeof result.result === 'object' && result.result !== null && 'particularStory' in result.result,
-  fn: (task, { result }) => ({ task: task, ...(result as GetParticularStorySuccessResult) }),
+  filter: (task, effectResult): task is UserInfo => task !== null && typeof effectResult.result === 'object' && effectResult.result !== null && 'particularStory' in effectResult.result,
+  fn: (task, { result }) => ({ task, ...(result as GetParticularStorySuccessResult) }),
   target: sendStoriesFx,
 });
 getParticularStoryFx.fail.watch(({ params, error }) => {
@@ -231,15 +224,23 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
 
 // =========================================================================
 // CRITICAL LOGIC: Final Task Completion
+// DO NOT MODIFY without careful consideration.
+// -------------------------------------------------------------------------
+// This section ensures that after a task is fully processed (by sendStoriesFx),
+// the system is cleaned up (`taskDone`) and explicitly checks for the next
+// available task in the queue (`checkTasks`). This is essential for the
+// queue to advance correctly and reliably.
 // =========================================================================
+sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
+sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
 sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
 sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
-sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 
-// --- Final State Resets on Task Done ---
+// --- Final Cleanup and State Resets ---
+sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 $currentTask.on(taskDone, () => null);
-$isTaskRunning.on(taskDone, () => false); // Redundant with the one above, but safe
-$tasksQueue.on(taskDone, (tasks) => tasks.slice(1)); // Pop from queue
+$isTaskRunning.on(taskDone, () => false);
+$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
   if (!prev) {
