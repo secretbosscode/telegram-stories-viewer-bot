@@ -25,7 +25,7 @@ chown -R appuser:appgroup /app/data
 # =========================================================================
 # EXECUTE MAIN COMMAND
 # =========================================================================
-# `exec su-exec appuser "$@"` switches from the root user to 'appuser'
+# `exec gosu appuser "$@"` switches from the root user to 'appuser'
 # and then executes the command provided in the Dockerfile's CMD.
 echo "Dropping root privileges and starting application..."
-exec su-exec appuser "$@"
+exec gosu appuser "$@"
