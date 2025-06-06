@@ -12,9 +12,14 @@ import { initUserbot } from 'config/userbot';
 import { newTaskReceived } from 'services/stories-service';
 import { session, Telegraf } from 'telegraf';
 import { callbackQuery, message } from 'telegraf/filters';
+
+// --- FIXED: Correct import for user DB logic ---
+// Always use THIS to save users in DB (called on /start)
+// If you move/rename the file, update here!
+import { saveUser } from 'services/user-repository';
+
 import { db } from './db'; // DO NOT REMOVE - main user db connection
 import { isUserPremium, addPremiumUser, removePremiumUser } from 'services/premium-service';
-import { saveUser } from 'services/user-service';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
 const RESTART_COMMAND = 'restart';
@@ -37,24 +42,16 @@ const extraOptions: any = {
   },
 };
 
-// Utility: Check if user has done /start (exists in DB)
-function userIsRegistered(ctx: any): boolean {
-  const telegramId = ctx.from?.id?.toString();
-  if (!telegramId) return false;
-  const user = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(telegramId);
-  return !!user;
-}
-
 // =============================
 //         USER COMMANDS
 // =============================
 
 /**
- * /start - Shows instructions for using the bot and adds user to the DB.
+ * /start - Shows instructions for using the bot, and registers user in DB.
  */
-bot.command('start', async (ctx) => {
-  // Save user on /start (only here!)
-  saveUser(ctx.from);
+bot.start(async (ctx) => {
+  // --- CRITICAL: Only here do we save users to DB ---
+  saveUser(ctx.from);  // Don't move this! Only call here!
   await ctx.reply(
     '🔗 Please send 1 of the next options:\n\n' +
       "username (with '@' symbol):\n@chupapee\n\n" +
@@ -65,37 +62,60 @@ bot.command('start', async (ctx) => {
 });
 
 /**
- * /help - Lists available commands (and admin commands if admin).
- * Shows /premium for everyone (placeholder).
+ * /help - Lists available commands.
+ * Shows admin commands if the user is the admin.
+ * If you add more commands, update this section!
  */
 bot.command('help', async (ctx) => {
   let helpText =
-    '🤖 Ghost Stories Bot Help\n\n' +
+    '🤖 *Ghost Stories Bot Help*\n\n' +
     'General Commands:\n' +
     '/start - Show usage instructions\n' +
     '/help - Show this help message\n' +
-    '/premium - Learn about premium features (coming soon)\n';
+    '/premium - Info about premium features (coming soon!)\n';
 
   // Only show admin commands if user is admin
   if (ctx.from.id === BOT_ADMIN_ID) {
     helpText +=
-      '\nAdmin Commands:\n' +
-      '/setpremium <telegram_id or @username> - Mark user as premium\n' +
-      '/unsetpremium <telegram_id or @username> - Remove premium status\n' +
-      '/ispremium <telegram_id or @username> - Check if user is premium\n' +
+      '\n*Admin Commands:*\n' +
+      '/setpremium <telegram_id | @username> - Mark user as premium\n' +
+      '/unsetpremium <telegram_id | @username> - Remove premium status\n' +
+      '/ispremium <telegram_id | @username> - Check if user is premium\n' +
       '/listpremium - List all premium users\n' +
       '/users - List all users\n' +
       '/restart - (text only) Restart the bot\n';
   }
-  // No parse_mode — send as plain text
-  await ctx.reply(helpText);
+
+  // Use MarkdownV2, escape problematic characters (including < and >)
+  helpText = helpText
+    .replace(/\./g, '\\.')
+    .replace(/\-/g, '\\-')
+    .replace(/\*/g, '\\*')
+    .replace(/\_/g, '\\_')
+    .replace(/\!/g, '\\!')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+    .replace(/\~/g, '\\~')
+    .replace(/\`/g, '\\`')
+    .replace(/\>/g, '\\>')
+    .replace(/\#/g, '\\#')
+    .replace(/\+/g, '\\+')
+    .replace(/\=/g, '\\=')
+    .replace(/\|/g, '\\|')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}')
+    .replace(/\</g, '\\<');
+
+  await ctx.reply(helpText, { parse_mode: 'MarkdownV2' });
 });
 
 /**
- * /premium - For now, just shows a "coming soon" message.
+ * /premium - Shows message about premium status (expand as needed).
  */
 bot.command('premium', async (ctx) => {
-  await ctx.reply('🌟 Premium is coming soon! You’ll be able to unlock more stories and unlimited access. Stay tuned.');
+  await ctx.reply("🌟 Premium access coming soon! For questions, contact the admin.");
 });
 
 // =============================
@@ -104,42 +124,22 @@ bot.command('premium', async (ctx) => {
 //   NEED TO CHANGE USER INPUT
 // =============================
 
+// Only allow users who've typed /start (i.e., are in DB) to use the bot.
+// This prevents abuse and keeps logic clean.
 bot.on(message('text'), async (ctx) => {
-  // Defensive: Only process commands for users who have used /start
-  if (
-    !userIsRegistered(ctx) &&
-    !ctx.message.text.startsWith('/start') &&
-    !ctx.message.text.startsWith('/help') &&
-    !ctx.message.text.startsWith('/premium')
-  ) {
-    await ctx.reply('👋 Please type /start to begin using the bot.');
+  // --- GATE: Check user is in DB ---
+  const userRow = db.prepare('SELECT telegram_id FROM users WHERE telegram_id = ?').get(ctx.from.id.toString());
+  if (!userRow) {
+    await ctx.reply("👋 Please type /start to begin using the bot.");
     return;
   }
 
   const text = ctx.message.text;
-
-  // Handle unknown commands: anything that starts with '/' but isn't known
-  const allowedCommands = [
-    '/start',
-    '/help',
-    '/premium',
-    '/setpremium',
-    '/unsetpremium',
-    '/ispremium',
-    '/listpremium',
-    '/users',
-    '/restart',
-  ];
-  if (
-    text.startsWith('/') &&
-    !allowedCommands.includes(text.split(' ')[0])
-  ) {
-    await ctx.reply('🚫 Unrecognized command. Type /help to see available commands.');
-    return;
-  }
+  console.log('Received text:', text, 'from:', ctx.from?.id);
 
   // [Core functionality] Handle username or phone number search
   if (text.startsWith('@') || text.startsWith('+')) {
+    console.log('Processing username/phone:', text);
     await newTaskReceived({
       chatId: String(ctx.chat.id),
       link: text,
@@ -159,6 +159,7 @@ bot.on(message('text'), async (ctx) => {
       paths.at(-2) === 's' &&
       paths.at(-3)
     ) {
+      console.log('Processing link:', text);
       await newTaskReceived({
         chatId: String(ctx.chat.id),
         link: text,
@@ -171,8 +172,8 @@ bot.on(message('text'), async (ctx) => {
     }
   }
 
-  // [Admin-only: Restart confirm]
-  if (ctx.from.id === BOT_ADMIN_ID && text === RESTART_COMMAND) {
+  // [Core functionality] Handle /restart confirmation
+  if (ctx.from.id === BOT_ADMIN_ID && ctx.message.text === RESTART_COMMAND) {
     await ctx.reply('Are you sure?', {
       reply_markup: {
         inline_keyboard: [[{ text: 'Yes', callback_data: RESTART_COMMAND }]],
@@ -181,9 +182,9 @@ bot.on(message('text'), async (ctx) => {
     return;
   }
 
-  // Default: not a command or valid input
+  // [Default] For all other text input not matching above
   await ctx.reply(
-    '🚫 Please send a valid link to user (username or phone number) or type /help for options.'
+    '❌ Invalid command or input. Type /help for available commands.'
   );
 });
 
@@ -193,8 +194,10 @@ bot.on(message('text'), async (ctx) => {
 
 bot.on(callbackQuery('data'), async (ctx) => {
   // [Pagination handler for stories]
-  if ('data' in ctx.callbackQuery && ctx.callbackQuery.data.includes('&')) {
-    const [username, nextStoriesIds] = ctx.callbackQuery.data.split('&');
+  if ((ctx.callbackQuery as any).data && (ctx.callbackQuery as any).data.includes('&')) {
+    const [username, nextStoriesIds] = (ctx.callbackQuery as any).data.split('&');
+    console.log('Processing callback for pagination:', username, nextStoriesIds);
+
     await newTaskReceived({
       chatId: String(ctx?.from?.id),
       link: username,
@@ -208,8 +211,7 @@ bot.on(callbackQuery('data'), async (ctx) => {
 
   // [Admin only] Confirmed restart
   if (
-    'data' in ctx.callbackQuery &&
-    ctx.callbackQuery.data === RESTART_COMMAND &&
+    (ctx.callbackQuery as any).data === RESTART_COMMAND &&
     ctx?.from?.id === BOT_ADMIN_ID
   ) {
     await ctx.answerCbQuery('⏳ Restarting...');
@@ -223,7 +225,7 @@ bot.on(callbackQuery('data'), async (ctx) => {
 // =============================
 
 /**
- * /setpremium <telegram_id or @username>
+ * /setpremium <telegram_id | @username>
  * Admin: Sets user as premium in the database.
  * Only callable by BOT_ADMIN_ID.
  */
@@ -234,7 +236,7 @@ bot.command('setpremium', async (ctx) => {
   }
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
-    await ctx.reply('Usage: /setpremium <telegram_id or @username>');
+    await ctx.reply('Usage: /setpremium <telegram_id | @username>');
     return;
   }
   let telegramId: string | undefined;
@@ -263,7 +265,7 @@ bot.command('setpremium', async (ctx) => {
 });
 
 /**
- * /unsetpremium <telegram_id or @username>
+ * /unsetpremium <telegram_id | @username>
  * Admin: Removes premium status from a user.
  */
 bot.command('unsetpremium', async (ctx) => {
@@ -273,7 +275,7 @@ bot.command('unsetpremium', async (ctx) => {
   }
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
-    await ctx.reply('Usage: /unsetpremium <telegram_id or @username>');
+    await ctx.reply('Usage: /unsetpremium <telegram_id | @username>');
     return;
   }
   let telegramId: string | undefined;
@@ -302,7 +304,7 @@ bot.command('unsetpremium', async (ctx) => {
 });
 
 /**
- * /ispremium <telegram_id or @username>
+ * /ispremium <telegram_id | @username>
  * Admin: Checks if a user is marked as premium.
  */
 bot.command('ispremium', async (ctx) => {
@@ -312,7 +314,7 @@ bot.command('ispremium', async (ctx) => {
   }
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
-    await ctx.reply('Usage: /ispremium <telegram_id or @username>');
+    await ctx.reply('Usage: /ispremium <telegram_id | @username>');
     return;
   }
   let telegramId: string | undefined;
