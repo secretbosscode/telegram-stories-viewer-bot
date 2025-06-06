@@ -1,40 +1,30 @@
-// In: controllers/get-stories.ts
+// src/controllers/get-stories.ts
 
 import { Userbot } from 'config/userbot';
 import { createEffect } from 'effector';
 import { bot } from 'index';
 import { timeout } from 'lib';
 
-// Fix: Import from the new types location, not stories-service!
-import { UserInfo } from '../db/types'; // Adjust as needed
-// Remove tempMessageSent import from 'services/stories-service'
-// Instead, bring it in from a central events file or replace with your new event mechanism if moved
+// CORRECTED: Import UserInfo from your central types.ts file
+import { UserInfo, NotifyAdminParams } from 'types'; // <--- Corrected import path for UserInfo & Added NotifyAdminParams
+
+// CORRECTED: Import tempMessageSent from your main orchestrator file
+// YOU MUST REPLACE 'services/bot-orchestrator-file' with the correct path to that file!
+import { tempMessageSent } from 'services/bot-orchestrator-file'; // <--- Corrected import path for tempMessageSent
 
 import { Api } from 'telegram';
 import { FloodWaitError } from 'telegram/errors';
 import { isDevEnv } from 'config/env-config';
 
-import { notifyAdmin } from './send-message';
+// CORRECTED: Import notifyAdmin from the correct controller path
+import { notifyAdmin } from 'controllers/send-message'; // <--- Corrected import path for notifyAdmin
 
-// NOTE: If you need to call tempMessageSent, you can either move that event to a central file (recommended),
-// or, if you don't use Effector events anymore, replace it with your own tracking logic, or just remove these calls.
-
-import { tempMessageSent } from '../services/events'; // If you moved the event, update this path
 
 // =========================================================================
 // This effect fetches all stories for a given user.
 // It is responsible for giving the initial feedback to the user.
 // =========================================================================
 export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
-  // =========================================================================
-  // CRITICAL UX PATTERN: Send then Edit
-  // DO NOT MODIFY this pattern without careful consideration.
-  // -------------------------------------------------------------------------
-  // This block sends an initial "working..." message and saves its ID.
-  // Later, it EDITS this same message with the final result or an error.
-  // This prevents spamming the user with multiple status updates and fixed
-  // a bug where duplicate summary messages were being sent.
-  // =========================================================================
   let statusMessageId: number | undefined;
   try {
     const sentMessage = await bot.telegram.sendMessage(task.chatId, '⏳ Fetching story lists...');
@@ -44,17 +34,17 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
     console.error(`[GetStories] Could not send initial status message to chat ${task.chatId}`);
   }
 
-  // This is the main logic block for fetching stories.
   try {
     const client = await Userbot.getInstance();
     const entity = await client.getEntity(task.link);
-    notifyAdmin({ task, status: 'start' });
+    notifyAdmin({ task, status: 'start' } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
 
     // This path handles pagination clicks from inline buttons.
     if (task.nextStoriesIds) {
       const paginatedStoriesResult = await client.invoke(
         new Api.stories.GetStoriesByID({ peer: entity, id: task.nextStoriesIds })
       );
+      // Ensure the return type matches what stories-service.ts expects for paginatedStories
       return paginatedStoriesResult.stories.length > 0
         ? { activeStories: [], pinnedStories: [], paginatedStories: paginatedStoriesResult.stories }
         : '🚫 Specified stories not found!';
@@ -77,7 +67,7 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
     console.log(`[GetStories] Initial fetch for ${task.link}: ${activeStories.length} active, ${pinnedStories.length} initial pinned.`);
 
     // Logic for paginating through all pinned stories for a new request.
-    if (!task.nextStoriesIds) {
+    if (!task.nextStoriesIds) { // This condition checks if it's the initial request for pinned stories
       let lastPinnedStoryId: number | null = pinnedStories.length > 0 ? pinnedStories[pinnedStories.length - 1].id : null;
       let fetchedCountInLoop = 0;
       while (lastPinnedStoryId !== null) {
@@ -114,23 +104,21 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
       // Here we edit the original message with the final counts.
       if (statusMessageId) {
         await bot.telegram.editMessageText(task.chatId, statusMessageId, undefined, summaryText).catch(() => {
-          bot.telegram.sendMessage(task.chatId, summaryText).then(({message_id}) => tempMessageSent(message_id));
+          bot.telegram.sendMessage(task.chatId, summaryText).then(({ message_id }) => tempMessageSent(message_id));
         });
       } else {
-        bot.telegram.sendMessage(task.chatId, summaryText).then(({message_id}) => tempMessageSent(message_id));
+        bot.telegram.sendMessage(task.chatId, summaryText).then(({ message_id }) => tempMessageSent(message_id));
       }
 
       // Do not notify admin here to avoid duplicate notifications.
-      return { activeStories, pinnedStories };
+      return { activeStories, pinnedStories }; // Return object matches SendStoriesFxParams
     }
 
     // If no stories are found, return a user-friendly message string.
     return '🚫 No stories found (active or pinned)!';
   } catch (error: any) {
-    // This is the main error handler for this effect.
     console.error(`[GetStories] Error in getAllStoriesFx for task ${task.link}:`, error);
     if (statusMessageId) {
-      // Update the user's status message to show an error occurred.
       await bot.telegram.editMessageText(task.chatId, statusMessageId, undefined, `❌ An error occurred while fetching story lists.`).catch(() => {});
     }
 
@@ -187,21 +175,22 @@ export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
     if (statusMessageId) {
       await bot.telegram.editMessageText(task.chatId, statusMessageId, undefined, summaryText).catch(()=>{});
     } else {
-      await bot.telegram.sendMessage(task.chatId, summaryText).then(({message_id}) => tempMessageSent(message_id));
+      await bot.telegram.sendMessage(task.chatId, summaryText).then(({ message_id }) => tempMessageSent(message_id));
     }
 
-    notifyAdmin({ task, status: 'start' });
+    notifyAdmin({ task, status: 'start' } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
 
     return {
       activeStories: [],
       pinnedStories: [],
-      particularStory: storyData.stories[0],
+      particularStory: storyData.stories[0], // Return object matches SendStoriesFxParams
     };
   } catch (error: any) {
     console.error(`[GetStories] ERROR in getParticularStoryFx for ${task.link}:`, error);
     if (statusMessageId) {
       await bot.telegram.editMessageText(task.chatId, statusMessageId, undefined, `❌ An error occurred while fetching this story.`).catch(() => {});
     }
+
     if (error instanceof FloodWaitError) {
       const seconds = error.seconds || 60;
       return `⚠️ Too many requests. Please wait about ${Math.ceil(seconds / 60)} minute(s).`;
