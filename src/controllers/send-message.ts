@@ -1,23 +1,21 @@
+// src/controllers/send-message.ts
+
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
-// Make sure to import UserInfo from your new location, e.g.:
-import { UserInfo } from '../db/types'; // update path as needed
+// CORRECTED: Import UserInfo AND NotifyAdminParams from your central types.ts file
+import { UserInfo, NotifyAdminParams } from 'types';
 
 /**
  * Notify the bot admin of important events (errors, info, start).
  * Skips notification if admin triggers their own task.
  */
+// CORRECTED: Use the NotifyAdminParams interface for parameters
 export async function notifyAdmin({
   task,
   status,
   errorInfo,
   baseInfo,
-}: {
-  task?: UserInfo;
-  status: 'start' | 'error' | 'info';
-  errorInfo?: { cause: unknown };
-  baseInfo?: string;
-}) {
+}: NotifyAdminParams) { // <--- Using the imported NotifyAdminParams
   if (task?.chatId === BOT_ADMIN_ID.toString()) return;
 
   // Build user info for logs/messages
