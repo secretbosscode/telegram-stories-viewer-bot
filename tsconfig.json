@@ -10,20 +10,20 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "strictPropertyInitialization": false,
-    "baseUrl": "./src", // Keep this
+    "baseUrl": "./src",
     "paths": {
-      "config/*": ["config/*"], // Maps 'config/xyz' to 'src/config/xyz'
-      "controllers/*": ["controllers/*"], // Maps 'controllers/xyz' to 'src/controllers/xyz'
-      "db/*": ["db/*"], // Maps 'db/xyz' to 'src/db/xyz'
-      "services/*": ["services/*"], // Maps 'services/xyz' to 'src/services/xyz'
-      "lib/*": ["lib/*"], // Maps 'lib/xyz' to 'src/lib/xyz'
-      "repositories/*": ["repositories/*"], // Maps 'repositories/xyz' to 'src/repositories/xyz'
-      "types": ["types/index.ts"] // If you have a single types file like src/types/index.ts
+      "config/*": ["config/*"],
+      "controllers/*": ["controllers/*"],
+      "db/*": ["db/*"],
+      "services/*": ["services/*"],
+      "lib/*": ["lib/*"],
+      "repositories/*": ["repositories/*"],
+      "types": ["types.ts"] // IMPORTANT: This maps 'types' directly to 'src/types.ts'
     },
-    "rootDir": "./src", // Explicitly define the root of your source files
-    "forceConsistentCasingInFileNames": true, // Good practice for cross-platform consistency
-    "skipLibCheck": true // Can sometimes help with complex library types, but use cautiously
+    "rootDir": "./src",
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "./types.d.ts"], // Be more specific about TS files
-  "exclude": ["node_modules", "dist"] // Exclude compilation output and node modules
+  "include": ["src/**/*.ts", "./types.d.ts"],
+  "exclude": ["node_modules", "dist"]
 }
