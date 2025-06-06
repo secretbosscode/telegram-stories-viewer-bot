@@ -12,8 +12,8 @@ set -e
 # has the same ID as the user on the host machine, fixing volume
 # permission issues. It defaults to 1001 if the variables aren't set.
 # =========================================================================
-PUID=${PUID:-1001}
-PGID=${PGID:-1001}
+PUID=${PUID:-568}
+PGID=${PGID:-568}
 
 echo "Starting with UID: $PUID, GID: $PGID"
 
