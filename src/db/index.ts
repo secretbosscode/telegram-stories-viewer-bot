@@ -2,7 +2,7 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
-import { DownloadQueueItem } from 'types'; // Import DownloadQueueItem from your types file
+import { DownloadQueueItem, UserInfo } from 'types'; // Import necessary types
 
 const DB_PATH = path.join(__dirname, '../../data/database.db');
 
@@ -72,16 +72,21 @@ export function getNextQueueItem(): DownloadQueueItem | null {
     return {
       id: row.id.toString(), // Convert number ID from DB to string as per DownloadQueueItem interface
       chatId: row.telegram_id, // Map telegram_id from DB to chatId in interface
-      task: {
-        chatId: row.telegram_id, // Redundant but explicit, UserInfo is also expected in task
-        link: row.target_username, // Map target_username to link
-        linkType: 'username', // Default, or infer if possible from DB data
-        locale: 'en', // Default, or get from user table if stored
-        user: undefined, // No user object from this query, set to undefined
+      task: { // Create UserInfo object for the task property
+        chatId: row.telegram_id,
+        link: row.target_username,
+        linkType: 'username', // Default or infer if possible
+        locale: 'en', // Default or get from user table if stored
+        user: undefined, // No user object from this query
         initTime: row.enqueued_ts * 1000, // Convert seconds to milliseconds
         isPremium: row.is_premium === 1, // Convert INTEGER 0/1 to boolean
+        // storyRequestType will need to be added if loaded from DB or assigned later
       },
       status: row.status as 'pending' | 'in_progress' | 'done' | 'error', // Cast DB string to union type
+      enqueued_ts: row.enqueued_ts,
+      processed_ts: row.processed_ts,
+      error: row.error,
+      is_premium: row.is_premium // Keep this directly if DB provides it
     };
   }
   return null;
@@ -110,7 +115,26 @@ export function cleanupQueue(): void {
   `).run();
 }
 
+// Fixed previously unterminated template literal and missing return
 export function wasRecentlyDownloaded(telegram_id: string, target_username: string, hours: number): boolean {
   if (hours <= 0) return false;
   const cutoff = Math.floor(Date.now() / 1000) - (hours * 3600);
   const row = db.prepare(`
+    SELECT id FROM download_queue
+    WHERE telegram_id = ? AND target_username = ?
+      AND status = 'done' AND processed_ts > ?
+    ORDER BY processed_ts DESC LIMIT 1
+  `).get(telegram_id, target_username, cutoff);
+  return !!row;
+}
+
+export function isDuplicatePending(telegram_id: string, target_username: string): boolean {
+  // Prevents same user/target combo being in queue at once
+  const row = db.prepare(`
+    SELECT id FROM download_queue
+    WHERE telegram_id = ? AND target_username = ?
+      AND (status = 'pending' OR status = 'processing')
+    LIMIT 1
+  `).get(telegram_id, target_username);
+  return !!row;
+}
