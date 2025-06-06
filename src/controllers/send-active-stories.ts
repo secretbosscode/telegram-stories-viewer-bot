@@ -1,19 +1,23 @@
 import { Userbot } from 'config/userbot';
-import { bot } from 'index';
+import { bot } from 'index'; // Corrected path to use tsconfig alias
 import { chunkMediafiles } from 'lib';
 import { Markup } from 'telegraf';
 import { Api } from 'telegram';
 
-import { downloadStories, mapStories } from './download-stories';
-import { notifyAdmin } from './send-message';
-import { SendStoriesArgs } from './types';
+// CORRECTED: Import types from your central types.ts file
+import { SendStoriesArgs, MappedStoryItem, StoriesModel, NotifyAdminParams } from 'types'; // <--- Corrected import path & added MappedStoryItem, StoriesModel, NotifyAdminParams
+
+// Corrected import path for downloadStories and mapStories
+import { downloadStories, mapStories } from 'controllers/download-stories'; // <--- Corrected import path
+import { notifyAdmin } from 'controllers/send-message'; // <--- Corrected import path
 
 /**
  * Sends a user's active stories as Telegram media groups.
  * Handles pagination, download, error reporting, and premium up-sell.
  */
 export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
-  let mapped = mapStories(stories);
+  // `stories` here is expected to be `MappedStoryItem[]` from SendStoriesArgs
+  let mapped: StoriesModel = stories; // <--- Explicitly typed mapped to StoriesModel (MappedStoryItem[])
 
   // === Pagination logic for >5 stories (per page) ===
   let hasMorePages = false;
@@ -22,28 +26,29 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
 
   if (stories.length > PER_PAGE) {
     hasMorePages = true;
-    const currentStories = mapped.slice(0, PER_PAGE);
+    const currentStories: MappedStoryItem[] = mapped.slice(0, PER_PAGE); // <--- Explicitly typed
     for (let i = PER_PAGE; i < mapped.length; i += PER_PAGE) {
       const from = i + 1;
       const to = Math.min(i + PER_PAGE, mapped.length);
-      nextStories[`${from}-${to}`] = mapped.slice(i, i + PER_PAGE).map((x) => x.id);
+      nextStories[`<span class="math-inline">\{from\}\-</span>{to}`] = mapped.slice(i, i + PER_PAGE).map((x) => x.id);
     }
     mapped = currentStories;
   }
 
   // === If any stories missing media, refetch via Userbot ===
-  const storiesWithoutMedia = mapped.filter((x) => !x.media);
+  const storiesWithoutMedia: MappedStoryItem[] = mapped.filter((x) => !x.media); // <--- Explicitly typed
   if (storiesWithoutMedia.length > 0) {
-    mapped = mapped.filter((x) => Boolean(x.media));
+    mapped = mapped.filter((x) => Boolean(x.media)); // This filters out stories with no media
     try {
       const client = await Userbot.getInstance();
       const entity = await client.getEntity(task.link!);
       const ids = storiesWithoutMedia.map((x) => x.id);
-      const storiesWithMedia = await client.invoke(
+      const storiesWithMediaApi = await client.invoke( // <--- Renamed to avoid conflict and clarify type
         new Api.stories.GetStoriesByID({ id: ids, peer: entity })
       );
-      mapped.push(...mapStories(storiesWithMedia.stories));
+      mapped.push(...mapStories(storiesWithMediaApi.stories)); // <--- mapStories expects Api.TypeStoryItem[]
     } catch (e) {
+      console.error('[sendActiveStories] Error re-fetching stories without media:', e); // Added error logging
       // Fallback: just continue with those that have media
     }
   }
@@ -56,7 +61,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     await downloadStories(mapped, 'active');
 
     // --- Only upload files with buffer and size <= 47MB (Telegram API limit fudge) ---
-    const uploadableStories = mapped.filter(
+    const uploadableStories: MappedStoryItem[] = mapped.filter( // <--- Explicitly typed
       (x) => x.buffer && x.bufferSize! <= 47
     );
 
@@ -91,11 +96,12 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       const btns = Object.entries(nextStories).map(
         ([pages, nextStoriesIds]) => ({
           text: `📥 ${pages} 📥`,
-          callback_data: `${task.link}&${JSON.stringify(nextStoriesIds)}`,
+          callback_data: `<span class="math-inline">\{task\.link\}&</span>{JSON.stringify(nextStoriesIds)}`,
         })
       );
       // Chunk 3 buttons per row
-      const keyboard = btns.reduce<any>((acc, curr, index) => {
+      // The `reduce` accumulator needs a type, and `Markup.inlineKeyboard` returns specific type
+      const keyboard = btns.reduce((acc: Markup.InlineKeyboardButton[][], curr: Markup.InlineKeyboardButton, index: number) => {
         const chunkIndex = Math.floor(index / 3);
         if (!acc[chunkIndex]) acc[chunkIndex] = [];
         acc[chunkIndex].push(curr);
@@ -103,7 +109,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       }, []);
       await bot.telegram.sendMessage(
         task.chatId,
-        `Uploaded ${PER_PAGE}/${stories.length} active stories ✅`,
+        `Uploaded <span class="math-inline">\{PER\_PAGE\}/</span>{stories.length} active stories ✅`,
         Markup.inlineKeyboard(keyboard)
       );
     }
@@ -111,17 +117,10 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     notifyAdmin({
       status: 'info',
       baseInfo: `📥 ${uploadableStories.length} Active stories uploaded to user!`,
-    });
-  } catch (error) {
+    } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
+
+  } catch (error) { // <--- Error can be 'unknown' or 'any' if not specified
     notifyAdmin({
       task,
       status: 'error',
-      errorInfo: { cause: error },
-    });
-    console.error('[sendActiveStories] Error sending ACTIVE stories:', error);
-    try {
-      await bot.telegram.sendMessage(task.chatId, 'An error occurred while sending stories. The admin has been notified.').catch(() => null);
-    } catch (_) {/* ignore */}
-  }
-  // No Effector event triggers here; the queue manager will progress automatically.
-}
+      errorInfo
