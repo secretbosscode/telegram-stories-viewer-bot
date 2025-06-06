@@ -4,14 +4,14 @@ import { bot } from 'index';
 import { chunkMediafiles, timeout } from 'lib';
 import { Markup } from 'telegraf';
 import { Api } from 'telegram';
-import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram';
+// REMOVED: import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram'; // Not directly used in this snippet
 
-import { downloadStories, mapStories, StoriesModel } from './download-stories';
-import { notifyAdmin } from './send-message';
-import { SendStoriesArgs } from './types';
+// CORRECTED: Import types from your central types.ts file
+import { UserInfo, SendStoriesArgs, StoriesModel, NotifyAdminParams } from 'types'; // <--- Corrected import path & Added NotifyAdminParams
 
-// Import UserInfo from the shared types file
-import { UserInfo } from 'types/user-info';
+// Corrected import path for downloadStories and mapStories
+import { downloadStories, mapStories } from 'controllers/download-stories'; // <--- Corrected import path
+import { notifyAdmin } from 'controllers/send-message'; // <--- Corrected import path
 
 // =========================================================================
 // CRITICAL FUNCTION: This function handles downloading and sending stories.
@@ -19,7 +19,11 @@ import { UserInfo } from 'types/user-info';
 // =========================================================================
 export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Promise<void> {
   try {
-    let mapped: StoriesModel = mapStories(stories);
+    // mapped is already MappedStoryItem[] because SendStoriesArgs.stories is MappedStoryItem[]
+    // However, if the `stories` parameter coming into this function might be Api.TypeStoryItem[],
+    // then mapStories is still needed here. Assuming it receives MappedStoryItem[].
+    // If it receives Api.TypeStoryItem[], you would need `let mapped: StoriesModel = mapStories(stories as Api.TypeStoryItem[]);`
+    let mapped: StoriesModel = stories; // Assuming stories is already MappedStoryItem[] from SendStoriesArgs
 
     // =========================================================================
     // CORE BUSINESS LOGIC: User Limits and Premium Upsell
@@ -36,10 +40,24 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     }
 
     // Re-fetching stories that might have been mapped without media objects.
+    // This logic relies on Api.stories.GetStoriesByID. The `storiesWithoutMedia` are MappedStoryItem[].
+    // You'd need to convert them back to IDs and pass to Telegram API.
     const storiesWithoutMedia = mapped.filter((x) => !x.media);
     if (storiesWithoutMedia.length > 0) {
-      // Your existing logic for re-fetching stories by ID
-      // This block has its own try/catch and is self-contained.
+      try {
+        const client = await Userbot.getInstance();
+        const entity = await client.getEntity(task.link!); // task.link used as entity identifier
+        const ids = storiesWithoutMedia.map((x) => x.id); // Assuming MappedStoryItem.id is Telegram story ID (number)
+        const storiesWithMediaApi = await client.invoke(
+          new Api.stories.GetStoriesByID({ id: ids, peer: entity })
+        );
+        // Map fetched raw API stories back to MappedStoryItem and push to `mapped`
+        const newMappedStories = mapStories(storiesWithMediaApi.stories);
+        mapped.push(...newMappedStories);
+      } catch (e) {
+        console.error(`[SendPinnedStories] Error re-fetching stories without media: ${e}`);
+        // Fallback: just continue with those that have media
+      }
     }
 
     console.log(`[SendPinnedStories] [${task.link}] Preparing to download ${mapped.length} pinned stories.`);
@@ -58,7 +76,7 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
         setTimeout(() => reject(new Error('Download process timed out after 5 minutes.')), 300000)
     );
     await Promise.race([downloadPromise, timeoutPromise]);
-    
+
     console.log(`[SendPinnedStories] [${task.link}] downloadStories function completed.`);
 
     const uploadableStories = mapped.filter(
@@ -80,9 +98,9 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
             await bot.telegram.sendMediaGroup(
               task.chatId,
               album.map((x) => ({
-                media: { source: x.buffer! }, 
-                type: x.mediaType!, 
-                caption: x.caption ?? `Pinned story ${x.id}`, 
+                media: { source: x.buffer! },
+                type: x.mediaType!,
+                caption: x.caption ?? `Pinned story ${x.id}`,
               }))
             );
         } catch (sendError) {
@@ -113,7 +131,7 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     notifyAdmin({
       status: 'info',
       baseInfo: `📥 ${uploadableStories.length} Pinned stories uploaded for user ${task.link} (chatId: ${task.chatId})!`,
-    });
+    } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
     console.log(`[SendPinnedStories] [${task.link}] Processing finished successfully.`);
 
   } catch (error) {
@@ -127,12 +145,12 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
       status: 'error',
       task,
       errorInfo: { cause: error },
-    });
+    } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
     console.error(`[SendPinnedStories] [${task.link}] CRITICAL error occurred:`, error);
     try {
         await bot.telegram.sendMessage(task.chatId, ' An error occurred while processing pinned stories. The admin has been notified.');
     } catch (e) { /* ignore */}
-    throw error;
+    throw error; // Essential for Effector's .fail to trigger
 
   } finally {
     console.log(`[SendPinnedStories] [${task.link}] Function execution complete.`);
