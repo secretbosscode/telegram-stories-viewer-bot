@@ -1,6 +1,8 @@
+// src/webhook.ts
 import express from 'express';
 import Stripe from 'stripe';
 import bodyParser from 'body-parser';
+import dotenv from 'dotenv'; // <--- ADD THIS LINE
 // import { addPremiumUser } from './premium-service'; // Assuming this import path is correct
 
 dotenv.config(); // Load .env variables
