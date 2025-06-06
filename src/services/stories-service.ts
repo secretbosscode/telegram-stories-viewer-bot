@@ -21,6 +21,9 @@ export interface UserInfo {
   isPremium?: boolean;
 }
 
+// DEBUG LOGGING
+const debug = (...args: any[]) => console.log('[StoriesService]', ...args);
+
 // =============================================================================
 // STORES & EVENTS
 // =============================================================================
@@ -32,11 +35,8 @@ const $taskStartTime = createStore<Date | null>(null);
 const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
-// This is the raw event from the outside world
 const newTaskReceived = createEvent<UserInfo>();
-// This is the new, pre-filtered event that is guaranteed to be non-duplicate
 const taskReadyToBeQueued = createEvent<UserInfo>();
-
 const taskInitiated = createEvent<void>();
 const taskStarted = createEvent<UserInfo>();
 const tempMessageSent = createEvent<number>();
@@ -48,89 +48,7 @@ const cleanUpTempMessagesFired = createEvent();
 // LOGIC AND FLOW
 // =============================================================================
 
-sample({
-  clock: taskReadyToBeQueued,
-  target: checkTasks,
-});
-
-const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
-const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
-  const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
-  setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
-});
-
-const MAX_WAIT_TIME = 7;
-
-const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
-  if (task) {
-    const minsFromStart = Math.floor((Date.now() - task.initTime) / 60000);
-    if (minsFromStart >= MAX_WAIT_TIME) {
-      const isPrivileged = task.chatId === BOT_ADMIN_ID.toString() || task.isPremium === true;
-      if (isPrivileged) {
-        console.warn(`[StoriesService] Privileged task for ${task.link} (User: ${task.chatId}) running for ${minsFromStart} mins.`);
-        try {
-          await bot.telegram.sendMessage(task.chatId, `🔔 Your long task for "${task.link}" is still running (${minsFromStart} mins).`).catch(() => {});
-        } catch (e) { /* Error sending notification */ }
-      } else {
-        console.error('[StoriesService] Non-privileged task took too long, exiting:', JSON.stringify(task));
-        await bot.telegram.sendMessage(
-          BOT_ADMIN_ID,
-          "❌ Bot took too long for a non-privileged task and was shut down:\n\n" + JSON.stringify(task, null, 2)
-        );
-        process.exit(1);
-      }
-    }
-  }
-});
-
-const $taskSource = combine({
-  currentTask: $currentTask,
-  taskStartTime: $taskStartTime,
-  taskTimeout: $taskTimeout,
-  queue: $tasksQueue,
-  user: $currentTask.map(task => task?.user ?? null),
-});
-
-const sendWaitMessageFx = createEffect(async (params: {
-  multipleRequests: boolean;
-  taskStartTime: Date | null;
-  taskTimeout: number;
-  queueLength: number;
-  newTask: UserInfo;
-}) => {
-  let estimatedWaitMs = 0;
-  if (params.taskStartTime) {
-    const elapsed = Date.now() - params.taskStartTime.getTime();
-    estimatedWaitMs = Math.max(params.taskTimeout - elapsed, 0) + (params.queueLength * params.taskTimeout);
-  }
-  const estimatedWaitSec = Math.ceil(estimatedWaitMs / 1000);
-  const waitMsg = estimatedWaitSec > 0 ? `⏳ Please wait: Estimated wait time is ${estimatedWaitSec} seconds before your request starts.` : '⏳ Please wait: Your request will start soon.';
-  await bot.telegram.sendMessage(
-    params.newTask.chatId,
-    waitMsg
-  );
-});
-
-const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
-  if (task.tempMessages && task.tempMessages.length > 0) {
-    await Promise.allSettled(
-      task.tempMessages.map(id => bot.telegram.deleteMessage(task.chatId, id).catch(() => null))
-    );
-  }
-});
-
-const saveUserFx = createEffect(saveUser);
-
-// --- Task Queue Management ---
-
-// =========================================================================
-// BUG FIX: Prevent Duplicate Task Processing (Race Condition Fix)
-// -------------------------------------------------------------------------
-// This new logic uses `combine` and `sample` to create a new, pre-filtered
-// event (`taskReadyToBeQueued`). This ensures we always check against the
-// absolute latest state of the queue and the currently running task,
-// preventing the race condition that allowed duplicates before.
-// =========================================================================
+// 1. Prevent Duplicate Task Processing (Race Condition Fix)
 const $queueState = combine({
   tasks: $tasksQueue,
   current: $currentTask,
@@ -142,36 +60,61 @@ sample({
   filter: (state, newTask) => {
     const isInQueue = state.tasks.some(t => t.link === newTask.link && t.chatId === newTask.chatId);
     const isRunning = state.current ? (state.current.link === newTask.link && state.current.chatId === newTask.chatId) : false;
-
     if (isInQueue || isRunning) {
-      console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
-      return false; // This task is a duplicate, filter it out
+      debug(`[TASK REJECTED as duplicate] link=${newTask.link} chatId=${newTask.chatId}`);
+      return false;
     }
-    return true; // This task is valid
+    debug(`[NEW TASK ACCEPTED] link=${newTask.link} chatId=${newTask.chatId}`);
+    return true;
   },
-  fn: (_, newTask) => newTask, // Pass along the new task data if the filter is true
+  fn: (_, newTask) => newTask,
   target: taskReadyToBeQueued,
 });
 
-// The queue now ONLY listens to the pre-filtered, safe event.
+// 2. Add to queue
 $tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
   const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
+  debug(`[QUEUE] Adding task (${newTask.link} by ${newTask.chatId})`, { isPrivileged });
   return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
 });
 
-$isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
+// 3. Mark running/not running
+$isTaskRunning.on(taskStarted, () => {
+  debug('[RUNNING] Task started');
+  return true;
+}).on(taskDone, () => {
+  debug('[RUNNING] Task finished');
+  return false;
+});
 
+// 4. Remove from queue when done (ALWAYS remove the 1st element)
+$tasksQueue.on(taskDone, (tasks) => {
+  debug('[QUEUE] Removing finished task, queue before:', tasks.map(t => t.link));
+  const newQueue = tasks.length > 0 ? tasks.slice(1) : [];
+  debug('[QUEUE] Queue after:', newQueue.map(t => t.link));
+  return newQueue;
+});
+
+// 5. When a new task is received, save the user (side effect)
 sample({
   clock: newTaskReceived,
   filter: (newTask) => !!newTask.user,
   fn: (newTask) => newTask.user!,
-  target: saveUserFx,
+  target: createEffect((user) => {
+    debug('[DB] Saving user', user?.username || user?.id);
+    saveUser(user);
+  }),
 });
 
+// 6. Show wait message if needed
 sample({
   clock: newTaskReceived,
-  source: $taskSource,
+  source: combine({
+    currentTask: $currentTask,
+    taskStartTime: $taskStartTime,
+    taskTimeout: $taskTimeout,
+    queue: $tasksQueue,
+  }),
   filter: (sourceData, newTask) => {
     const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
     if (!isPrivileged) {
@@ -186,11 +129,23 @@ sample({
     queueLength: sourceData.queue.filter(t => t.chatId !== newTask.chatId && t.link !== newTask.link).length,
     newTask,
   }),
-  target: sendWaitMessageFx,
+  target: createEffect(async (params) => {
+    debug('[WAIT] Sending wait message', params.newTask.link);
+    let estimatedWaitMs = 0;
+    if (params.taskStartTime) {
+      const elapsed = Date.now() - params.taskStartTime.getTime();
+      estimatedWaitMs = Math.max(params.taskTimeout - elapsed, 0) + (params.queueLength * params.taskTimeout);
+    }
+    const estimatedWaitSec = Math.ceil(estimatedWaitMs / 1000);
+    const waitMsg = estimatedWaitSec > 0
+      ? `⏳ Please wait: Estimated wait time is ${estimatedWaitSec} seconds before your request starts.`
+      : '⏳ Please wait: Your request will start soon.';
+    await bot.telegram.sendMessage(params.newTask.chatId, waitMsg);
+  }),
 });
 
-type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
-const $taskInitiationDataSource = combine<TaskInitiationSource>({
+// 7. Task execution scheduling
+const $taskInitiationDataSource = combine({
   isRunning: $isTaskRunning,
   currentSystemCooldownStartTime: $taskStartTime,
   queue: $tasksQueue
@@ -204,18 +159,34 @@ sample({
     const nextTaskInQueue = sourceValues.queue[0];
     if (!nextTaskInQueue) return false;
     const isPrivileged = nextTaskInQueue.chatId === BOT_ADMIN_ID.toString() || nextTaskInQueue.isPremium === true;
+    debug('[SCHEDULER] Next task', nextTaskInQueue.link, { isPrivileged });
     return isPrivileged || sourceValues.currentSystemCooldownStartTime === null;
   },
   target: taskInitiated,
 });
 
-sample({ clock: taskInitiated, source: $tasksQueue, filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(), fn: (q) => q[0], target: [$currentTask, taskStarted]});
+// 8. Actually start the task (set $currentTask, fire taskStarted)
+sample({
+  clock: taskInitiated,
+  source: $tasksQueue,
+  filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(),
+  fn: (q) => q[0],
+  target: [
+    createEffect((task) => {
+      debug('[TASK STARTED]', task.link, 'by', task.chatId);
+    }),
+    $currentTask,
+    taskStarted,
+  ]
+});
+
 sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: () => new Date(), target: $taskStartTime });
-sample({ clock: taskInitiated, source: $taskTimeout, filter: (t): t is number => t > 0, fn: (t) => t, target: clearTimeoutWithDelayFx });
-$taskTimeout.on(clearTimeoutEvent, (_, n) => n);
-sample({ clock: clearTimeoutEvent, fn: () => null, target: [$taskStartTime, checkTasks] });
-sample({ clock: taskStarted, filter: (t) => t.linkType === 'username', target: getAllStoriesFx });
-sample({ clock: taskStarted, filter: (t) => t.linkType === 'link', target: getParticularStoryFx });
+
+// 9. When the task is done, clean up
+sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: createEffect((task) => {
+  debug('[CLEANUP] Finished task', task.link, 'by', task.chatId);
+})});
+$currentTask.on(taskDone, () => null);
 
 // --- Effect Result Handling ---
 
@@ -225,7 +196,12 @@ sample({
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
+  target: [
+    createEffect(({ task }) => debug('[EFFECT] getAllStoriesFx string result', task.link)),
+    sendErrorMessageFx,
+    taskDone,
+    checkTasks,
+  ],
 });
 
 sample({
@@ -233,11 +209,14 @@ sample({
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'object' && result !== null,
   fn: (task, result) => ({ task: task!, ...(result as object) }),
-  target: sendStoriesFx,
+  target: [
+    createEffect(({ task }) => debug('[EFFECT] getAllStoriesFx object result', task.link)),
+    sendStoriesFx,
+  ],
 });
 
 getAllStoriesFx.fail.watch(({ params, error }) => {
-  console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
+  debug('[ERROR] getAllStoriesFx.fail', params.link, error);
   taskDone();
   checkTasks();
 });
@@ -248,7 +227,12 @@ sample({
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'string',
   fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
+  target: [
+    createEffect(({ task }) => debug('[EFFECT] getParticularStoryFx string result', task.link)),
+    sendErrorMessageFx,
+    taskDone,
+    checkTasks,
+  ],
 });
 
 sample({
@@ -256,44 +240,29 @@ sample({
   source: $currentTask,
   filter: (task, result) => task !== null && typeof result === 'object' && result !== null,
   fn: (task, result) => ({ task: task!, ...(result as object) }),
-  target: sendStoriesFx,
+  target: [
+    createEffect(({ task }) => debug('[EFFECT] getParticularStoryFx object result', task.link)),
+    sendStoriesFx,
+  ],
 });
 
 getParticularStoryFx.fail.watch(({ params, error }) => {
-  console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
+  debug('[ERROR] getParticularStoryFx.fail', params.link, error);
   taskDone();
   checkTasks();
 });
 
-
 // --- Finalization Logic ---
-sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
-sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
+sendStoriesFx.done.watch(({ params }) => debug('[DONE] sendStoriesFx.done for task:', params.task.link));
+sendStoriesFx.fail.watch(({ params, error }) => debug('[FAIL] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
 sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
 sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 
-sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
-$currentTask.on(taskDone, () => null);
-$isTaskRunning.on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
-
-$currentTask.on(tempMessageSent, (prev, msgId) => {
-  if (!prev) {
-    console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
-    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId] } as UserInfo;
-  }
-  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
-});
-$currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMessages: [] } : null);
-
-// --- Interval Timers ---
+// --- Timers and Export ---
 const intervalHasPassed = createEvent<void>();
-sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: checkTaskForRestart });
+sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: createEffect((task) => debug('[TIMER] Checking for stuck/long-running task', task.link, task.chatId)) });
 setInterval(() => intervalHasPassed(), 30_000);
 
-// =========================================================================
-//  EXPORTS
-// =========================================================================
 export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
 
 setTimeout(() => checkTasks(), 100);
