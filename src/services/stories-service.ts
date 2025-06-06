@@ -62,7 +62,6 @@ sample({
       if ('particularStory' in fetchedDataResult && fetchedDataResult.particularStory) {
         params.particularStory = (fetchedDataResult as { particularStory: any }).particularStory;
       }
-      // --- THE MISSING ELSE IF BLOCK AND ITS CLOSING BRACE ---
       else if ('activeStories' in fetchedDataResult || 'pinnedStories' in fetchedDataResult || 'paginatedStories' in fetchedDataResult) {
         const data = fetchedDataResult as {
           activeStories?: any[];
@@ -73,7 +72,6 @@ sample({
         if (data.pinnedStories) params.pinnedStories = data.pinnedStories;
         if (data.paginatedStories) params.paginatedStories = data.paginatedStories;
       }
-      // --- END OF THE MISSING ELSE IF BLOCK ---
       else {
         console.error('[stories-service] Unexpected result type from handleStoryRequest.doneData:', fetchedDataResult);
         throw new Error('Unexpected story data type received from fetch effect for sending.');
@@ -125,4 +123,27 @@ $tasksQueue.on(taskDone, (tasks: UserInfo[]) => tasks.length > 0 ? tasks.slice(1
 $currentTask.on(tempMessageSent, (prev: UserInfo | null, msgId: number) => {
   if (!prev) {
     console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
-    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime
+    // CORRECTED LINE: Completed the object literal and added closing parentheses
+    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId], isPremium: false } as UserInfo;
+  }
+  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
+});
+
+// Clear tempMessages array in the current task state after cleanup effect is done
+$currentTask.on(cleanupTempMessagesFx.done, (currentTaskState: UserInfo | null, { params: finishedTaskParams }): UserInfo | null => {
+    // Only update if the finished task is the one currently being tracked by $currentTask
+    if (currentTaskState && currentTaskState.instanceId === finishedTaskParams.instanceId) {
+        return { ...currentTaskState, tempMessages: [] };
+    }
+    return currentTaskState; // Otherwise, don't modify the state
+});
+
+// --- Interval Timers ---
+const intervalHasPassed = createEvent<void>();
+sample({
+  clock: intervalHasPassed,
+  source: $currentTask,
+  filter: (t: UserInfo | null): t is UserInfo => t !== null,
+  target: checkTaskForRestart // This effect should be imported from the orchestrator
+});
+setInterval(() => intervalHasPassed(), 30_000); // <--- This line is the last one in the file.
