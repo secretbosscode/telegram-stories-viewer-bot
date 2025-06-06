@@ -1,3 +1,5 @@
+// In: src/services/stories-service.ts
+
 import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessageFx } from 'controllers/send-message';
@@ -22,13 +24,13 @@ export interface UserInfo {
 }
 
 // =============================================================================
-// STORES & EVENTS - The Bot's State and Actions
+// STORES & EVENTS - The Bot's State Machine Core
 // =============================================================================
 
 const $currentTask = createStore<UserInfo | null>(null);
 const $tasksQueue = createStore<UserInfo[]>([]);
 const $isTaskRunning = createStore(false);
-const $taskStartTime = createStore<Date | null>(null);
+const $taskStartTime = createStore<Date | null>(null); // For system-wide (non-privileged user) cooldown
 const clearTimeoutEvent = createEvent<number>();
 const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
 
@@ -37,11 +39,11 @@ const taskInitiated = createEvent<void>();
 const taskStarted = createEvent<UserInfo>();
 const tempMessageSent = createEvent<number>();
 const taskDone = createEvent<void>();
-const checkTasks = createEvent<void>();
+const checkTasks = createEvent<void>(); // The main trigger to check if a new task can be started
 const cleanUpTempMessagesFired = createEvent();
 
 // =============================================================================
-// CORE LOGIC - The Bot's Brain
+// LOGIC AND FLOW - The Bot's Brain
 // =============================================================================
 
 // =========================================================================
@@ -49,9 +51,8 @@ const cleanUpTempMessagesFired = createEvent();
 // DO NOT MODIFY without careful consideration.
 // -------------------------------------------------------------------------
 // This sample solves the "does nothing" bug. If a new task arrives, it
-// explicitly calls `checkTasks` to evaluate the queue. The previous version
-// of this logic also checked if a task was running, but this simpler version
-// proved to be more robust.
+// explicitly calls `checkTasks` to evaluate the queue. This is a robust
+// pattern that prevents the queue from stalling.
 // =========================================================================
 sample({
   clock: newTaskReceived,
@@ -68,7 +69,25 @@ const MAX_WAIT_TIME = 7;
 const LARGE_ITEM_THRESHOLD = 100;
 
 const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
-  // This effect provides a safety net for tasks that run too long.
+  if (task) {
+    const minsFromStart = Math.floor((Date.now() - task.initTime) / 60000);
+    if (minsFromStart >= MAX_WAIT_TIME) {
+      const isPrivileged = task.chatId === BOT_ADMIN_ID.toString() || task.isPremium === true;
+      if (isPrivileged) {
+        console.warn(`[StoriesService] Privileged task for ${task.link} (User: ${task.chatId}) running for ${minsFromStart} mins.`);
+        try {
+          await bot.telegram.sendMessage(task.chatId, `🔔 Your long task for "${task.link}" is still running (${minsFromStart} mins).`).catch(() => {});
+        } catch (e) { /* Error sending notification */ }
+      } else {
+        console.error('[StoriesService] Non-privileged task took too long, exiting:', JSON.stringify(task));
+        await bot.telegram.sendMessage(
+          BOT_ADMIN_ID,
+          "❌ Bot took too long for a non-privileged task and was shut down:\n\n" + JSON.stringify(task, null, 2)
+        );
+        process.exit(1);
+      }
+    }
+  }
 });
 
 const $taskSource = combine({
@@ -87,7 +106,14 @@ const sendWaitMessageFx = createEffect(async (params: {
   queueLength: number;
   newTask: UserInfo;
 }) => {
-  // This effect sends appropriate "please wait" messages to non-premium users.
+  let estimatedWaitMs = 0;
+  if (params.taskStartTime) {
+    const elapsed = Date.now() - params.taskStartTime.getTime();
+    estimatedWaitMs = Math.max(params.taskTimeout - elapsed, 0) + (params.queueLength * params.taskTimeout);
+  }
+  const estimatedWaitSec = Math.ceil(estimatedWaitMs / 1000);
+  const waitMsg = estimatedWaitSec > 0 ? `⏳ Please wait: Estimated wait time is ${estimatedWaitSec} seconds before your request starts.` : '⏳ Please wait: Your request will start soon.';
+  await bot.telegram.sendMessage(params.newTask.chatId, waitMsg);
 });
 
 const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
@@ -193,7 +219,7 @@ sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
   filter: (task, effectResult): task is UserInfo => task !== null && typeof effectResult.result === 'object' && effectResult.result !== null,
-  fn: (task, { result }) => ({ task, ...(result as GetAllStoriesSuccessResult) }),
+  fn: (task, { result }) => ({ task: task, ...(result as GetAllStoriesSuccessResult) }),
   target: sendStoriesFx,
 });
 getAllStoriesFx.fail.watch(({ params, error }) => {
@@ -240,7 +266,6 @@ sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 $currentTask.on(taskDone, () => null);
 $isTaskRunning.on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
   if (!prev) {
