@@ -4,7 +4,7 @@ import { createEffect, createEvent, createStore, sample } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 
-// IMPORTANT: Assume these core events/stores are defined and exported from your main orchestrator file.
+// IMPORTANT: Assuming these core events/stores/effects are defined and exported from your main orchestrator file.
 // YOU MUST REPLACE 'services/bot-orchestrator-file' with the correct path to that file!
 import {
   newTaskReceived,
@@ -15,8 +15,9 @@ import {
   $currentTask, // Added $currentTask
   $isTaskRunning, // Added $isTaskRunning
   $tasksQueue, // Added $tasksQueue
-  checkTaskForRestart // Added checkTaskForRestart
-} from 'services/bot-orchestrator-file';
+  checkTaskForRestart, // Added checkTaskForRestart
+  cleanupTempMessagesFx // Added cleanupTempMessagesFx (it's an Effect)
+} from 'services/bot-orchestrator-file'; // <--- YOU MUST REPLACE THIS PLACEHOLDER PATH!
 
 // Import necessary types, including SendStoriesFxParams
 import { UserInfo, SendStoriesFxParams } from 'types';
@@ -46,11 +47,11 @@ sample({
   clock: handleStoryRequest.doneData, // Output of get*StoriesFx effects
   source: newTaskReceived, // The original UserInfo task that triggered the flow
   // Filter out string errors and nulls, only pass valid story data
-  filter: (task, fetchedDataResult): fetchedDataResult is (object | object[]) =>
-    typeof fetchedDataResult !== 'string' && fetchedDataResult !== null,
+  filter: (task: UserInfo, fetchedDataResult: object | object[]): fetchedDataResult is (object | object[]) =>
+    typeof fetchedDataResult !== 'string' && fetchedDataResult !== null, // <--- Parameter types added here
   // The 'fn' function transforms the fetched data and task into the exact payload
   // that sendStoriesFx expects (SendStoriesFxParams).
-  fn: (task, fetchedDataResult): SendStoriesFxParams => {
+  fn: (task: UserInfo, fetchedDataResult: object | object[]): SendStoriesFxParams => { // <--- Parameter types added here
     const params: SendStoriesFxParams = { task };
 
     // Based on the return types of getAllStoriesFx and getParticularStoryFx:
@@ -74,7 +75,7 @@ sample({
       };
       if (data.activeStories) params.activeStories = data.activeStories;
       if (data.pinnedStories) params.pinnedStories = data.pinnedStories;
-      if (data.paginatedStories) params.paginatedStories = data.paginatedStories;
+      if (data.paginatedStories) params.paginatedStories = data.pagagedStories;
     }
     // Fallback if unexpected data type - should not happen if effects are well-typed
     else {
@@ -103,24 +104,14 @@ sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] 
 sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
 sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 
-sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
-$currentTask.on(taskDone, () => null);
-$isTaskRunning.on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
+// Corrected type annotations and cleanupTempMessagesFx target
+sample({ clock: taskDone, source: $currentTask, filter: (t: UserInfo | null): t is UserInfo => t !== null, target: cleanupTempMessagesFx.prepend(task => task) }); // <--- Fixed target and type
 
-$currentTask.on(tempMessageSent, (prev, msgId) => {
+$currentTask.on(taskDone, () => null); // <--- Correct: no params needed here
+$isTaskRunning.on(taskDone, () => false); // <--- Correct: no params needed here
+$tasksQueue.on(taskDone, (tasks: UserInfo[]) => tasks.length > 0 ? tasks.slice(1) : []); // <--- Parameter type added here
+
+$currentTask.on(tempMessageSent, (prev: UserInfo | null, msgId: number) => { // <--- Parameter types added here
   if (!prev) {
     console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
-    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId], isPremium: false } as UserInfo;
-  }
-  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
-});
-$currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMessages: [] } : null);
-
-// --- Interval Timers ---
-const intervalHasPassed = createEvent<void>();
-sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: checkTaskForRestart });
-setInterval(() => intervalHasPassed(), 30_000);
-
-// No longer exporting these, as they are imported from the orchestrator
-// export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
+    return { chatId: '', link: '', linkType:
