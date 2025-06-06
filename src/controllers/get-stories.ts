@@ -34,7 +34,7 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
     console.error(`[GetStories] Could not send initial status message to chat ${task.chatId}`);
   }
 
-  try {
+  try { // <-- This 'try' block needs a matching 'catch' at the end of the function
     const client = await Userbot.getInstance();
     const entity = await client.getEntity(task.link);
     notifyAdmin({ task, status: 'start' } as NotifyAdminParams);
@@ -111,4 +111,93 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
       }
 
       // Do not notify admin here to avoid duplicate notifications.
-      return { activeStories, pinnedStories
+      return { activeStories, pinnedStories }; // Return object matches SendStoriesFxParams
+    }
+
+    // If no stories are found, return a user-friendly message string.
+    return '🚫 No stories found (active or pinned)!';
+  } catch (error: any) { // <--- This catch block closes the outer try block.
+    console.error(`[GetStories] Error in getAllStoriesFx for task ${task.link}:`, error);
+    if (statusMessageId) {
+      await bot.telegram.editMessageText(task.chatId, statusMessageId, undefined, `❌ An error occurred while fetching story lists.`).catch(() => {});
+    }
+
+    // Return a user-friendly error string that will be handled in stories-service.ts
+    if (error instanceof FloodWaitError) {
+      const seconds = error.seconds || 60;
+      return `⚠️ Too many requests. Please wait about ${Math.ceil(seconds / 60)} minute(s).`;
+    }
+    if (error.message?.includes('No user corresponding to')) {
+      return `🚫 User "${task.link}" not found. Please check the username.`;
+    }
+    return `🚫 Error fetching stories for "${task.link}". User may not exist or have public stories.`;
+  }
+});
+
+// ------------------------------------------------------------------------
+// Fetch a particular story from a link like t.me/username/s/123
+// ------------------------------------------------------------------------
+export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
+  let statusMessageId: number | undefined;
+  try {
+    const sentMessage = await bot.telegram.sendMessage(task.chatId, '⏳ Fetching specific story...');
+    statusMessageId = sentMessage.message_id;
+    tempMessageSent(statusMessageId);
+  } catch (e) {
+    console.error(`[GetStories] Could not send initial status message to chat ${task.chatId}`);
+  }
+
+  try { // <-- This 'try' block needs a matching 'catch' at the end of the function
+    const client = await Userbot.getInstance();
+    const linkPaths = task.link.split('/');
+    if (linkPaths.length < 4 || linkPaths[linkPaths.length-2] !== 's') {
+      return '🚫 Invalid story link format. Expected format: t.me/username/s/id';
+    }
+    const storyId = Number(linkPaths.at(-1));
+    const usernameOrChannelId = linkPaths.at(-3);
+
+    if (!usernameOrChannelId || isNaN(storyId)) {
+      return '🚫 Invalid story link. Could not parse username/channel or story ID.';
+    }
+
+    console.log(`[GetStories] Fetching particular story for ${usernameOrChannelId}, story ID: ${storyId}`);
+    const entity = await client.getEntity(usernameOrChannelId);
+
+    const storyData = await client.invoke(
+      new Api.stories.GetStoriesByID({ id: [storyId], peer: entity })
+    );
+
+    if (storyData.stories.length === 0) {
+      return `🚫 Story with ID ${storyId} not found for "${usernameOrChannelId}"!`;
+    }
+
+    const summaryText = '✅ Story found successfully! Preparing to send...';
+    if (statusMessageId) {
+      await bot.telegram.editMessageText(task.chatId, statusMessageId, undefined, summaryText).catch(()=>{});
+    } else {
+      bot.telegram.sendMessage(task.chatId, summaryText).then(({ message_id }) => tempMessageSent(message_id));
+    }
+
+    notifyAdmin({ task, status: 'start' } as NotifyAdminParams);
+
+    return {
+      activeStories: [],
+      pinnedStories: [],
+      particularStory: storyData.stories[0], // Return object matches SendStoriesFxParams
+    };
+  } catch (error: any) { // <--- This catch block closes the inner try block.
+    console.error(`[GetStories] ERROR in getParticularStoryFx for ${task.link}:`, error);
+    if (statusMessageId) {
+      await bot.telegram.editMessageText(task.chatId, statusMessageId, undefined, `❌ An error occurred while fetching this story.`).catch(() => {});
+    }
+
+    if (error instanceof FloodWaitError) {
+      const seconds = error.seconds || 60;
+      return `⚠️ Too many requests. Please wait about ${Math.ceil(seconds / 60)} minute(s).`;
+    }
+    if (error.message?.includes('No user corresponding to')) {
+      return `🚫 User/Channel for story link "${task.link}" not found.`;
+    }
+    return `🚫 Error fetching specific story: ${task.link}. Link might be invalid or story deleted.`;
+  }
+});
