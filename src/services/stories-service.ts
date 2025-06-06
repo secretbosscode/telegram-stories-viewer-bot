@@ -4,15 +4,22 @@ import { createEffect, createEvent, createStore, sample } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 
-// --- IMPORTANT: Decide where these core events are defined ---
-// As discussed, `newTaskReceived`, `tempMessageSent`, and `cleanUpTempMessagesFired`
-// should be defined and exported from your main bot orchestration file (the large
-// Effector file that was causing 'createStore' errors in your logs).
+// IMPORTANT: Assume these core events/stores are defined and exported from your main orchestrator file.
 // YOU MUST REPLACE 'services/bot-orchestrator-file' with the correct path to that file!
-import { newTaskReceived, tempMessageSent, cleanUpTempMessagesFired, checkTasks } from 'services/bot-orchestrator-file'; // <--- ADDED 'checkTasks' here for consistency
+import {
+  newTaskReceived,
+  tempMessageSent,
+  cleanUpTempMessagesFired,
+  checkTasks, // Added checkTasks
+  taskDone, // Added taskDone
+  $currentTask, // Added $currentTask
+  $isTaskRunning, // Added $isTaskRunning
+  $tasksQueue, // Added $tasksQueue
+  checkTaskForRestart // Added checkTaskForRestart
+} from 'services/bot-orchestrator-file';
 
 // Import necessary types, including SendStoriesFxParams
-import { UserInfo, SendStoriesFxParams } from 'types'; // <--- Ensure SendStoriesFxParams is imported!
+import { UserInfo, SendStoriesFxParams } from 'types';
 
 // Keep a store of "temporary" message IDs, so you can delete or clean them up later
 export const $tempMessages = createStore<number[]>([]);
@@ -40,7 +47,7 @@ sample({
   source: newTaskReceived, // The original UserInfo task that triggered the flow
   // Filter out string errors and nulls, only pass valid story data
   filter: (task, fetchedDataResult): fetchedDataResult is (object | object[]) =>
-    typeof fetchedDataResult !== 'string' && fetchedDataResult !== null, // <--- Corrected filter type predicate
+    typeof fetchedDataResult !== 'string' && fetchedDataResult !== null,
   // The 'fn' function transforms the fetched data and task into the exact payload
   // that sendStoriesFx expects (SendStoriesFxParams).
   fn: (task, fetchedDataResult): SendStoriesFxParams => {
@@ -51,11 +58,11 @@ sample({
     // getAllStoriesFx returns { activeStories, pinnedStories } or { activeStories: [], pinnedStories: [], paginatedStories: ... }
 
     // Check if 'fetchedDataResult' is an object that contains 'particularStory'
-    if (typeof fetchedDataResult === 'object' && fetchedDataResult !== null && 'particularStory' in fetchedDataResult && fetchedDataResult.particularStory) {
+    if (typeof fetchedDataResult === 'object' && 'particularStory' in fetchedDataResult && fetchedDataResult.particularStory) {
       params.particularStory = (fetchedDataResult as { particularStory: any }).particularStory;
     }
     // Check if 'fetchedDataResult' is an object that contains 'activeStories' or 'pinnedStories' or 'paginatedStories'
-    else if (typeof fetchedDataResult === 'object' && fetchedDataResult !== null && (
+    else if (typeof fetchedDataResult === 'object' && (
       'activeStories' in fetchedDataResult ||
       'pinnedStories' in fetchedDataResult ||
       'paginatedStories' in fetchedDataResult
@@ -90,27 +97,21 @@ sendStoriesFx.fail.watch(() => {
   cleanUpTempMessagesFired();
 });
 
-// --- Finalization Logic ---
-// Note: The `sendStoriesFx.done` and `sendStoriesFx.fail` watches below
-// are duplicated with your main orchestrator file. If this file is strictly
-// for *preparing* the stories, these finalization watches might belong in
-// the orchestrator instead. However, keeping them here to match your provided code.
+// --- Finalization Logic (Keep these here if this file manages the task state progression) ---
 sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
 sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
-sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] }); // <--- Ensure taskDone is imported or defined if needed here
-sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] }); // <--- Ensure taskDone is imported or defined if needed here
+sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
+sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
 
 sample({ clock: taskDone, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: cleanupTempMessagesFx });
 $currentTask.on(taskDone, () => null);
-$isTaskRunning.on(taskDone, () => false); // <--- $isTaskRunning is not defined in this file! It must be imported!
-$tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []); // <--- $tasksQueue is not defined in this file! It must be imported!
+$isTaskRunning.on(taskDone, () => false);
+$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
 
 $currentTask.on(tempMessageSent, (prev, msgId) => {
   if (!prev) {
     console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
-    // This return value for prev=null needs to create a valid UserInfo object.
-    // It's safer to ensure $currentTask is never null if tempMessageSent is called.
-    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId], isPremium: false } as UserInfo; // Added missing isPremium
+    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId], isPremium: false } as UserInfo;
   }
   return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
 });
@@ -118,11 +119,8 @@ $currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMess
 
 // --- Interval Timers ---
 const intervalHasPassed = createEvent<void>();
-sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: checkTaskForRestart }); // <--- checkTaskForRestart is not defined in this file! It must be imported!
+sample({ clock: intervalHasPassed, source: $currentTask, filter: (t): t is UserInfo => t !== null, target: checkTaskForRestart });
 setInterval(() => intervalHasPassed(), 30_000);
 
-// --- Removed redundant exports ---
-// This file is now a CONSUMER of newTaskReceived, tempMessageSent, cleanUpTempMessagesFired, checkTasks
-// so it should not export them again.
-// The handleStoryRequest effect is exported by its declaration.
+// No longer exporting these, as they are imported from the orchestrator
 // export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
