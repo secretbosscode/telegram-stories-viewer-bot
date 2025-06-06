@@ -1,335 +1,69 @@
-import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
-import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
-import { sendErrorMessageFx } from 'controllers/send-message';
-import { sendStoriesFx } from 'controllers/send-stories';
-import { createEffect, createEvent, createStore, sample, combine } from 'effector';
+// stories-service.ts
+
+import { handleNewTask } from 'services/queue-manager'; // Main DB-backed queue logic
+import { saveUser } from 'repositories/user-repository'; // Save Telegram user for analytics/CRM
 import { bot } from 'index';
-import { getRandomArrayItem } from 'lib';
-import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
-import { Api } from 'telegram';
 
+/**
+ * Represents information about a user's download request.
+ * This should be consistent with how your bot receives requests.
+ */
 export interface UserInfo {
-  chatId: string;
-  link: string;
-  linkType: 'username' | 'link';
-  nextStoriesIds?: number[];
-  locale: string;
-  user?: User;
-  tempMessages?: number[];
-  initTime: number;
-  isPremium?: boolean;
-  instanceId?: string;
+  chatId: string;                        // Telegram chat/user ID
+  link: string;                          // Username or link to download from
+  linkType: 'username' | 'link';         // Type of target (for routing logic)
+  nextStoriesIds?: number[];             // (Optional) For partial/batched downloads
+  locale: string;                        // User locale, for i18n
+  user?: User;                           // Telegraf user object (for user DB)
+  tempMessages?: number[];               // Message IDs to delete after (UX cleanup)
+  initTime: number;                      // Timestamp when request initiated
+  isPremium?: boolean;                   // Is the user premium?
+  instanceId?: string;                   // (Optional) Unique per request instance
 }
 
-// =============================================================================
-// STORES & EVENTS
-// =============================================================================
+// --- Optional: Track temporary messages for later cleanup (UX)
+const tempMessageMap = new Map<string, number[]>();
 
-const $currentTask = createStore<UserInfo | null>(null);
-const $tasksQueue = createStore<UserInfo[]>([]);
-const $isTaskRunning = createStore(false);
-const $taskStartTime = createStore<Date | null>(null);
-const clearTimeoutEvent = createEvent<number>();
-const $taskTimeout = createStore(isDevEnv ? 20000 : 240000);
+/**
+ * Entry point: Handles a new story download request from a user.
+ * - Saves the user in DB for analytics/premium support
+ * - Enqueues the request (persistent DB, via queue-manager)
+ * - Tracks temporary messages for optional UX cleanup
+ */
+export async function handleStoryRequest(userInfo: UserInfo) {
+  // 1. Save the Telegram user to your DB for stats, premium, etc.
+  if (userInfo.user) {
+    saveUser(userInfo.user);
+  }
 
-const newTaskReceived = createEvent<UserInfo>();
-const taskReadyToBeQueued = createEvent<UserInfo>();
-const taskInitiated = createEvent<void>();
-const taskStarted = createEvent<UserInfo>();
-const tempMessageSent = createEvent<number>();
-const taskDone = createEvent<void>();
-const checkTasks = createEvent<void>();
-const cleanUpTempMessagesFired = createEvent();
+  // 2. Track any temporary message IDs for this user (if any, optional)
+  if (userInfo.tempMessages && userInfo.tempMessages.length > 0) {
+    tempMessageMap.set(userInfo.chatId, userInfo.tempMessages);
+  }
 
-// =============================================================================
-// INTERNAL: Unique task creation and instanceId
-// =============================================================================
-function createTask(userInfo: UserInfo): UserInfo {
-  return {
-    ...userInfo,
-    instanceId: `${userInfo.chatId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  };
+  // 3. Main logic: Pass the request to queue-manager (handles duplicates, limits, privilege, etc)
+  await handleNewTask(userInfo);
 }
 
-// =============================================================================
-// LOGIC AND FLOW
-// =============================================================================
+/**
+ * Optionally clean up any temporary "please wait"/progress messages for a user.
+ * Call after a user's request is finished (in queue-manager or on-demand).
+ */
+export async function cleanupTempMessages(chatId: string) {
+  const tempMessages = tempMessageMap.get(chatId) || [];
+  if (tempMessages.length === 0) return;
 
-sample({
-  clock: taskReadyToBeQueued,
-  target: checkTasks,
-});
-
-const timeoutList = isDevEnv ? [10000, 15000, 20000] : [240000, 300000, 360000];
-const clearTimeoutWithDelayFx = createEffect((currentTimeout: number) => {
-  const nextTimeout = getRandomArrayItem(timeoutList, currentTimeout);
-  setTimeout(() => clearTimeoutEvent(nextTimeout), currentTimeout);
-});
-
-const MAX_WAIT_TIME = 7;
-
-const checkTaskForRestart = createEffect(async (task: UserInfo | null) => {
-  if (task) {
-    const minsFromStart = Math.floor((Date.now() - task.initTime) / 60000);
-    if (minsFromStart >= MAX_WAIT_TIME) {
-      const isPrivileged = task.chatId === BOT_ADMIN_ID.toString() || task.isPremium === true;
-      if (isPrivileged) {
-        console.warn(`[StoriesService] Privileged task for ${task.link} (User: ${task.chatId}) running for ${minsFromStart} mins.`);
-        try {
-          await bot.telegram.sendMessage(task.chatId, `🔔 Your long task for "${task.link}" is still running (${minsFromStart} mins).`).catch(() => {});
-        } catch (e) { /* Error sending notification */ }
-      } else {
-        console.error('[StoriesService] Non-privileged task took too long, exiting:', JSON.stringify(task));
-        await bot.telegram.sendMessage(
-          BOT_ADMIN_ID,
-          "❌ Bot took too long for a non-privileged task and was shut down:\n\n" + JSON.stringify(task, null, 2)
-        );
-        process.exit(1);
-      }
-    }
-  }
-});
-
-const $taskSource = combine({
-  currentTask: $currentTask,
-  taskStartTime: $taskStartTime,
-  taskTimeout: $taskTimeout,
-  queue: $tasksQueue,
-  user: $currentTask.map(task => task?.user ?? null),
-});
-
-const sendWaitMessageFx = createEffect(async (params: {
-  multipleRequests: boolean;
-  taskStartTime: Date | null;
-  taskTimeout: number;
-  queueLength: number;
-  newTask: UserInfo;
-}) => {
-  let estimatedWaitMs = 0;
-  if (params.taskStartTime) {
-    const elapsed = Date.now() - params.taskStartTime.getTime();
-    estimatedWaitMs = Math.max(params.taskTimeout - elapsed, 0) + (params.queueLength * params.taskTimeout);
-  }
-  const estimatedWaitSec = Math.ceil(estimatedWaitMs / 1000);
-  const waitMsg = estimatedWaitSec > 0 ? `⏳ Please wait: Estimated wait time is ${estimatedWaitSec} seconds before your request starts.` : '⏳ Please wait: Your request will start soon.';
-  await bot.telegram.sendMessage(
-    params.newTask.chatId,
-    waitMsg
+  await Promise.allSettled(
+    tempMessages.map((id) =>
+      bot.telegram.deleteMessage(chatId, id).catch(() => null)
+    )
   );
-});
+  tempMessageMap.delete(chatId);
+}
 
-const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
-  if (task.tempMessages && task.tempMessages.length > 0) {
-    await Promise.allSettled(
-      task.tempMessages.map(id => bot.telegram.deleteMessage(task.chatId, id).catch(() => null))
-    );
-  }
-});
+// --- (Optional) You could also add helpers here for further UX improvements ---
+// e.g., expose a sendProgressMessage(chatId, msg) function, etc.
 
-const saveUserFx = createEffect(saveUser);
-
-// =========================================================================
-// Prevent Duplicate Task Processing (Race Condition Fix)
-// =========================================================================
-const $queueState = combine({
-  tasks: $tasksQueue,
-  current: $currentTask,
-});
-
-sample({
-  clock: newTaskReceived,
-  source: $queueState,
-  filter: (state, newTask) => {
-    const isInQueue = state.tasks.some(t => t.link === newTask.link && t.chatId === newTask.chatId);
-    const isRunning = state.current ? (state.current.link === newTask.link && state.current.chatId === newTask.chatId) : false;
-    if (isInQueue || isRunning) {
-      console.log(`[StoriesService] Task for ${newTask.link} rejected as duplicate (in queue: ${isInQueue}, is running: ${isRunning}).`);
-      return false; // duplicate, filter out
-    }
-    return true;
-  },
-  fn: (_, newTask) => createTask(newTask),
-  target: taskReadyToBeQueued,
-});
-
-// The queue now ONLY listens to the pre-filtered, safe event.
-$tasksQueue.on(taskReadyToBeQueued, (tasks, newTask) => {
-  const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
-  return isPrivileged ? [newTask, ...tasks] : [...tasks, newTask];
-});
-
-$isTaskRunning.on(taskStarted, () => true).on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.length > 0 ? tasks.slice(1) : []);
-
-sample({
-  clock: newTaskReceived,
-  filter: (newTask) => !!newTask.user,
-  fn: (newTask) => newTask.user!,
-  target: saveUserFx,
-});
-
-sample({
-  clock: newTaskReceived,
-  source: $taskSource,
-  filter: (sourceData, newTask) => {
-    const isPrivileged = newTask.chatId === BOT_ADMIN_ID.toString() || newTask.isPremium === true;
-    if (!isPrivileged) {
-      return ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId) || (sourceData.taskStartTime instanceof Date);
-    }
-    return false;
-  },
-  fn: (sourceData, newTask) => ({
-    multipleRequests: ($isTaskRunning.getState() && sourceData.currentTask?.chatId !== newTask.chatId),
-    taskStartTime: sourceData.taskStartTime,
-    taskTimeout: sourceData.taskTimeout,
-    queueLength: sourceData.queue.filter(t => t.chatId !== newTask.chatId && t.link !== newTask.link).length,
-    newTask,
-  }),
-  target: sendWaitMessageFx,
-});
-
-type TaskInitiationSource = { isRunning: boolean; currentSystemCooldownStartTime: Date | null; queue: UserInfo[]; };
-const $taskInitiationDataSource = combine<TaskInitiationSource>({
-  isRunning: $isTaskRunning,
-  currentSystemCooldownStartTime: $taskStartTime,
-  queue: $tasksQueue
-});
-
-sample({
-  clock: checkTasks,
-  source: $taskInitiationDataSource,
-  filter: (sourceValues) => {
-    if (sourceValues.isRunning || sourceValues.queue.length === 0) return false;
-    const nextTaskInQueue = sourceValues.queue[0];
-    if (!nextTaskInQueue) return false;
-    const isPrivileged = nextTaskInQueue.chatId === BOT_ADMIN_ID.toString() || nextTaskInQueue.isPremium === true;
-    return isPrivileged || sourceValues.currentSystemCooldownStartTime === null;
-  },
-  target: taskInitiated,
-});
-
-sample({
-  clock: taskInitiated,
-  source: $tasksQueue,
-  filter: (q): q is UserInfo[] & { 0: UserInfo } => q.length > 0 && !$isTaskRunning.getState(),
-  fn: (q) => q[0],
-  target: [$currentTask, taskStarted]
-});
-sample({
-  clock: taskInitiated,
-  source: $taskTimeout,
-  filter: (t): t is number => t > 0,
-  fn: () => new Date(),
-  target: $taskStartTime
-});
-sample({
-  clock: taskInitiated,
-  source: $taskTimeout,
-  filter: (t): t is number => t > 0,
-  fn: (t) => t,
-  target: clearTimeoutWithDelayFx
-});
-$taskTimeout.on(clearTimeoutEvent, (_, n) => n);
-sample({
-  clock: clearTimeoutEvent,
-  fn: () => null,
-  target: [$taskStartTime, checkTasks]
-});
-sample({
-  clock: taskStarted,
-  filter: (t) => t.linkType === 'username',
-  target: getAllStoriesFx
-});
-sample({
-  clock: taskStarted,
-  filter: (t) => t.linkType === 'link',
-  target: getParticularStoryFx
-});
-
-// --- Effect Result Handling ---
-
-sample({
-  clock: getAllStoriesFx.doneData,
-  source: $currentTask,
-  filter: (task, result) => task !== null && typeof result === 'string',
-  fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
-});
-
-sample({
-  clock: getAllStoriesFx.doneData,
-  source: $currentTask,
-  filter: (task, result) => task !== null && typeof result === 'object' && result !== null,
-  fn: (task, result) => ({ task: task!, ...(result as object) }),
-  target: sendStoriesFx,
-});
-
-getAllStoriesFx.fail.watch(({ params, error }) => {
-  console.error(`[StoriesService] getAllStoriesFx.fail for ${params.link}:`, error);
-  taskDone();
-  checkTasks();
-});
-
-sample({
-  clock: getParticularStoryFx.doneData,
-  source: $currentTask,
-  filter: (task, result) => task !== null && typeof result === 'string',
-  fn: (task, message) => ({ task: task!, message: message as string }),
-  target: [sendErrorMessageFx, taskDone, checkTasks],
-});
-
-sample({
-  clock: getParticularStoryFx.doneData,
-  source: $currentTask,
-  filter: (task, result) => task !== null && typeof result === 'object' && result !== null,
-  fn: (task, result) => ({ task: task!, ...(result as object) }),
-  target: sendStoriesFx,
-});
-
-getParticularStoryFx.fail.watch(({ params, error }) => {
-  console.error(`[StoriesService] getParticularStoryFx.fail for ${params.link}:`, error);
-  taskDone();
-  checkTasks();
-});
-
-sendStoriesFx.done.watch(({ params }) => console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link));
-sendStoriesFx.fail.watch(({ params, error }) => console.error('[StoriesService] sendStoriesFx.fail for task:', params.task.link, 'Error:', error));
-sample({ clock: sendStoriesFx.done, target: [taskDone, checkTasks] });
-sample({ clock: sendStoriesFx.fail, target: [taskDone, checkTasks] });
-
-sample({
-  clock: taskDone,
-  source: $currentTask,
-  filter: (t): t is UserInfo => t !== null,
-  target: cleanupTempMessagesFx,
-});
-$currentTask.on(taskDone, () => null);
-$isTaskRunning.on(taskDone, () => false);
-$tasksQueue.on(taskDone, (tasks) => tasks.slice(1));
-
-$currentTask.on(tempMessageSent, (prev, msgId) => {
-  if (!prev) {
-    console.warn("[StoriesService] $currentTask was null when tempMessageSent called.");
-    return { chatId: '', link: '', linkType: 'username', locale: 'en', initTime: Date.now(), tempMessages: [msgId] } as UserInfo;
-  }
-  return { ...prev, tempMessages: [...(prev.tempMessages ?? []), msgId] };
-});
-$currentTask.on(cleanupTempMessagesFx.done, (prev) => prev ? { ...prev, tempMessages: [] } : null);
-
-// --- Interval Timers ---
-const intervalHasPassed = createEvent<void>();
-sample({
-  clock: intervalHasPassed,
-  source: $currentTask,
-  filter: (t): t is UserInfo => t !== null,
-  target: checkTaskForRestart
-});
-setInterval(() => intervalHasPassed(), 30_000);
-
-// =========================================================================
-//  EXPORTS
-// =========================================================================
-export { tempMessageSent, cleanUpTempMessagesFired, newTaskReceived, checkTasks };
-
-setTimeout(() => checkTasks(), 100);
+// Export the entrypoints for use in your bot
+export { handleStoryRequest, cleanupTempMessages };
