@@ -142,8 +142,6 @@ bot.telegram.sendMediaGroup(
 
 ☄️ <a href="https://effector.dev/">Effector</a> ☄️ - used for writing the business logic of the app, ensuring efficient state management and handling of complex workflows
 
-📦 <a href="https://supabase.com/">Supabase</a> 📦 - integrated for analytics data collection
-
 <h2>🛠 Setup</h2>
 <p>To run this project locally, follow these steps:</p>
 
