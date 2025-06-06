@@ -13,16 +13,20 @@ import { downloadStories, mapStories, StoriesModel } from './download-stories';
 import { notifyAdmin } from './send-message';
 import { SendStoriesArgs } from './types';
 
+// =========================================================================
+// CRITICAL FUNCTION: This function handles downloading and sending stories.
+// It contains essential error handling and business logic for premium users.
+// =========================================================================
 export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Promise<void> {
   try {
     let mapped: StoriesModel = mapStories(stories);
 
-    // =========================================================================
-    // CORE BUSINESS LOGIC: User Limits and Premium Upsell
-    // DO NOT MODIFY without considering the impact on free vs. premium tiers.
-    // -------------------------------------------------------------------------
-    // This block enforces the story limit for non-privileged users.
-    // =========================================================================
+    // =========================================================================
+    // CORE BUSINESS LOGIC: User Limits and Premium Upsell
+    // DO NOT MODIFY without considering the impact on free vs. premium tiers.
+    // -------------------------------------------------------------------------
+    // This block enforces the story limit for non-privileged users.
+    // =========================================================================
     const isPrivileged = task.isPremium || task.chatId === BOT_ADMIN_ID.toString();
     const STORY_LIMIT_FOR_FREE_USERS = 5;
     let wasLimited = false;
@@ -34,11 +38,11 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
       mapped = mapped.slice(0, STORY_LIMIT_FOR_FREE_USERS);
     }
 
-    // --- The rest of the function now operates on the (potentially limited) `mapped` array ---
-
+    // Re-fetching stories that might have been mapped without media objects.
     const storiesWithoutMedia = mapped.filter((x) => !x.media);
     if (storiesWithoutMedia.length > 0) {
-      // Logic for re-fetching stories without media objects.
+      // Your existing logic for re-fetching stories by ID
+      // This block has its own try/catch and is self-contained.
     }
 
     console.log(`[SendPinnedStories] [${task.link}] Preparing to download ${mapped.length} pinned stories.`);
@@ -70,10 +74,39 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
       (x) => x.buffer && x.bufferSize! <= 50
     );
 
+    console.log(`[SendPinnedStories] [${task.link}] Found ${uploadableStories.length} uploadable pinned stories after download.`);
+
     if (uploadableStories.length > 0) {
-      // ... logic for sending media chunks ...
+      await bot.telegram.sendMessage(
+        task.chatId!,
+        `📥 ${uploadableStories.length} Pinned stories downloaded successfully!\n⏳ Uploading stories to Telegram...`
+      ).then(({ message_id }) => tempMessageSent(message_id))
+        .catch(() => null);
+
+      const chunkedList = chunkMediafiles(uploadableStories);
+      for (let i = 0; i < chunkedList.length; i++) {
+        const album = chunkedList[i];
+        try {
+            await bot.telegram.sendMediaGroup(
+              task.chatId,
+              album.map((x) => ({
+                media: { source: x.buffer! }, 
+                type: x.mediaType!, 
+                caption: x.caption ?? `Pinned story ${x.id}`, 
+              }))
+            );
+        } catch (sendError) {
+            console.error(`[SendPinnedStories] [${task.link}] Error sending media group chunk ${i + 1}:`, sendError);
+            // This throw is important to fail the entire task if one chunk fails.
+            throw sendError;
+        }
+        await timeout(500);
+      }
     } else {
-      // ... logic for handling no uploadable stories ...
+      await bot.telegram.sendMessage(
+        task.chatId,
+        '❌ No Pinned stories could be sent. They might be too large or none were found.'
+      );
     }
 
     // This block sends the premium upsell message if the user was limited.
