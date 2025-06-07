@@ -13,11 +13,11 @@ const limit = pLimit(DOWNLOAD_CONCURRENCY_LIMIT);
 // ===============================
 // Type Definitions - MOVED TO src/types.ts
 // ===============================
-// These type definitions (MappedStoryItem and StoriesModel) should now be in src/types.ts
-// and imported from there.
+// REMOVED local type definitions for MappedStoryItem and StoriesModel.
+// They are now ONLY imported from src/types.ts
 
 // CORRECTED: Import MappedStoryItem and StoriesModel from your central types.ts file
-import { MappedStoryItem, StoriesModel } from 'types'; // <--- Corrected import path
+import { MappedStoryItem, StoriesModel } from 'types'; // <--- Correct import path
 
 
 // ===============================
