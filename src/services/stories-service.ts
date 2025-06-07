@@ -1,10 +1,9 @@
 // src/services/stories-service.ts
 
-import { createEffect, createEvent, createStore, sample, combine } from 'effector';
+import { createEffect, createEvent, createStore, sample, combine, merge } from 'effector'; // Added merge
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessage as sendErrorMessageFn } from 'controllers/send-message';
-import { sendStoriesFx } from 'controllers/send-stories';
-import { SendStoriesFxParams, UserInfo, DownloadQueueItem } from 'types';
+import { sendStoriesFx, SendStoriesFxParams } from 'controllers/send-stories';
 
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
@@ -21,6 +20,7 @@ import {
   isDuplicatePendingFx
 } from 'db/effects';
 
+import { UserInfo, DownloadQueueItem } from 'types';
 
 // =========================================================================
 // STORES & EVENTS
@@ -45,7 +45,6 @@ sample({
   fn: (task) => task.user,
   target: saveUserFx,
 });
-
 
 // --- 1. Task Validation and Enqueueing ---
 export const validateAndEnqueueTaskFx = createEffect(async (newTask: UserInfo) => {
@@ -126,17 +125,22 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
 });
 
 // =========================================================================
-// FINAL FIX: This sample block's filter signature was corrected.
+// FINAL FIX: Merge the two success events into one stream before sampling.
+// This simplifies the type logic and resolves the TS2353 error.
 // =========================================================================
+const storiesFetchSucceeded = merge([
+    getAllStoriesFx.doneData,
+    getParticularStoryFx.doneData,
+]);
+
 sample({
-  clock: [getAllStoriesFx.doneData, getParticularStoryFx.doneData],
+  clock: storiesFetchSucceeded,
   source: $currentTask,
-  // The filter receives both `source` and `clock` data. This signature is now correct.
   filter: (task, result): task is UserInfo => {
       return task !== null && typeof result === 'object' && result !== null;
   },
   fn: (task, resultData) => ({
-    task: task, // `task` is now guaranteed to be UserInfo, not null
+    task: task,
     ...(resultData as object),
   }),
   target: sendStoriesFx,
