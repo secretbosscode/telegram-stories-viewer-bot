@@ -1,12 +1,41 @@
-- name: Build, attest, and push
-  uses: docker/build-push-action@v6
-  with:
-    context: .
-    push: true
-    tags: ${{ secrets.DOCKERHUB_USERNAME }}/telegram-story-bot:latest
+name: Build & Push Docker Image
 
-    # =================================================================
-    # THE FIX: This line MUST be present to generate the attestation.
-    # Ensure it exists in your file.
-    # =================================================================
-    provenance: true
+on:
+  push:
+    branches:
+      - main
+    # Optionally, add tags:
+    # tags:
+    #   - 'v*'
+
+permissions:
+  contents: read
+  id-token: write # Required for provenance/attestation!
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image (with provenance)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: telix5000/telegram-story-bot:latest
+          provenance: true  # This is what enables supply chain attestation
+
+      # Optional: Clean up
+      - name: Logout from Docker Hub
+        run: docker logout
