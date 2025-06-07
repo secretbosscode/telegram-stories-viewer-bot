@@ -17,11 +17,7 @@ import { UserInfo, DownloadQueueItem, SendStoriesFxParams } from 'types';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 
-const COOLDOWN_HOURS = {
-  free: 12,
-  premium: 2,
-  admin: 0,
-};
+const COOLDOWN_HOURS = { free: 12, premium: 2, admin: 0 };
 
 function getCooldownHours({ isPremium, isAdmin }: { isPremium?: boolean; isAdmin?: boolean }) {
   if (isAdmin) return COOLDOWN_HOURS.admin;
@@ -30,31 +26,28 @@ function getCooldownHours({ isPremium, isAdmin }: { isPremium?: boolean; isAdmin
 }
 
 export async function handleNewTask(user: UserInfo) {
-  const telegram_id = user.chatId;
-  const target_username = user.link;
+  const { chatId: telegram_id, link: target_username } = user;
   const is_admin = telegram_id === BOT_ADMIN_ID.toString();
-  const is_premium = !!user.isPremium;
-  const cooldown = getCooldownHours({ isPremium: is_premium, isAdmin: is_admin });
+  const cooldown = getCooldownHours({ isPremium: user.isPremium, isAdmin: is_admin });
 
   try {
     if (await wasRecentlyDownloadedFx({ telegram_id, target_username, hours: cooldown })) {
-        await bot.telegram.sendMessage(telegram_id, `⏳ You can request stories for "${target_username}" once every ${cooldown} hours.`);
-        return;
+      await bot.telegram.sendMessage(telegram_id, `⏳ You can request stories for "${target_username}" once every ${cooldown} hours.`);
+      return;
     }
-
     if (await isDuplicatePendingFx({ telegram_id, target_username })) {
-        await bot.telegram.sendMessage(telegram_id, `⚠️ This download is already in the queue. Please wait.`);
-        return;
+      await bot.telegram.sendMessage(telegram_id, `⚠️ This download is already in the queue.`);
+      return;
     }
 
-    // FINAL FIX: This now calls the corrected effect with the full UserInfo payload.
+    // FIX: This call now correctly passes the full user object as task_details.
     await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
     await bot.telegram.sendMessage(telegram_id, `✅ Your request for ${target_username} has been queued!`);
     
     setImmediate(processQueue);
   } catch(e: any) {
     console.error('[handleNewTask] Error during task validation/enqueueing:', e);
-    await bot.telegram.sendMessage(telegram_id, `❌ Sorry, an error occurred while queueing your request.`);
+    await bot.telegram.sendMessage(telegram_id, `❌ An error occurred while queueing your request.`);
   }
 }
 
@@ -64,13 +57,12 @@ export async function processQueue() {
   if (isProcessing) return;
 
   const job: DownloadQueueItem | null = await getNextQueueItemFx();
-  if (!job) {
-    return;
-  }
+  if (!job) return;
 
   isProcessing = true;
   await markProcessingFx(job.id);
   
+  // This logic is now correct because getNextQueueItem returns the full task.
   const currentTask: UserInfo = { ...job.task, chatId: job.chatId, instanceId: job.id };
 
   try {
@@ -99,9 +91,7 @@ export async function processQueue() {
   }
 
   isProcessing = false;
-  
   await cleanupQueueFx();
-  
   setImmediate(processQueue);
 }
 
