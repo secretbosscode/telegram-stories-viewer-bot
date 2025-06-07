@@ -185,19 +185,57 @@ export interface MonitorRow {
   last_checked?: number;
 }
 
-export function addMonitor(telegram_id: string, target_username: string): void {
-  db.prepare(`
-    INSERT INTO monitors (telegram_id, target_username)
-    VALUES (?, ?)
-  `).run(telegram_id, target_username);
+export function addMonitor(
+  telegram_id: string,
+  target_username: string
+): MonitorRow {
+  const result = db
+    .prepare(
+      `INSERT INTO monitors (telegram_id, target_username)
+       VALUES (?, ?)`
+    )
+    .run(telegram_id, target_username);
+
+  const id = Number(result.lastInsertRowid);
+  return {
+    id,
+    telegram_id,
+    target_username,
+  };
 }
 
-export function removeMonitor(telegram_id: string, target_username: string): void {
-  db.prepare(`DELETE FROM monitors WHERE telegram_id = ? AND target_username = ?`).run(telegram_id, target_username);
+export function removeMonitor(
+  telegram_id: string,
+  target_username: string
+): void {
+  db.prepare(
+    `DELETE FROM monitors WHERE telegram_id = ? AND target_username = ?`
+  ).run(telegram_id, target_username);
 }
 
 export function listMonitors(telegram_id: string): MonitorRow[] {
   return db.prepare(`SELECT * FROM monitors WHERE telegram_id = ?`).all(telegram_id) as MonitorRow[];
+}
+
+export function listAllMonitors(): MonitorRow[] {
+  return db.prepare(`SELECT * FROM monitors`).all() as MonitorRow[];
+}
+
+export function getMonitor(id: number): MonitorRow | undefined {
+  return db
+    .prepare(`SELECT * FROM monitors WHERE id = ?`)
+    .get(id) as MonitorRow | undefined;
+}
+
+export function findMonitor(
+  telegram_id: string,
+  target_username: string
+): MonitorRow | undefined {
+  return db
+    .prepare(
+      `SELECT * FROM monitors WHERE telegram_id = ? AND target_username = ?`
+    )
+    .get(telegram_id, target_username) as MonitorRow | undefined;
 }
 
 export function countMonitors(telegram_id: string): number {

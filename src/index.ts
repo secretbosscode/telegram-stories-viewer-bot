@@ -77,6 +77,7 @@ bot.command('help', async (ctx) => {
     finalHelpText +=
       '\n*Premium Commands:*\n' +
       `\`/monitor\` - Monitor a profile for new stories (${limitDesc})\n` +
+      '               (use @username or +phone)\n' +
       '`/unmonitor` - Stop monitoring a profile\n';
   }
 
@@ -122,7 +123,7 @@ bot.command('monitor', async (ctx) => {
         ? 'You can monitor an unlimited number of profiles. '
         : `You can monitor up to ${MAX_MONITORS_PER_USER} profiles. `;
       return ctx.reply(
-        `Usage: /monitor <@username>\n` +
+        `Usage: /monitor <@username|+123456789>\n` +
           limitMsg +
           `Checks run every ${CHECK_INTERVAL_HOURS}h.`
       );
@@ -135,14 +136,15 @@ bot.command('monitor', async (ctx) => {
       'Use /unmonitor <@username> to remove.';
     return ctx.reply(msg);
   }
-  const username = args[0].replace('@', '');
+  const input = args[0];
+  const username = input.replace(/^@/, '');
   if (!isAdmin) {
     if (userMonitorCount(userId) >= MAX_MONITORS_PER_USER) {
       return ctx.reply(`🚫 You can monitor up to ${MAX_MONITORS_PER_USER} profiles.`);
     }
   }
   addProfileMonitor(userId, username);
-  await ctx.reply(`✅ Now monitoring @${username} for active stories.`);
+  await ctx.reply(`✅ Now monitoring ${input} for active stories.`);
 });
 
 bot.command('unmonitor', async (ctx) => {
@@ -163,9 +165,10 @@ bot.command('unmonitor', async (ctx) => {
       list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n');
     return ctx.reply(msg);
   }
-  const username = args[0].replace('@', '');
+  const inputUn = args[0];
+  const username = inputUn.replace(/^@/, '');
   removeProfileMonitor(userId, username);
-  await ctx.reply(`🛑 Stopped monitoring @${username}.`);
+  await ctx.reply(`🛑 Stopped monitoring ${inputUn}.`);
 });
 
 // --- Admin Commands ---
@@ -353,7 +356,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  await ctx.reply('🚫 Invalid input. Send a username like `@durov` or a story link. Type /help for more info.');
+  await ctx.reply('🚫 Invalid input. Send `@username`, `+123456789` or a story link. Type /help for more info.');
 });
 
 
