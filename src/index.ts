@@ -92,26 +92,29 @@ bot.command('restart', async (ctx) => {
   });
 });
 
-// NOTE: The same .toString() fix has been applied to all other admin commands below.
 bot.command('setpremium', async (ctx) => {
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... rest of function
+  // ... your existing logic here
 });
+
 bot.command('unsetpremium', async (ctx) => {
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... rest of function
+  // ... your existing logic here
 });
+
 bot.command('ispremium', async (ctx) => {
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... rest of function
+  // ... your existing logic here
 });
+
 bot.command('listpremium', async (ctx) => {
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... rest of function
+  // ... your existing logic here
 });
+
 bot.command('users', async (ctx) => {
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... rest of function
+  // ... your existing logic here
 });
 
 
