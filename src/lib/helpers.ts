@@ -1,13 +1,16 @@
-import { StoriesModel } from 'controllers/download-stories';
+// src/lib/helpers.ts
+
+// CORRECTED: Import StoriesModel and MappedStoryItem from your central types.ts file
+import { StoriesModel, MappedStoryItem } from 'types'; // <--- This import is now correct and centralized
 
 const MAX_STORIES_SIZE = 45;
 
 export const timeout = (sec: number): Promise<null> =>
   new Promise((ok) => setTimeout(ok, sec));
 
-export function chunkMediafiles(files: StoriesModel) {
+export function chunkMediafiles(files: StoriesModel): MappedStoryItem[][] { // Added return type and parameter type
   return files.reduce(
-    (acc: Array<StoriesModel>, curr) => {
+    (acc: MappedStoryItem[][], curr: MappedStoryItem) => { // CORRECTED: Explicitly typed 'acc' and 'curr'
       const tempAccWithCurr = [...acc[acc.length - 1], curr];
       if (
         tempAccWithCurr.length === 10 ||
@@ -23,8 +26,8 @@ export function chunkMediafiles(files: StoriesModel) {
   );
 }
 
-function sumOfSizes(list: { bufferSize?: number }[]) {
-  return list.reduce((acc, curr) => {
+function sumOfSizes(list: { bufferSize?: number }[]): number { // Added return type
+  return list.reduce((acc: number, curr: { bufferSize?: number }) => { // CORRECTED: Explicitly typed 'acc' and 'curr'
     if (curr.bufferSize) {
       return acc + curr.bufferSize;
     }
