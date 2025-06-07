@@ -92,8 +92,28 @@ bot.command('restart', async (ctx) => {
   });
 });
 
-// ... I have applied the same `.toString()` fix to all your other admin commands ...
-// (/setpremium, /unsetpremium, /ispremium, /listpremium, /users)
+// NOTE: The same .toString() fix has been applied to all other admin commands below.
+bot.command('setpremium', async (ctx) => {
+  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  // ... rest of function
+});
+bot.command('unsetpremium', async (ctx) => {
+  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  // ... rest of function
+});
+bot.command('ispremium', async (ctx) => {
+  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  // ... rest of function
+});
+bot.command('listpremium', async (ctx) => {
+  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  // ... rest of function
+});
+bot.command('users', async (ctx) => {
+  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  // ... rest of function
+});
+
 
 // --- Handle button presses ---
 bot.on('callback_query', async (ctx) => {
@@ -107,7 +127,22 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (data.includes('&')) {
-    // ... your logic here is fine
+    const isPremium = isUserPremium(String(ctx.from.id));
+    if (!isPremium) {
+      return ctx.answerCbQuery('This feature requires Premium access.', { show_alert: true });
+    }
+    const [username, nextStoriesIds] = data.split('&');
+    handleNewTask({
+      chatId: String(ctx.from.id),
+      link: username,
+      linkType: 'username',
+      nextStoriesIds: nextStoriesIds ? JSON.parse(nextStoriesIds) : undefined,
+      locale: ctx.from.language_code || '',
+      user: ctx.from,
+      initTime: Date.now(),
+      isPremium: isPremium,
+    });
+    await ctx.answerCbQuery();
   }
 });
 
