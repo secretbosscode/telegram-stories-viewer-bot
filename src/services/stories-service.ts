@@ -3,9 +3,9 @@
 import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessage as sendErrorMessageFn } from 'controllers/send-message';
-import { sendStoriesFx, SendStoriesFxParams } from 'controllers/send-stories';
+import { sendStoriesFx } from 'controllers/send-stories';
 
-import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
+import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
 import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
@@ -20,7 +20,7 @@ import {
   isDuplicatePendingFx
 } from 'db/effects';
 
-import { UserInfo, DownloadQueueItem } from 'types';
+import { UserInfo, DownloadQueueItem, SendStoriesFxParams } from 'types';
 
 // =========================================================================
 // STORES & EVENTS
@@ -36,7 +36,6 @@ export const tempMessageSent = createEvent<number>();
 const taskDone = createEvent<void>();
 const taskStarted = createEvent<UserInfo>();
 
-// FIX: Wrap the imported async function in an Effect to make it a valid Effector target.
 const sendErrorMessageFx = createEffect(sendErrorMessageFn);
 
 // =========================================================================
@@ -51,6 +50,7 @@ sample({
   target: saveUserFx,
 });
 
+
 // --- 1. Task Validation and Enqueueing ---
 
 export const validateAndEnqueueTaskFx = createEffect(async (newTask: UserInfo) => {
@@ -64,8 +64,8 @@ export const validateAndEnqueueTaskFx = createEffect(async (newTask: UserInfo) =
     if (await isDuplicatePendingFx({ telegram_id: newTask.chatId, target_username: newTask.link })) {
         throw new Error('Duplicate');
     }
-
-    // FIX: Call the enqueue effect with the correct parameters, as defined in your `db/effects.ts`.
+    
+    // Your db/effects.ts expects only these two params for this effect
     await enqueueDownloadFx({ telegram_id: newTask.chatId, target_username: newTask.link });
     
     await bot.telegram.sendMessage(newTask.chatId, `✅ Download for ${newTask.link} has been added to the queue!`);
@@ -82,9 +82,7 @@ sample({
   target: checkTasks,
 });
 
-sample({
-  clock: validateAndEnqueueTaskFx.fail,
-  fn: (payload: { params: UserInfo; error: Error }) => {
+validateAndEnqueueTaskFx.fail.watch((payload) => {
     const { params, error } = payload;
     let message = `Failed to queue task: ${error.message || 'Unknown error'}`;
     if (error.message === 'Cooldown') {
@@ -95,9 +93,8 @@ sample({
     if (error.message === 'Duplicate') {
         message = `⚠️ This download is already in the queue for you. Please wait for it to finish.`;
     }
-    return { task: params, message };
-  },
-  target: sendErrorMessageFx,
+    // We call the raw function here, which is simpler for error handling
+    sendErrorMessageFn({ task: params, message });
 });
 
 
@@ -110,55 +107,54 @@ sample({
   target: getNextQueueItemFx,
 });
 
-// When a job is fetched, trigger the `taskStarted` event with the transformed data.
 sample({
   clock: getNextQueueItemFx.doneData,
   filter: (job): job is DownloadQueueItem => job !== null,
-  fn: (job: DownloadQueueItem): UserInfo => {
-    // FIX: Correctly transform the DB object into the internal UserInfo shape.
-    return {
-      ...job.task, // Spread the nested task object
-      chatId: job.chatId, // Overwrite chatId from the parent DB record
-      instanceId: job.id, // Carry the DB job ID forward as instanceId
-    };
-  },
-  target: taskStarted,
+  target: taskStarted.prepend((job: DownloadQueueItem): UserInfo => ({
+    ...job.task,
+    chatId: job.chatId, // Use chatId from the parent record
+    instanceId: job.id,
+  })),
 });
 
-// When a task starts, update the current task store and mark it as processing in the DB.
 sample({
   clock: taskStarted,
   target: [$currentTask, markProcessingFx.prepend((task: UserInfo) => task.instanceId!)],
 });
 
-// Trigger the appropriate story-fetching effect.
 sample({ clock: taskStarted, filter: (task) => task.linkType === 'username', target: getAllStoriesFx });
 sample({ clock: taskStarted, filter: (task) => task.linkType === 'link', target: getParticularStoryFx });
 
 
 // --- 3. Handling Task Results ---
 
-sample({
-  clock: [getAllStoriesFx.fail, getParticularStoryFx.fail],
-  source: $currentTask,
-  filter: (task): task is UserInfo => task !== null,
-  fn: (task, error: Error) => {
-    console.error(`[StoriesService] Story fetch failed for task ${task.link}:`, error);
-    if (task.instanceId) {
-        markErrorFx(task.instanceId, error?.message || 'Unknown fetch error');
+// Using .fail.watch is much simpler and avoids complex `sample` type issues
+getAllStoriesFx.fail.watch(({ params, error }) => {
+    console.error(`[StoriesService] Story fetch failed for task ${params.link}:`, error);
+    if (params.instanceId) {
+        markErrorFx(params.instanceId, error.message || 'Unknown fetch error');
     }
-    return { task, message: 'Sorry, there was an error fetching the stories. Please try again later.' };
-  },
-  target: [sendErrorMessageFx, taskDone],
+    sendErrorMessageFx({ task: params, message: 'Sorry, there was an error fetching the stories.' });
+    taskDone();
 });
 
+getParticularStoryFx.fail.watch(({ params, error }) => {
+    console.error(`[StoriesService] Story fetch failed for task ${params.link}:`, error);
+    if (params.instanceId) {
+        markErrorFx(params.instanceId, error.message || 'Unknown fetch error');
+    }
+    sendErrorMessageFx({ task: params, message: 'Sorry, there was an error fetching the stories.' });
+    taskDone();
+});
+
+// This unified sample handles a successful fetch from either get*StoriesFx effect.
 sample({
   clock: [getAllStoriesFx.doneData, getParticularStoryFx.doneData],
   source: $currentTask,
-  filter: (task, result): result is object => task !== null && typeof result === 'object' && result !== null,
+  filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null,
   fn: (task, fetchedData): SendStoriesFxParams => ({
-    task: task!,
-    ...(fetchedData as any),
+    task: task,
+    ...(fetchedData as any), // Use `as any` to handle the complex union type from the clock
   }),
   target: sendStoriesFx,
 });
@@ -166,26 +162,21 @@ sample({
 
 // --- 4. Finalizing the Task ---
 
-sample({
-  clock: sendStoriesFx.done,
-  fn: ({ params }) => params.task.instanceId,
-  filter: (jobId): jobId is string => !!jobId,
-  target: [markDoneFx, taskDone],
+sendStoriesFx.done.watch(({ params }) => {
+    if (params.task.instanceId) {
+        markDoneFx(params.task.instanceId);
+    }
+    taskDone();
 });
 
-sample({
-  clock: sendStoriesFx.fail,
-  fn: ({ params, error }) => {
+sendStoriesFx.fail.watch(({ params, error }) => {
     console.error(`[StoriesService] sendStoriesFx.fail for task:`, params.task.link, 'Error:', error);
     if (params.task.instanceId) {
-      // FIX: Call markErrorFx with two separate string arguments as defined in your effects file.
-      markErrorFx(params.task.instanceId, error?.message || 'Unknown sending error');
+        markErrorFx(params.task.instanceId, error.message || 'Unknown sending error');
     }
-  },
-  target: taskDone,
+    taskDone();
 });
 
-// After any task finishes, check for the next one.
 sample({
   clock: taskDone,
   target: checkTasks,
@@ -193,7 +184,6 @@ sample({
 
 
 // --- 5. State Cleanup and Utility Effects ---
-
 export const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
     if (task.tempMessages && task.tempMessages.length > 0) {
       await Promise.allSettled(
