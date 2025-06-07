@@ -5,7 +5,7 @@ import { Markup } from 'telegraf';
 import { Api } from 'telegram';
 
 // CORRECTED: Import InlineKeyboardButton for precise typing
-import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram'; // <--- ADDED: For InlineKeyboardButton
+import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram';
 
 // CORRECTED: Import types from your central types.ts file
 import { SendStoriesArgs, MappedStoryItem, StoriesModel, NotifyAdminParams } from 'types';
@@ -34,19 +34,19 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       const from = i + 1;
       const to = Math.min(i + PER_PAGE, mapped.length);
       // CORRECTED LINE: Removed LaTeX delimiters and used template literal correctly
-      nextStories[`<span class="math-inline">\{from\}\-</span>{to}`] = mapped.slice(i, i + PER_PAGE).map((x: MappedStoryItem) => x.id); // <--- x typed
+      nextStories[`${from}-${to}`] = mapped.slice(i, i + PER_PAGE).map((x: MappedStoryItem) => x.id);
     }
     mapped = currentStories;
   }
 
   // === If any stories missing media, refetch via Userbot ===
-  const storiesWithoutMedia: MappedStoryItem[] = mapped.filter((x: MappedStoryItem) => !x.media); // <--- x typed
+  const storiesWithoutMedia: MappedStoryItem[] = mapped.filter((x: MappedStoryItem) => !x.media);
   if (storiesWithoutMedia.length > 0) {
-    mapped = mapped.filter((x: MappedStoryItem) => Boolean(x.media)); // <--- x typed
+    mapped = mapped.filter((x: MappedStoryItem) => Boolean(x.media));
     try {
       const client = await Userbot.getInstance();
       const entity = await client.getEntity(task.link!);
-      const ids = storiesWithoutMedia.map((x: MappedStoryItem) => x.id); // <--- x typed
+      const ids = storiesWithoutMedia.map((x: MappedStoryItem) => x.id);
       const storiesWithMediaApi = await client.invoke(
         new Api.stories.GetStoriesByID({ id: ids, peer: entity })
       );
@@ -66,7 +66,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
 
     // --- Only upload files with buffer and size <= 47MB (Telegram API limit fudge) ---
     const uploadableStories: MappedStoryItem[] = mapped.filter(
-      (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 47 // <--- x typed
+      (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 47
     );
 
     // --- Notify user about upload ---
@@ -81,7 +81,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       for (const album of chunkedList) {
         await bot.telegram.sendMediaGroup(
           task.chatId,
-          album.map((x: MappedStoryItem) => ({ // <--- x typed
+          album.map((x: MappedStoryItem) => ({
             media: { source: x.buffer! },
             type: x.mediaType,
             caption: x.caption ?? 'Active stories',
@@ -98,10 +98,10 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     // --- If more pages, offer buttons for the rest ---
     if (hasMorePages) {
       const btns = Object.entries(nextStories).map(
-        ([pages, nextStoriesIds]: [string, number[]]) => ({ // <--- pages and nextStoriesIds typed
+        ([pages, nextStoriesIds]: [string, number[]]) => ({
           text: `📥 ${pages} 📥`,
           // CORRECTED LINE: Removed LaTeX delimiters and used template literal correctly
-          callback_data: `<span class="math-inline">\{task\.link\}&</span>{JSON.stringify(nextStoriesIds)}`,
+          callback_data: `${task.link}&${JSON.stringify(nextStoriesIds)}`,
         })
       );
       // Chunk 3 buttons per row
@@ -115,7 +115,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       await bot.telegram.sendMessage(
         task.chatId,
         // CORRECTED LINE: Removed LaTeX delimiters and used template literal correctly
-        `Uploaded <span class="math-inline">\{PER\_PAGE\}/</span>{stories.length} active stories ✅`,
+        `Uploaded ${PER_PAGE}/${stories.length} active stories ✅`,
         Markup.inlineKeyboard(keyboard)
       );
     }
@@ -125,7 +125,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       baseInfo: `📥 ${uploadableStories.length} Active stories uploaded to user!`,
     } as NotifyAdminParams);
 
-  } catch (error: any) { // <--- Explicitly typed error as any
+  } catch (error: any) {
     notifyAdmin({
       task,
       status: 'error',
@@ -133,4 +133,8 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     } as NotifyAdminParams);
     console.error('[sendActiveStories] Error sending ACTIVE stories:', error);
     try {
-      await bot.telegram.sendMessage(task.chatId, 'An error occurred while sending stories. The admin has been notified.
+      await bot.telegram.sendMessage(task.chatId, 'An error occurred while sending stories. The admin has been notified.').catch(() => null);
+    } catch (_) {/* ignore */}
+    throw error;
+  }
+}
