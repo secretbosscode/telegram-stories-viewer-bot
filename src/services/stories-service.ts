@@ -2,14 +2,14 @@
 
 import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
-import { sendErrorMessageFx } from 'controllers/send-message';
+import { sendErrorMessageFx } from 'controllers/send-message'; // Correctly imports sendErrorMessageFx (the Effect)
 import { sendStoriesFx } from 'controllers/send-stories';
 
 // --- Core Imports from Config & Lib ---
-import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
-import { getRandomArrayItem } from 'lib';
-import { bot } from 'index';
-import { saveUser } from 'repositories/user-repository';
+import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config'; // ADDED: isDevEnv, BOT_ADMIN_ID
+import { getRandomArrayItem } from 'lib'; // ADDED: getRandomArrayItem
+import { bot } from 'index'; // ADDED: bot (from main index.ts)
+import { saveUser } from 'repositories/user-repository'; // ADDED: saveUser (from repository)
 
 // --- Database Effects Imports ---
 // These are the Effector effects that interact with your DB utility functions.
@@ -67,7 +67,6 @@ export const checkTaskForRestart = createEffect(async (task: UserInfo | null) =>
       if (isPrivileged) {
         console.warn(`[StoriesService] Privileged task for ${task.link} (User: ${task.chatId}) running for ${minsFromStart} mins.`);
         try {
-          // CORRECTED LINE: Removed LaTeX delimiters
           await bot.telegram.sendMessage(task.chatId, `🔔 Your long task for "${task.link}" is still running (${minsFromStart} mins).`).catch(() => {});
         } catch (e) { /* Error sending notification */ }
       } else {
@@ -111,7 +110,7 @@ export const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
   }
 });
 
-export const saveUserFx = createEffect(saveUser); // saveUser is the utility function imported from repository
+export const saveUserFx = createEffect(saveUser);
 
 // --- Task Queue Management (FULLY INTEGRATED WITH DB) ---
 
@@ -168,12 +167,16 @@ sample({
 });
 
 // Handle failures from validation (cooldown/duplicate messages already sent by validateAndEnqueueTaskFx)
-validateAndEnqueueTaskFx.fail.watch(({ params, error }: { params: UserInfo, error: Error }) => {
-    if (error.message !== 'Cooldown' && error.message !== 'Duplicate') {
+sample({ // Changed from .fail.watch to sample to properly type params and error
+    clock: validateAndEnqueueTaskFx.fail,
+    filter: ({ params, error }): params is UserInfo => { // Filter to ensure params is UserInfo
+        return error.message !== 'Cooldown' && error.message !== 'Duplicate';
+    },
+    fn: ({ params, error }): { task: UserInfo, message: string } => { // Map to payload for sendErrorMessageFx
         console.error(`[StoriesService] Task validation/enqueue failed for ${params.link}:`, error);
-        // Optionally notify admin about unhandled validation error
-        sendErrorMessageFx({ task: params, message: `Failed to queue task: ${error.message}` });
-    }
+        return { task: params, message: `Failed to queue task: ${error.message || 'Unknown error'}` };
+    },
+    target: sendErrorMessageFx, // Target sendErrorMessageFx
 });
 
 
@@ -246,10 +249,6 @@ sample({
 sample({ clock: taskStarted, filter: (t: UserInfo) => t.linkType === 'username', target: getAllStoriesFx });
 sample({ clock: taskStarted, filter: (t: UserInfo) => t.linkType === 'link', target: getParticularStoryFx });
 
-// Removed $taskTimeout.on and sample(clearTimeoutEvent) as they are part of in-memory timeout mechanism.
-// Timeouts for tasks should ideally be handled within the fetch effects or by monitoring DB status externally.
-// If you still want specific timeouts for the *overall processing*, this logic would need to be re-introduced carefully.
-
 
 // --- Effect Result Handling ---
 // This part transforms the result of get*StoriesFx into SendStoriesFxParams
@@ -301,7 +300,7 @@ sample({
 sendStoriesFx.done.watch(({ params }) => {
   console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link);
   if (params.task.instanceId) { // Check before accessing instanceId
-    markDoneFx(params.task.instanceId); // Corrected to pass string directly
+    markDoneFx(params.task.instanceId); // Corrected: pass string directly
   } else {
     console.warn('[StoriesService] Missing instanceId for task completion:', params.task);
   }
