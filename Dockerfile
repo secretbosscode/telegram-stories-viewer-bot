@@ -19,7 +19,6 @@ RUN cd /gosu && git checkout "$GOSU_VERSION"
 # -ldflags "-s -w" strips debug symbols, making the binary smaller.
 RUN cd /gosu && CGO_ENABLED=0 go build -v -ldflags="-s -w" -o /usr/local/bin/gosu .
 
-
 # =========================================================================
 # Stage 2: The "Final Image" - Our Node.js Application
 # =========================================================================
@@ -30,9 +29,11 @@ FROM node:22-alpine
 COPY --from=builder /usr/local/bin/gosu /usr/local/bin/gosu
 
 # Install only the remaining system dependencies.
-RUN apt-get update && \
-    apt-get install -y sqlite3 && \
-    rm -rf /var/lib/apt/lists/*
+#RUN apt-get update && \
+#    apt-get install -y sqlite3 && \
+#    rm -rf /var/lib/apt/lists/*
+
+RUN apk add --no-cache sqlite
 
 # Set the working directory inside the container.
 WORKDIR /app
