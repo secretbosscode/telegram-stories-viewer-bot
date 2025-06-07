@@ -4,25 +4,25 @@ import { Userbot } from 'config/userbot';
 import { createEffect } from 'effector';
 import { bot } from 'index';
 import { timeout } from 'lib';
-
-// FIX: All types are now correctly imported from your central types file.
 import { UserInfo, NotifyAdminParams } from 'types';
-
 import { Api } from 'telegram';
 import { FloodWaitError } from 'telegram/errors';
 import { isDevEnv } from 'config/env-config';
-
 import { notifyAdmin } from 'controllers/send-message';
 
 
+// =========================================================================
+// This effect fetches all stories for a given user.
+// =========================================================================
 export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
   try {
     await bot.telegram.sendMessage(task.chatId, '⏳ Fetching story lists...');
-    
+
     const client = await Userbot.getInstance();
     const entity = await client.getEntity(task.link);
     notifyAdmin({ task, status: 'start' });
 
+    // This path handles pagination clicks from inline buttons.
     if (task.nextStoriesIds) {
       const paginatedStoriesResult = await client.invoke(
         new Api.stories.GetStoriesByID({ peer: entity, id: task.nextStoriesIds })
@@ -32,6 +32,7 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
         : '🚫 Specified stories not found!';
     }
 
+    // This is the main path for a new username request.
     const [activeResult, pinnedResult] = await Promise.all([
       client.invoke(new Api.stories.GetPeerStories({ peer: entity })),
       client.invoke(new Api.stories.GetPinnedStories({ peer: entity }))
@@ -76,8 +77,8 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
       }
       console.log(`[GetStories] Total pinned stories after pagination for ${task.link}: ${pinnedStories.length}`);
     }
-
-    // FIX: This section is simplified. The "No stories found" logic is now handled in `send-stories.ts`.
+    
+    // The "No stories found" and "Completed" logic is now handled in `send-stories.ts`.
     // This effect's only job is to return the data it found.
     return { activeStories, pinnedStories };
 
@@ -95,4 +96,51 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
 });
 
 
-export const getParticularStoryFx = createEffect(async (
+// =========================================================================
+// Fetch a particular story from a link like t.me/username/s/123
+// =========================================================================
+export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
+  try {
+    await bot.telegram.sendMessage(task.chatId, '⏳ Fetching specific story...');
+
+    const client = await Userbot.getInstance();
+    const linkPaths = task.link.split('/');
+    if (linkPaths.length < 4 || linkPaths[linkPaths.length - 2] !== 's') {
+      return '🚫 Invalid story link format. Expected format: t.me/username/s/id';
+    }
+    const storyId = Number(linkPaths.at(-1));
+    const usernameOrChannelId = linkPaths.at(-3);
+
+    if (!usernameOrChannelId || isNaN(storyId)) {
+      return '🚫 Invalid story link. Could not parse username/channel or story ID.';
+    }
+
+    console.log(`[GetStories] Fetching particular story for ${usernameOrChannelId}, story ID: ${storyId}`);
+    const entity = await client.getEntity(usernameOrChannelId);
+    notifyAdmin({ task, status: 'start' });
+
+    const storyData = await client.invoke(
+      new Api.stories.GetStoriesByID({ id: [storyId], peer: entity })
+    );
+
+    if (storyData.stories.length === 0) {
+      return `🚫 Story with ID ${storyId} not found for "${usernameOrChannelId}"!`;
+    }
+
+    return {
+      activeStories: [],
+      pinnedStories: [],
+      particularStory: storyData.stories[0],
+    };
+  } catch (error: any) {
+    console.error(`[GetStories] ERROR in getParticularStoryFx for ${task.link}:`, error);
+    if (error instanceof FloodWaitError) {
+      const seconds = error.seconds || 60;
+      return `⚠️ Too many requests. Please wait about ${Math.ceil(seconds / 60)} minute(s).`;
+    }
+    if (error.message?.includes('No user corresponding to')) {
+      return `🚫 User/Channel for story link "${task.link}" not found.`;
+    }
+    return `🚫 Error fetching specific story: ${task.link}. Link might be invalid or story deleted.`;
+  }
+});
