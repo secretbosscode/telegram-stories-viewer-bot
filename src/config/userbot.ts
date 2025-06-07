@@ -10,14 +10,32 @@ import {
 } from './env-config';
 
 export class Userbot {
-  private static client: TelegramClient;
+  private static client: TelegramClient | null = null;
+  private static initPromise: Promise<TelegramClient> | null = null;
 
-  public static async getInstance() {
-    if (!Userbot.client) {
-      // FIXME: RACE CONDITION ISSUE
-      Userbot.client = await initClient();
+  /**
+   * Returns singleton instance of TelegramClient. To avoid a race condition
+   * when multiple parts of the app request the client simultaneously, the
+   * first call stores the initialization promise and subsequent calls await the
+   * same promise until initialization finishes.
+   */
+  public static async getInstance(): Promise<TelegramClient> {
+    if (Userbot.client) return Userbot.client;
+
+    if (!Userbot.initPromise) {
+      Userbot.initPromise = initClient()
+        .then((client) => {
+          Userbot.client = client;
+          Userbot.initPromise = null;
+          return client;
+        })
+        .catch((err) => {
+          Userbot.initPromise = null;
+          throw err;
+        });
     }
-    return Userbot.client;
+
+    return Userbot.initPromise;
   }
 }
 
