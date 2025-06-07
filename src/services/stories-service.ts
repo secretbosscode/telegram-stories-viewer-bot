@@ -6,10 +6,10 @@ import { sendErrorMessageFx } from 'controllers/send-message'; // Correctly impo
 import { sendStoriesFx } from 'controllers/send-stories';
 
 // --- Core Imports from Config & Lib ---
-import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config'; // ADDED: isDevEnv, BOT_ADMIN_ID
-import { getRandomArrayItem } from 'lib'; // ADDED: getRandomArrayItem
-import { bot } from 'index'; // ADDED: bot (from main index.ts)
-import { saveUser } from 'repositories/user-repository'; // ADDED: saveUser (from repository)
+import { BOT_ADMIN_ID, isDevEnv } from 'config/env-config';
+import { getRandomArrayItem } from 'lib';
+import { bot } from 'index';
+import { saveUser } from 'repositories/user-repository';
 
 // --- Database Effects Imports ---
 // These are the Effector effects that interact with your DB utility functions.
@@ -67,7 +67,7 @@ export const checkTaskForRestart = createEffect(async (task: UserInfo | null) =>
       if (isPrivileged) {
         console.warn(`[StoriesService] Privileged task for ${task.link} (User: ${task.chatId}) running for ${minsFromStart} mins.`);
         try {
-          await bot.telegram.sendMessage(task.chatId, `🔔 Your long task for "${task.link}" is still running (${minsFromStart} mins).`).catch(() => {});
+          await bot.telegram.sendMessage(task.chatId, `🔔 Your long task for "<span class="math-inline">\{task\.link\}" is still running \(</span>{minsFromStart} mins).`).catch(() => {});
         } catch (e) { /* Error sending notification */ }
       } else {
         console.error('[StoriesService] Non-privileged task took too long, exiting:', JSON.stringify(task));
@@ -300,7 +300,7 @@ sample({
 sendStoriesFx.done.watch(({ params }) => {
   console.log('[StoriesService] sendStoriesFx.done for task:', params.task.link);
   if (params.task.instanceId) { // Check before accessing instanceId
-    markDoneFx(params.task.instanceId); // Corrected: pass string directly
+    markDoneFx(params.task.instanceId); // Corrected to pass string directly
   } else {
     console.warn('[StoriesService] Missing instanceId for task completion:', params.task);
   }
