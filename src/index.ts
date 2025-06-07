@@ -54,7 +54,7 @@ bot.start(async (ctx) => {
   await ctx.reply(
     "🔗 Please send one of the following:\n\n" +
       "*Username with '@' symbol:*\n`@durov`\n\n" +
-      "*Phone number with '+' symbol:*\n`+15551234567`\n\n" +
+      "*Phone number with '+' symbol:*\n`+19875551234`\n\n" +
       '*Direct link to a story:*\n`https://t.me/durov/s/1`',
     { ...extraOptions, parse_mode: 'Markdown' }
   );
@@ -77,7 +77,7 @@ bot.command('help', async (ctx) => {
     finalHelpText +=
       '\n*Premium Commands:*\n' +
       `\`/monitor\` - Monitor a profile for new stories (${limitDesc})\n` +
-      '               (use @username or +phone)\n' +
+      '               (use @username or +phone like +19875551234, no hyphens)\n' +
       '`/unmonitor` - Stop monitoring a profile\n';
   }
 
@@ -123,7 +123,7 @@ bot.command('monitor', async (ctx) => {
         ? 'You can monitor an unlimited number of profiles. '
         : `You can monitor up to ${MAX_MONITORS_PER_USER} profiles. `;
       return ctx.reply(
-        `Usage: /monitor <@username|+123456789>\n` +
+        `Usage: /monitor <@username|+19875551234>\n` +
           limitMsg +
           `Checks run every ${CHECK_INTERVAL_HOURS}h.`
       );
@@ -356,7 +356,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  await ctx.reply('🚫 Invalid input. Send `@username`, `+123456789` or a story link. Type /help for more info.');
+  await ctx.reply('🚫 Invalid input. Send `@username`, `+19875551234` or a story link. Type /help for more info.');
 });
 
 
