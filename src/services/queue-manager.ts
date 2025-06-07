@@ -47,7 +47,7 @@ export async function handleNewTask(user: UserInfo) {
         return;
     }
 
-    // FINAL FIX: Call the effect with the full payload, which now matches the corrected definition.
+    // FINAL FIX: This now calls the corrected effect with the full UserInfo payload.
     await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
     await bot.telegram.sendMessage(telegram_id, `✅ Your request for ${target_username} has been queued!`);
     
