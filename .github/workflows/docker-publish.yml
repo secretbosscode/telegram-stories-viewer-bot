@@ -1,0 +1,12 @@
+- name: Build, attest, and push
+  uses: docker/build-push-action@v6
+  with:
+    context: .
+    push: true
+    tags: ${{ secrets.DOCKERHUB_USERNAME }}/telegram-story-bot:latest
+
+    # =================================================================
+    # THE FIX: This line MUST be present to generate the attestation.
+    # Ensure it exists in your file.
+    # =================================================================
+    provenance: true
