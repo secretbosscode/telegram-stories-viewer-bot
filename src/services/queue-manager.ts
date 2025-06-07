@@ -1,9 +1,6 @@
 // src/services/queue-manager.ts
 
-// =========================================================================
-// FINAL FIX: Importing from `db/effects` to use the Effector wrappers.
-// =========================================================================
-import { createEffect, createEvent, createStore, sample } from 'effector';
+import { createEffect } from 'effector';
 import {
   enqueueDownloadFx,
   getNextQueueItemFx,
@@ -50,7 +47,7 @@ export async function handleNewTask(user: UserInfo) {
         return;
     }
 
-    // FIX: Calling the effect with the correct single object payload.
+    // FINAL FIX: Call the effect with the full payload, which now matches the corrected definition.
     await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
     await bot.telegram.sendMessage(telegram_id, `✅ Your request for ${target_username} has been queued!`);
     
@@ -97,7 +94,6 @@ export async function processQueue() {
 
   } catch (err: any) {
     console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
-    // FIX: Calling markErrorFx with the single object payload it expects.
     await markErrorFx({ jobId: job.id, message: err?.message || 'Unknown processing error' });
     await bot.telegram.sendMessage(job.chatId, `❌ Your download for ${currentTask.link} failed. Reason: ${err?.message || 'Unknown error'}`);
   }
