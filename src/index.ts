@@ -13,6 +13,7 @@ import { db, resetStuckJobs } from './db';
 import { processQueue, handleNewTask } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
 import { isUserPremium, addPremiumUser, removePremiumUser } from './services/premium-service';
+import { UserInfo } from 'types';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
 const RESTART_COMMAND = 'restart';
@@ -83,7 +84,7 @@ bot.command('premium', async (ctx) => {
 // --- Admin Commands ---
 
 bot.command('restart', async (ctx) => {
-  // FINAL FIX: Compare string to string for the admin check.
+  // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
   await ctx.reply('Are you sure you want to restart?', {
     reply_markup: {
@@ -93,28 +94,38 @@ bot.command('restart', async (ctx) => {
 });
 
 bot.command('setpremium', async (ctx) => {
+  // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... your existing logic here
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  // ... your logic
 });
 
 bot.command('unsetpremium', async (ctx) => {
+  // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... your existing logic here
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  // ... your logic
 });
 
 bot.command('ispremium', async (ctx) => {
+  // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... your existing logic here
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  // ... your logic
 });
 
 bot.command('listpremium', async (ctx) => {
+  // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... your existing logic here
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  // ... your logic
 });
 
 bot.command('users', async (ctx) => {
+  // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
-  // ... your existing logic here
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  // ... your logic
 });
 
 
@@ -123,7 +134,7 @@ bot.on('callback_query', async (ctx) => {
   if (!('data' in ctx.callbackQuery)) return;
   const data = ctx.callbackQuery.data;
 
-  // FINAL FIX: Compare string to string for the admin check.
+  // FINAL FIX: Compare string to string.
   if (data === RESTART_COMMAND && ctx.from.id.toString() === BOT_ADMIN_ID) {
     await ctx.answerCbQuery('⏳ Restarting server...');
     process.exit();
@@ -135,16 +146,18 @@ bot.on('callback_query', async (ctx) => {
       return ctx.answerCbQuery('This feature requires Premium access.', { show_alert: true });
     }
     const [username, nextStoriesIds] = data.split('&');
-    handleNewTask({
-      chatId: String(ctx.from.id),
+    const user = ctx.from;
+    const task: UserInfo = {
+      chatId: String(user.id),
       link: username,
       linkType: 'username',
       nextStoriesIds: nextStoriesIds ? JSON.parse(nextStoriesIds) : undefined,
-      locale: ctx.from.language_code || '',
-      user: ctx.from,
+      locale: user.language_code || '',
+      user: user,
       initTime: Date.now(),
       isPremium: isPremium,
-    });
+    };
+    handleNewTask(task);
     await ctx.answerCbQuery();
   }
 });
@@ -159,7 +172,7 @@ bot.on('text', async (ctx) => {
     return ctx.reply('👋 Please type /start to begin using the bot.');
   }
 
-  // FINAL FIX: Compare string to string for the admin check.
+  // FINAL FIX: Compare string to string.
   if (userId.toString() === BOT_ADMIN_ID && text === RESTART_COMMAND) {
     return ctx.reply('Are you sure you want to restart?', {
         reply_markup: { inline_keyboard: [[{ text: 'Yes, Restart', callback_data: RESTART_COMMAND }]] },
@@ -171,15 +184,17 @@ bot.on('text', async (ctx) => {
 
   if (isUsername || isStoryLink) {
     const isPremium = isUserPremium(String(userId));
-    handleNewTask({
+    const user = ctx.from;
+    const task: UserInfo = {
       chatId: String(ctx.chat.id),
       link: text,
       linkType: isStoryLink ? 'link' : 'username',
-      locale: ctx.from.language_code || '',
-      user: ctx.from,
+      locale: user.language_code || '',
+      user: user,
       initTime: Date.now(),
       isPremium: isPremium,
-    });
+    };
+    handleNewTask(task);
     return;
   }
 
