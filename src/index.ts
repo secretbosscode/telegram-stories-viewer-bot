@@ -97,35 +97,36 @@ bot.command('setpremium', async (ctx) => {
   // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
-  // ... your logic
+  // ... your existing logic here
+  // Note: Ensure any logic inside this function also uses .toString() if comparing IDs.
 });
 
 bot.command('unsetpremium', async (ctx) => {
   // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
-  // ... your logic
+  // ... your existing logic here
 });
 
 bot.command('ispremium', async (ctx) => {
   // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
-  // ... your logic
+  // ... your existing logic here
 });
 
 bot.command('listpremium', async (ctx) => {
   // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
-  // ... your logic
+  // ... your existing logic here
 });
 
 bot.command('users', async (ctx) => {
   // FINAL FIX: Compare string to string.
   if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
-  // ... your logic
+  // ... your existing logic here
 });
 
 
