@@ -13,6 +13,8 @@ if (!fs.existsSync(dataDir)) {
 
 export const db = new Database(DB_PATH);
 
+// --- Schema Setup ---
+
 // Users Table (Unchanged)
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -23,9 +25,8 @@ db.exec(`
   );
 `);
 
-// =========================================================================
-// FINAL FIX 1: Add a 'task_details' column to store the full UserInfo object.
-// =========================================================================
+// Download Queue Table
+// CHANGE 1: Added the `task_details` column to store the full UserInfo object as JSON text.
 db.exec(`
   CREATE TABLE IF NOT EXISTS download_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,44 +36,46 @@ db.exec(`
     enqueued_ts INTEGER NOT NULL,
     processed_ts INTEGER,
     error TEXT,
-    task_details TEXT -- This new column will store the task as a JSON string
+    task_details TEXT
   );
 `);
 
 // ===== DB UTILS =====
 
-// =========================================================================
-// FINAL FIX 2: Update enqueueDownload to accept and store the task_details.
-// =========================================================================
+// CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
 export function enqueueDownload(telegram_id: string, target_username: string, task_details: UserInfo): void {
   const now = Math.floor(Date.now() / 1000);
-  const detailsJson = JSON.stringify(task_details); // Convert the object to a string for storage
-  db.prepare(`
+  const detailsJson = JSON.stringify(task_details); // Convert object to JSON string for storage.
+  
+  const stmt = db.prepare(`
     INSERT INTO download_queue (telegram_id, target_username, enqueued_ts, status, task_details)
     VALUES (?, ?, ?, 'pending', ?)
-  `).run(telegram_id, target_username, now, detailsJson);
+  `);
+  stmt.run(telegram_id, target_username, now, detailsJson);
 }
 
-// =========================================================================
-// FINAL FIX 3: Update getNextQueueItem to retrieve and parse task_details.
-// =========================================================================
+// CHANGE 3: `getNextQueueItem` now correctly retrieves and parses the full task details.
 export function getNextQueueItem(): DownloadQueueItem | null {
-  // This query is simplified as we no longer need the complex JOIN just to get premium status
   const row: any = db.prepare(`
-    SELECT * FROM download_queue
-    WHERE status = 'pending'
-    ORDER BY enqueued_ts ASC
+    SELECT q.*, u.is_premium
+    FROM download_queue q
+    LEFT JOIN users u ON u.telegram_id = q.telegram_id
+    WHERE q.status = 'pending'
+    ORDER BY u.is_premium DESC, q.enqueued_ts ASC
     LIMIT 1
   `).get();
 
-  if (row) {
-    // The task object is now parsed directly from the database, not recreated.
+  if (row && row.task_details) {
+    // Parse the JSON string from the DB back into a full UserInfo object.
     const task: UserInfo = JSON.parse(row.task_details);
+
+    // Re-attach the premium status from the JOIN query, as it's the most up-to-date.
+    task.isPremium = row.is_premium === 1;
     
     return {
       id: row.id.toString(),
       chatId: row.telegram_id,
-      task: task, // Use the fully preserved task object
+      task: task, // Use the fully preserved task object.
       status: row.status,
       enqueued_ts: row.enqueued_ts,
     };
@@ -80,8 +83,28 @@ export function getNextQueueItem(): DownloadQueueItem | null {
   return null;
 }
 
+// CHANGE 4: Added this new function to make the queue resilient to restarts.
+/**
+ * Finds any jobs that were stuck in a 'processing' state from a previous
+ * run that crashed, and resets their status to 'pending'.
+ */
+export function resetStuckJobs(): void {
+    try {
+        console.log('[DB] Resetting any stuck "in-progress" jobs to "pending"...');
+        const stmt = db.prepare(`
+        UPDATE download_queue SET status = 'pending' WHERE status = 'processing'
+        `);
+        const info = stmt.run();
+        if (info.changes > 0) {
+            console.log(`[DB] Found and reset ${info.changes} stuck jobs.`);
+        }
+    } catch (error) {
+        console.error('[DB] Failed to reset stuck jobs:', error);
+    }
+}
 
-// --- The rest of these functions are mostly correct ---
+
+// --- These functions are correct as they are ---
 
 export function markProcessing(id: string): void {
   db.prepare(`UPDATE download_queue SET status = 'processing' WHERE id = ?`).run(id);
@@ -108,7 +131,7 @@ export function wasRecentlyDownloaded(telegram_id: string, target_username: stri
   const row = db.prepare(`
     SELECT id FROM download_queue
     WHERE telegram_id = ? AND target_username = ? AND status = 'done' AND processed_ts > ?
-    ORDER BY processed_ts DESC LIMIT 1
+    LIMIT 1
   `).get(telegram_id, target_username, cutoff);
   return !!row;
 }
