@@ -59,6 +59,10 @@ export const validateAndEnqueueTaskFx = createEffect(async (newTask: UserInfo) =
     }
     await enqueueDownloadFx({ telegram_id: newTask.chatId, target_username: newTask.link });
     await bot.telegram.sendMessage(newTask.chatId, `✅ Download for ${newTask.link} has been added to the queue!`);
+    
+    // DEBUG: ADD THIS LINE to test logging after initial startup.
+    console.log(`[VALIDATION-SUCCESS] Task for ${newTask.link} was enqueued. Triggering checkTasks.`);
+    
     return newTask;
 });
 
@@ -124,11 +128,6 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
     taskDone();
 });
 
-// =========================================================================
-// FINAL FIX: This section is now identical to your working code. It uses
-// the simpler and more direct `.watch()` pattern, which is proven to compile
-// successfully and avoids the complex type errors from `sample`.
-// =========================================================================
 getAllStoriesFx.doneData.watch((resultData) => {
     const task = $currentTask.getState();
     if (task && typeof resultData === 'object' && resultData !== null) {
@@ -144,6 +143,7 @@ getParticularStoryFx.doneData.watch((resultData) => {
         sendStoriesFx(payload);
     }
 });
+
 
 // --- 4. Finalizing the Task ---
 sendStoriesFx.done.watch(({ params }) => {
