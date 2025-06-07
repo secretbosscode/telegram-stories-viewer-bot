@@ -4,10 +4,6 @@ import { createEffect, createEvent, createStore, sample } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessage as sendErrorMessageFn } from 'controllers/send-message';
 import { sendStoriesFx } from 'controllers/send-stories';
-
-// =========================================================================
-// FINAL FIX: Correctly import all types from your central 'types' file.
-// =========================================================================
 import { SendStoriesFxParams, UserInfo, DownloadQueueItem } from 'types';
 
 import { BOT_ADMIN_ID } from 'config/env-config';
@@ -24,7 +20,6 @@ import {
   wasRecentlyDownloadedFx,
   isDuplicatePendingFx
 } from 'db/effects';
-
 
 // =========================================================================
 // STORES & EVENTS
@@ -63,7 +58,7 @@ export const validateAndEnqueueTaskFx = createEffect(async (newTask: UserInfo) =
         throw new Error('Duplicate');
     }
     await enqueueDownloadFx({ telegram_id: newTask.chatId, target_username: newTask.link });
-    await bot.telegram.sendMessage(newTask.chatId, `✅ Your request for ${newTask.link} has been added to the queue!`);
+    await bot.telegram.sendMessage(newTask.chatId, `✅ Download for ${newTask.link} has been added to the queue!`);
     return newTask;
 });
 
@@ -129,26 +124,25 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
     taskDone();
 });
 
-sample({
-  clock: getAllStoriesFx.doneData,
-  source: $currentTask,
-  filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null,
-  fn: (task, resultData): SendStoriesFxParams => ({
-    task: task,
-    ...(resultData as object),
-  }),
-  target: sendStoriesFx,
+// =========================================================================
+// FINAL FIX: This section is now identical to your working code. It uses
+// the simpler and more direct `.watch()` pattern, which is proven to compile
+// successfully and avoids the complex type errors from `sample`.
+// =========================================================================
+getAllStoriesFx.doneData.watch((resultData) => {
+    const task = $currentTask.getState();
+    if (task && typeof resultData === 'object' && resultData !== null) {
+        const payload: SendStoriesFxParams = { task, ...(resultData as object) };
+        sendStoriesFx(payload);
+    }
 });
 
-sample({
-  clock: getParticularStoryFx.doneData,
-  source: $currentTask,
-  filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null,
-  fn: (task, resultData): SendStoriesFxParams => ({
-    task: task,
-    ...(resultData as object),
-  }),
-  target: sendStoriesFx,
+getParticularStoryFx.doneData.watch((resultData) => {
+    const task = $currentTask.getState();
+    if (task && typeof resultData === 'object' && resultData !== null) {
+        const payload: SendStoriesFxParams = { task, ...(resultData as object) };
+        sendStoriesFx(payload);
+    }
 });
 
 // --- 4. Finalizing the Task ---
