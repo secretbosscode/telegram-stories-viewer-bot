@@ -1,13 +1,17 @@
 // src/db/effects.ts
 
 import { createEffect } from 'effector';
-import * as db from './index'; // Your DB raw functions
-import { DownloadQueueItem } from 'types';
+import * as db from './index';
+import { DownloadQueueItem, UserInfo } from 'types';
 
+// =========================================================================
+// FINAL FIX: This effect MUST accept the full task details to save them.
+// =========================================================================
 export const enqueueDownloadFx = createEffect(
-  async (params: { telegram_id: string; target_username: string }): Promise<void> => {
-    // FIX: The underlying DB function only expects 2 arguments. The 3rd empty object argument was removed.
-    await db.enqueueDownload(params.telegram_id, params.target_username);
+  async (params: { telegram_id: string; target_username: string, task_details: UserInfo }): Promise<void> => {
+    // IMPORTANT: Your raw `db.enqueueDownload` function must also be updated
+    // to accept and store this third 'task_details' argument, likely as a JSON string.
+    await db.enqueueDownload(params.telegram_id, params.target_username, params.task_details);
   }
 );
 
