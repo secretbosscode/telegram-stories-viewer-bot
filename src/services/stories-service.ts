@@ -3,8 +3,7 @@
 import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessage as sendErrorMessageFn } from 'controllers/send-message';
-import { sendStoriesFx } from 'controllers/send-stories';
-import { SendStoriesFxParams, UserInfo, DownloadQueueItem } from 'types';
+import { sendStoriesFx, SendStoriesFxParams } from 'controllers/send-stories';
 
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
@@ -20,6 +19,8 @@ import {
   wasRecentlyDownloadedFx,
   isDuplicatePendingFx
 } from 'db/effects';
+
+import { UserInfo, DownloadQueueItem } from 'types';
 
 // =========================================================================
 // STORES & EVENTS
@@ -124,16 +125,14 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
     taskDone();
 });
 
-
 // =========================================================================
-// FINAL FIX: Replaced the two complex `sample` blocks with a new, robust pattern
-// that separates filtering from data transformation to satisfy the compiler.
+// FINAL FIX: This new, robust pattern resolves the last TS2353 error.
 // =========================================================================
 
-// Create a new event that only fires when a fetch succeeds AND a task is active.
+// 1. Create a new, intermediate event to hold the successful data.
 const storiesFetchSucceeded = createEvent<{ task: UserInfo; result: object }>();
 
-// Sample for getAllStoriesFx
+// 2. When getAllStoriesFx succeeds, forward its data to our new event.
 sample({
   clock: getAllStoriesFx.doneData,
   source: $currentTask,
@@ -142,7 +141,7 @@ sample({
   target: storiesFetchSucceeded,
 });
 
-// Sample for getParticularStoryFx
+// 3. When getParticularStoryFx succeeds, ALSO forward its data to our new event.
 sample({
   clock: getParticularStoryFx.doneData,
   source: $currentTask,
@@ -151,12 +150,12 @@ sample({
   target: storiesFetchSucceeded,
 });
 
-// This final sample now receives a perfectly typed payload and will compile correctly.
+// 4. Now, sample from the new, clean event. This logic is simple and type-safe.
 sample({
   clock: storiesFetchSucceeded,
   fn: ({ task, result }): SendStoriesFxParams => ({
     task: task,
-    ...(result),
+    ...(result as object),
   }),
   target: sendStoriesFx,
 });
