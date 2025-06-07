@@ -3,7 +3,6 @@
 import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessage as sendErrorMessageFn } from 'controllers/send-message';
-// FIX: Import `SendStoriesFxParams` from your central types file.
 import { sendStoriesFx } from 'controllers/send-stories';
 import { SendStoriesFxParams, UserInfo, DownloadQueueItem } from 'types';
 
@@ -41,7 +40,6 @@ const sendErrorMessageFx = createEffect(sendErrorMessageFn);
 // =========================================================================
 
 export const saveUserFx = createEffect(saveUser);
-// FIX: Corrected sample structure to be type-safe.
 sample({
   clock: newTaskReceived.filter({ fn: (task): task is UserInfo & { user: User } => !!task.user }),
   fn: (task) => task.user,
@@ -111,10 +109,7 @@ sample({ clock: taskStarted, filter: (task) => task.linkType === 'link', target:
 
 
 // --- 3. Handling Task Results ---
-
-// FIX: Replaced complex/buggy sample with simpler .fail.watch() logic to fix all type errors.
 getAllStoriesFx.fail.watch(({ params, error }) => {
-    console.error(`[StoriesService] Story fetch failed for task ${params.link}:`, error);
     if (params.instanceId) {
       markErrorFx({ jobId: params.instanceId, message: error.message || 'Unknown fetch error' });
     }
@@ -123,7 +118,6 @@ getAllStoriesFx.fail.watch(({ params, error }) => {
 });
 
 getParticularStoryFx.fail.watch(({ params, error }) => {
-    console.error(`[StoriesService] Story fetch failed for task ${params.link}:`, error);
     if (params.instanceId) {
       markErrorFx({ jobId: params.instanceId, message: error.message || 'Unknown fetch error' });
     }
@@ -131,13 +125,18 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
     taskDone();
 });
 
-// This sample handles successful data from either fetch effect.
+// =========================================================================
+// FINAL FIX: This sample block's filter signature was corrected.
+// =========================================================================
 sample({
   clock: [getAllStoriesFx.doneData, getParticularStoryFx.doneData],
   source: $currentTask,
-  filter: (task): task is UserInfo => task !== null,
+  // The filter receives both `source` and `clock` data. This signature is now correct.
+  filter: (task, result): task is UserInfo => {
+      return task !== null && typeof result === 'object' && result !== null;
+  },
   fn: (task, resultData) => ({
-    task: task,
+    task: task, // `task` is now guaranteed to be UserInfo, not null
     ...(resultData as object),
   }),
   target: sendStoriesFx,
