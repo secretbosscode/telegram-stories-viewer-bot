@@ -12,16 +12,16 @@ import {
   MappedStoryItem // Needed for mapStories return type
 } from 'types';
 
-// Import the actual sending functions (assuming they are in 'src/services/')
-// Your tsconfig.json must map "services/*": ["services/*"] for these to resolve.
-import { sendActiveStories } from 'services/send-active-stories';
-import { sendPaginatedStories } from 'services/send-paginated-stories';
-import { sendParticularStory } from 'services/send-particular-story';
-import { sendPinnedStories } from 'services/send-pinned-stories';
+// CORRECTED IMPORTS: Import the actual sending functions from 'controllers/'
+// Your tsconfig.json maps "controllers/*": ["controllers/*"] for these to resolve.
+import { sendActiveStories } from 'controllers/send-active-stories'; // <--- CORRECTED PATH
+import { sendPaginatedStories } from 'controllers/send-paginated-stories'; // <--- CORRECTED PATH
+import { sendParticularStory } from 'controllers/send-particular-story'; // <--- CORRECTED PATH
+import { sendPinnedStories } from 'controllers/send-pinned-stories'; // <--- CORRECTED PATH
 
 // Assuming mapStories is a utility function used to convert Api.TypeStoryItem to your internal MappedStoryItem type.
 // It is located in 'controllers/download-stories.ts'.
-import { mapStories } from 'controllers/download-stories';
+import { mapStories } from 'controllers/download-stories'; // This path is already correct for 'controllers/'
 
 // Explicitly type the effect with SendStoriesFxParams
 export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
