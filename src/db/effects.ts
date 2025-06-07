@@ -40,3 +40,6 @@ export const isDuplicatePendingFx = createEffect(
     return db.isDuplicatePending(params.telegram_id, params.target_username);
   }
 );
+
+// Fetch recent history of downloads for admin reporting
+export const getRecentHistoryFx = createEffect((limit: number) => db.getRecentHistory(limit));

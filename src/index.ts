@@ -10,6 +10,7 @@ import { BOT_ADMIN_ID, BOT_TOKEN } from 'config/env-config';
 import { initUserbot } from 'config/userbot';
 import { session, Telegraf } from 'telegraf';
 import { db, resetStuckJobs } from './db';
+import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
 import { isUserPremium, addPremiumUser, removePremiumUser } from './services/premium-service';
@@ -67,6 +68,7 @@ bot.command('help', async (ctx) => {
       '`/ispremium <ID or @username>` - Check if user is premium\n' +
       '`/listpremium` - List all premium users\n' +
       '`/users` - List all users\n' +
+      '`/history` - Recent user activity\n' +
       '`/restart` - Shows the restart confirmation button\n';
   }
   // Using 'Markdown' as it's more forgiving than 'MarkdownV2' for simple text.
@@ -181,6 +183,25 @@ bot.command('users', async (ctx) => {
     rows.forEach((u, i) => { msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${u.is_premium ? 'PREMIUM' : 'FREE'}]\n`; });
     await ctx.reply(msg);
   } catch (e) { console.error("Error in /users:", e); await ctx.reply("An error occurred."); }
+});
+
+bot.command('history', async (ctx) => {
+  if (ctx.from.id != BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  try {
+    const rows = await getRecentHistoryFx(50);
+    if (!rows.length) return ctx.reply('No recent history found.');
+    let msg = `📜 History (last 30 days):\n`;
+    rows.forEach((r: any, i: number) => {
+      const date = new Date(r.enqueued_ts * 1000).toLocaleDateString();
+      const user = r.username ? `@${r.username}` : r.telegram_id;
+      msg += `${i + 1}. ${user} -> ${r.target_username} [${r.status}] ${date}\n`;
+    });
+    await ctx.reply(msg);
+  } catch (e) {
+    console.error('Error in /history:', e);
+    await ctx.reply('An error occurred.');
+  }
 });
 
 // --- Handle button presses ---

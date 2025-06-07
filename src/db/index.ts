@@ -121,8 +121,22 @@ export function markError(id: string, error: string): void {
 export function cleanupQueue(): void {
   db.prepare(`
     DELETE FROM download_queue
-    WHERE processed_ts IS NOT NULL AND processed_ts < (strftime('%s','now') - 259200)
+    WHERE processed_ts IS NOT NULL AND processed_ts < (strftime('%s','now') - 2592000)
   `).run();
+}
+
+// Retrieve recent usage history limited to the last 30 days
+export function getRecentHistory(limit: number): any[] {
+  return db
+    .prepare(
+      `SELECT q.telegram_id, u.username, q.target_username, q.status, q.enqueued_ts, q.processed_ts
+       FROM download_queue q
+       LEFT JOIN users u ON u.telegram_id = q.telegram_id
+       WHERE q.enqueued_ts > (strftime('%s','now') - 2592000)
+       ORDER BY q.enqueued_ts DESC
+       LIMIT ?`
+    )
+    .all(limit);
 }
 
 export function wasRecentlyDownloaded(telegram_id: string, target_username: string, hours: number): boolean {
