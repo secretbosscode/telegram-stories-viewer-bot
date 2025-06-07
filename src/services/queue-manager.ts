@@ -9,10 +9,17 @@ import {
   cleanupQueue,
   wasRecentlyDownloaded,
   isDuplicatePending,
-} from 'db/index'; // Corrected import path to use tsconfig alias
+} from 'db/index'; 
 import { BOT_ADMIN_ID } from 'config/env-config';
-import { bot } from 'index'; // Corrected import path to use tsconfig alias
-import { UserInfo, DownloadQueueItem } from 'types'; // Corrected import path for types
+import { bot } from 'index';
+import { UserInfo, DownloadQueueItem, SendStoriesFxParams } from 'types';
+
+// =========================================================================
+// FINAL FIX: Import the effects that do the actual work.
+// =========================================================================
+import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
+import { sendStoriesFx } from 'controllers/send-stories';
+
 
 /**
  * Cooldown hours by user type
@@ -34,6 +41,7 @@ function getCooldownHours({ isPremium, isAdmin }: { isPremium?: boolean; isAdmin
 
 /**
  * Handles a new download request: checks abuse, prevents duplicate, queues job.
+ * This is the main entry point called by your index.ts.
  */
 export async function handleNewTask(user: UserInfo) {
   const telegram_id = user.chatId;
@@ -42,65 +50,91 @@ export async function handleNewTask(user: UserInfo) {
   const is_premium = !!user.isPremium;
   const cooldown = getCooldownHours({ isPremium: is_premium, isAdmin: is_admin });
 
-  // Check if user has recently downloaded this target (anti-abuse)
-  if (await wasRecentlyDownloaded(telegram_id, target_username, cooldown)) {
-    await bot.telegram.sendMessage(
-      telegram_id,
-      `⏳ Please wait before downloading ${target_username} again. Try later.`
-    );
-    return;
-  }
+  try {
+    if (await wasRecentlyDownloaded(telegram_id, target_username, cooldown)) {
+        await bot.telegram.sendMessage(telegram_id, `⏳ You can request stories for "${target_username}" once every ${cooldown} hours.`);
+        return;
+    }
 
-  // Prevent duplicate pending jobs in queue
-  if (await isDuplicatePending(telegram_id, target_username)) {
-    await bot.telegram.sendMessage(
-      telegram_id,
-      `⚠️ This download is already queued for you. Please wait for it to finish.`
-    );
-    return;
-  }
+    if (await isDuplicatePending(telegram_id, target_username)) {
+        await bot.telegram.sendMessage(telegram_id, `⚠️ This download is already in the queue. Please wait.`);
+        return;
+    }
 
-  // Insert into queue
-  await enqueueDownload(telegram_id, target_username);
-  await bot.telegram.sendMessage(telegram_id, `✅ Download for ${target_username} queued!`);
-  processQueue(); // Try to process immediately if nothing running
+    await enqueueDownload(telegram_id, target_username, user);
+    await bot.telegram.sendMessage(telegram_id, `✅ Your request for ${target_username} has been queued!`);
+    
+    // Use setImmediate to avoid blocking and ensure the current context finishes.
+    setImmediate(processQueue);
+  } catch(e: any) {
+    console.error('[handleNewTask] Error during task validation/enqueueing:', e);
+    await bot.telegram.sendMessage(telegram_id, `❌ Sorry, an error occurred while queueing your request.`);
+  }
 }
 
 let isProcessing = false;
 
 /**
- * Process the next job in the queue.
- * Uses DB to pull the next eligible job and marks status through lifecycle.
+ * Process the next job in the queue. This function acts as our main worker loop.
  */
 export async function processQueue() {
-  if (isProcessing) return;
-  // Ensure getNextQueueItem() in db/index.ts is typed to return DownloadQueueItem | null
-  const job: DownloadQueueItem | null = await getNextQueueItem(); // Awaiting result from DB
-  if (!job) return;
+  if (isProcessing) return; // Prevent multiple concurrent processing loops
+
+  const job: DownloadQueueItem | null = await getNextQueueItem();
+  if (!job) {
+    // No jobs in the queue, we can exit.
+    return;
+  }
 
   isProcessing = true;
-  await markProcessing(job.id); // job.id is now string, markProcessing parameter type should be string
+  await markProcessing(job.id);
+  
+  // Combine the DB data with the nested task details to create the full UserInfo object
+  const currentTask: UserInfo = { ...job.task, chatId: job.chatId, instanceId: job.id };
 
   try {
-    // ---- Replace this block with your real download logic! ----
-    // E.g. await downloadStories(job.chatId, job.task.link); // Example of using correct properties
-    await new Promise((res) => setTimeout(res, 2000)); // Dummy delay for example
-    // ----------------------------------------------------------
+    // =========================================================================
+    // FINAL FIX: This is the real story fetching and sending logic.
+    // =========================================================================
+    console.log(`[QueueManager] Starting processing for ${currentTask.link}`);
+    
+    // 1. Fetch the stories from Telegram
+    let storiesResult;
+    if (currentTask.linkType === 'username') {
+        storiesResult = await getAllStoriesFx(currentTask);
+    } else {
+        storiesResult = await getParticularStoryFx(currentTask);
+    }
 
-    await markDone(job.id); // job.id is now string, markDone parameter type should be string
-    await bot.telegram.sendMessage(
-      job.chatId, // Corrected from job.telegram_id
-      `🎉 Download for ${job.task.link} completed!` // Corrected from job.target_username
-    );
+    // 2. Check for string-based error messages from the fetchers
+    if (typeof storiesResult === 'string') {
+        throw new Error(storiesResult);
+    }
+
+    // 3. Send the stories to the user
+    const payload: SendStoriesFxParams = { task: currentTask, ...(storiesResult as object) };
+    await sendStoriesFx(payload);
+    
+    // 4. Mark the job as done in the database
+    await markDone(job.id);
+
   } catch (err: any) {
-    await markError(job.id, err?.message || 'Unknown error'); // job.id is now string, markError parameter type should be string
-    await bot.telegram.sendMessage(
-      job.chatId, // Corrected from job.telegram_id
-      `❌ Download failed for ${job.task.link}: ${err?.message || ''}` // Corrected from job.target_username
-    );
+    console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
+    // If anything fails, mark the job as an error in the database
+    await markError(job.id, err?.message || 'Unknown processing error');
+    // Notify the user of the failure
+    await bot.telegram.sendMessage(job.chatId, `❌ Your download for ${currentTask.link} failed. Reason: ${err?.message || 'Unknown error'}`);
   }
 
   isProcessing = false;
+  
+  // Optional: Clean up very old jobs from the queue
   await cleanupQueue();
-  setImmediate(processQueue); // Automatically process next job in queue
+  
+  // Immediately check for the next job.
+  setImmediate(processQueue);
 }
+
+// Start the queue processor when the bot starts, in case there are leftover jobs from a previous run.
+console.log('[QueueManager] Initializing queue processor...');
+setImmediate(processQueue);
