@@ -23,17 +23,17 @@ RUN cd /gosu && CGO_ENABLED=0 go build -v -ldflags="-s -w" -o /usr/local/bin/gos
 # Stage 2: The "Final Image" - Our Node.js Application
 # =========================================================================
 # Use the official Node.js LTS slim runtime as our secure and reliable base.
-FROM node:22-alpine
+FROM node:22-slim
 
 # Copy the freshly compiled gosu binary from our builder stage.
 COPY --from=builder /usr/local/bin/gosu /usr/local/bin/gosu
 
 # Install only the remaining system dependencies.
-#RUN apt-get update && \
-#    apt-get install -y sqlite3 && \
-#    rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y sqlite3 && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN apk add --no-cache sqlite sqlite-dev python3 make g++
+#RUN apk add --no-cache sqlite sqlite-dev python3 make g++
 
 # Set the working directory inside the container.
 WORKDIR /app
