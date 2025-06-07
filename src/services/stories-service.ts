@@ -1,9 +1,15 @@
 // src/services/stories-service.ts
 
-import { createEffect, createEvent, createStore, sample, combine, merge } from 'effector'; // Added merge
+import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessage as sendErrorMessageFn } from 'controllers/send-message';
-import { sendStoriesFx, SendStoriesFxParams } from 'controllers/send-stories';
+
+// PROCESS COMMENT (Fix for TS2724):
+// We established that types (like SendStoriesFxParams) must be imported from the central
+// 'types.ts' file, while values (like the sendStoriesFx effect) are imported from their
+// controller files. This corrects the "no exported member" error.
+import { sendStoriesFx } from 'controllers/send-stories';
+import { SendStoriesFxParams, UserInfo, DownloadQueueItem } from 'types';
 
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
@@ -19,8 +25,6 @@ import {
   wasRecentlyDownloadedFx,
   isDuplicatePendingFx
 } from 'db/effects';
-
-import { UserInfo, DownloadQueueItem } from 'types';
 
 // =========================================================================
 // STORES & EVENTS
@@ -51,6 +55,7 @@ export const validateAndEnqueueTaskFx = createEffect(async (newTask: UserInfo) =
     const is_admin = newTask.chatId === BOT_ADMIN_ID.toString();
     const is_premium = !!newTask.isPremium;
     const cooldownHours = is_admin ? 0 : (is_premium ? 2 : 12);
+
     if (cooldownHours > 0 && await wasRecentlyDownloadedFx({ telegram_id: newTask.chatId, target_username: newTask.link, hours: cooldownHours })) {
         throw new Error('Cooldown');
     }
@@ -108,6 +113,11 @@ sample({ clock: taskStarted, filter: (task) => task.linkType === 'link', target:
 
 
 // --- 3. Handling Task Results ---
+
+// PROCESS COMMENT (Strategy from previous fixes):
+// We are using simple `.fail.watch()` blocks here instead of a complex `sample`.
+// Previous attempts showed that using `sample` for failure events created complex
+// type errors that were difficult to resolve. `.watch()` is simpler and more direct.
 getAllStoriesFx.fail.watch(({ params, error }) => {
     if (params.instanceId) {
       markErrorFx({ jobId: params.instanceId, message: error.message || 'Unknown fetch error' });
@@ -125,21 +135,40 @@ getParticularStoryFx.fail.watch(({ params, error }) => {
 });
 
 // =========================================================================
-// FINAL FIX: Merge the two success events into one stream before sampling.
-// This simplifies the type logic and resolves the TS2353 error.
+// FINAL FIX (Strategy for TS2353 - The "Horror Show" Bug):
+//
+// HISTORY: We repeatedly tried to use a single `sample` block that listened to an
+// array of events (`[getAllStoriesFx.doneData, getParticularStoryFx.doneData]`).
+// This approach, even when using `merge`, repeatedly failed with a `TS2353`
+// type error because the combination of a complex `clock` and a nullable `source`
+// store was too difficult for the TypeScript compiler to resolve.
+//
+// FAILED STRATEGY: Patching one complex `sample` block.
+//
+// WINNING STRATEGY: Abandon the complex pattern. We now use two separate,
+// simple `sample` blocks below. Each one listens to a single, known event type.
+// This "divide and conquer" approach makes the types for each block simple and
+// unambiguous, definitively solving the compiler error.
 // =========================================================================
-const storiesFetchSucceeded = merge([
-    getAllStoriesFx.doneData,
-    getParticularStoryFx.doneData,
-]);
 
+// Handle success from getAllStoriesFx
 sample({
-  clock: storiesFetchSucceeded,
+  clock: getAllStoriesFx.doneData,
   source: $currentTask,
-  filter: (task, result): task is UserInfo => {
-      return task !== null && typeof result === 'object' && result !== null;
-  },
-  fn: (task, resultData) => ({
+  filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null,
+  fn: (task, resultData): SendStoriesFxParams => ({
+    task: task,
+    ...(resultData as object),
+  }),
+  target: sendStoriesFx,
+});
+
+// Handle success from getParticularStoryFx
+sample({
+  clock: getParticularStoryFx.doneData,
+  source: $currentTask,
+  filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null,
+  fn: (task, resultData): SendStoriesFxParams => ({
     task: task,
     ...(resultData as object),
   }),
