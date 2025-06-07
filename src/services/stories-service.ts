@@ -3,11 +3,15 @@
 import { createEffect, createEvent, createStore, sample, combine } from 'effector';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendErrorMessage as sendErrorMessageFn } from 'controllers/send-message';
-import { sendStoriesFx, SendStoriesFxParams } from 'controllers/send-stories';
+// FIX: Import `SendStoriesFxParams` from your central types file.
+import { sendStoriesFx } from 'controllers/send-stories';
+import { SendStoriesFxParams, UserInfo, DownloadQueueItem } from 'types';
+
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
 import { saveUser } from 'repositories/user-repository';
 import { User } from 'telegraf/typings/core/types/typegram';
+
 import {
   enqueueDownloadFx,
   getNextQueueItemFx,
@@ -17,7 +21,7 @@ import {
   wasRecentlyDownloadedFx,
   isDuplicatePendingFx
 } from 'db/effects';
-import { UserInfo, DownloadQueueItem } from 'types';
+
 
 // =========================================================================
 // STORES & EVENTS
@@ -43,6 +47,7 @@ sample({
   fn: (task) => task.user,
   target: saveUserFx,
 });
+
 
 // --- 1. Task Validation and Enqueueing ---
 export const validateAndEnqueueTaskFx = createEffect(async (newTask: UserInfo) => {
@@ -104,34 +109,40 @@ sample({ clock: taskStarted, target: $currentTask });
 sample({ clock: taskStarted, filter: (task) => task.linkType === 'username', target: getAllStoriesFx });
 sample({ clock: taskStarted, filter: (task) => task.linkType === 'link', target: getParticularStoryFx });
 
-// --- 3. Handling Task Results ---
-const storyFetchFailed = sample({
-  clock: [getAllStoriesFx.fail, getParticularStoryFx.fail],
-  source: $currentTask,
-  filter: (task): task is UserInfo => task !== null,
-  fn: (task, payload) => ({ task, error: payload.error }),
-});
 
-storyFetchFailed.watch(({ task, error }) => {
-    console.error(`[StoriesService] Story fetch failed for task ${task.link}:`, error);
-    if (task.instanceId) {
-      // FIX: Call markErrorFx with a single object payload.
-      markErrorFx({ jobId: task.instanceId, message: error.message || 'Unknown fetch error' });
+// --- 3. Handling Task Results ---
+
+// FIX: Replaced complex/buggy sample with simpler .fail.watch() logic to fix all type errors.
+getAllStoriesFx.fail.watch(({ params, error }) => {
+    console.error(`[StoriesService] Story fetch failed for task ${params.link}:`, error);
+    if (params.instanceId) {
+      markErrorFx({ jobId: params.instanceId, message: error.message || 'Unknown fetch error' });
     }
-    sendErrorMessageFx({ task, message: 'Sorry, an error occurred while fetching stories.' });
+    sendErrorMessageFx({ task: params, message: 'Sorry, an error occurred while fetching stories.' });
     taskDone();
 });
 
+getParticularStoryFx.fail.watch(({ params, error }) => {
+    console.error(`[StoriesService] Story fetch failed for task ${params.link}:`, error);
+    if (params.instanceId) {
+      markErrorFx({ jobId: params.instanceId, message: error.message || 'Unknown fetch error' });
+    }
+    sendErrorMessageFx({ task: params, message: 'Sorry, an error occurred while fetching the story.' });
+    taskDone();
+});
+
+// This sample handles successful data from either fetch effect.
 sample({
   clock: [getAllStoriesFx.doneData, getParticularStoryFx.doneData],
   source: $currentTask,
-  filter: (task, result): task is UserInfo => task !== null && typeof result === 'object' && result !== null,
-  fn: (task, resultData): SendStoriesFxParams => ({
-    task,
-    ...(resultData as any),
+  filter: (task): task is UserInfo => task !== null,
+  fn: (task, resultData) => ({
+    task: task,
+    ...(resultData as object),
   }),
   target: sendStoriesFx,
 });
+
 
 // --- 4. Finalizing the Task ---
 sendStoriesFx.done.watch(({ params }) => {
@@ -144,13 +155,13 @@ sendStoriesFx.done.watch(({ params }) => {
 sendStoriesFx.fail.watch(({ params, error }) => {
     console.error(`[StoriesService] sendStoriesFx.fail for task:`, params.task.link, 'Error:', error);
     if (params.task.instanceId) {
-        // FIX: Call markErrorFx with a single object payload.
         markErrorFx({ jobId: params.task.instanceId, message: error.message || 'Unknown sending error' });
     }
     taskDone();
 });
 
 sample({ clock: taskDone, target: checkTasks });
+
 
 // --- 5. State Cleanup and Utility Effects ---
 export const cleanupTempMessagesFx = createEffect(async (task: UserInfo) => {
