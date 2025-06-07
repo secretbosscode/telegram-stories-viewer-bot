@@ -33,7 +33,7 @@ COPY --from=builder /usr/local/bin/gosu /usr/local/bin/gosu
 #    apt-get install -y sqlite3 && \
 #    rm -rf /var/lib/apt/lists/*
 
-RUN apk add --no-cache sqlite
+RUN apk add --no-cache sqlite sqlite-dev python3 make g++
 
 # Set the working directory inside the container.
 WORKDIR /app
