@@ -61,7 +61,6 @@ bot.start(async (ctx) => {
 });
 
 bot.command('help', async (ctx) => {
-  // FIX: Replaced `\\n` with `\n` for correct newline formatting.
   let finalHelpText =
     '*Ghost Stories Bot Help*\n\n' +
     '*General Commands:*\n' +
@@ -69,10 +68,15 @@ bot.command('help', async (ctx) => {
     '`/help` - Show this help message\n' +
     '`/premium` - Info about premium features\n';
 
-  if (isUserPremium(String(ctx.from.id)) || ctx.from.id === BOT_ADMIN_ID) {
+  const isAdmin = ctx.from.id === BOT_ADMIN_ID;
+  const isPremium = isUserPremium(String(ctx.from.id));
+  if (isPremium || isAdmin) {
+    const limitDesc = isAdmin
+      ? 'unlimited'
+      : `up to ${MAX_MONITORS_PER_USER}`;
     finalHelpText +=
       '\n*Premium Commands:*\n' +
-      '`/monitor` - Monitor a profile for new stories\n' +
+      `\`/monitor\` - Monitor a profile for new stories (${limitDesc})\n` +
       '`/unmonitor` - Stop monitoring a profile\n';
   }
 
@@ -96,6 +100,7 @@ bot.command('premium', async (ctx) => {
         '🌟 *Premium Access*\n\n' +
         'Premium users get:\n' +
         '✅ Unlimited story downloads\n' +
+        `✅ Monitor up to ${MAX_MONITORS_PER_USER} users' active stories\n` +
         '✅ No cooldowns or waiting in queues\n\n' +
         'Payments and subscriptions are coming soon!',
         { parse_mode: 'Markdown' }
@@ -113,14 +118,18 @@ bot.command('monitor', async (ctx) => {
   if (!args.length) {
     const list = listUserMonitors(userId);
     if (list.length === 0) {
+      const limitMsg = isAdmin
+        ? 'You can monitor an unlimited number of profiles. '
+        : `You can monitor up to ${MAX_MONITORS_PER_USER} profiles. `;
       return ctx.reply(
         `Usage: /monitor <@username>\n` +
-          `You can monitor up to ${MAX_MONITORS_PER_USER} profiles. ` +
+          limitMsg +
           `Checks run every ${CHECK_INTERVAL_HOURS}h.`
       );
     }
+    const limit = isAdmin ? '∞' : MAX_MONITORS_PER_USER;
     const msg =
-      `👀 Currently monitoring (${list.length}/${MAX_MONITORS_PER_USER}):\n` +
+      `👀 Currently monitoring (${list.length}/${limit}):\n` +
       list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n') +
       `\nChecks run every ${CHECK_INTERVAL_HOURS}h. ` +
       'Use /unmonitor <@username> to remove.';
