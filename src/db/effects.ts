@@ -5,8 +5,9 @@ import * as db from './index';
 import { DownloadQueueItem, UserInfo } from 'types';
 
 // =========================================================================
-// FINAL FIX: Reverted this effect to its correct definition. It only
-// passes the two arguments that your db.enqueueDownload function expects.
+// PROCESS COMMENT: This effect is the bridge to your database. It must
+// accept the full task_details object to pass it to the database function,
+// ensuring no data is lost when a task is queued.
 // =========================================================================
 export const enqueueDownloadFx = createEffect(
   async (params: { telegram_id: string; target_username: string; task_details: UserInfo }): Promise<void> => {
@@ -14,23 +15,11 @@ export const enqueueDownloadFx = createEffect(
   }
 );
 
-export const getNextQueueItemFx = createEffect<void, DownloadQueueItem | null>(
-  async (): Promise<DownloadQueueItem | null> => {
-    return db.getNextQueueItem();
-  }
-);
+export const getNextQueueItemFx = createEffect<void, DownloadQueueItem | null>(() => db.getNextQueueItem());
 
-export const markProcessingFx = createEffect(
-  async (jobId: string): Promise<void> => {
-    return db.markProcessing(jobId);
-  }
-);
+export const markProcessingFx = createEffect((jobId: string) => db.markProcessing(jobId));
 
-export const markDoneFx = createEffect(
-  async (jobId: string): Promise<void> => {
-    return db.markDone(jobId);
-  }
-);
+export const markDoneFx = createEffect((jobId: string) => db.markDone(jobId));
 
 export const markErrorFx = createEffect(
   async (payload: { jobId: string; message: string }): Promise<void> => {
@@ -38,11 +27,7 @@ export const markErrorFx = createEffect(
   }
 );
 
-export const cleanupQueueFx = createEffect(
-  async (): Promise<void> => {
-    return db.cleanupQueue();
-  }
-);
+export const cleanupQueueFx = createEffect(() => db.cleanupQueue());
 
 export const wasRecentlyDownloadedFx = createEffect(
   async (params: { telegram_id: string; target_username: string; hours: number }): Promise<boolean> => {
