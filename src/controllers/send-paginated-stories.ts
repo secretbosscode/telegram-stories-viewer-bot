@@ -1,3 +1,5 @@
+// src/controllers/send-paginated-stories.ts
+
 import { bot } from 'index'; // Corrected path to use tsconfig alias
 import { Api } from 'telegram';
 
