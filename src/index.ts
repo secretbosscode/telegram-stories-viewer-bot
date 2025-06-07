@@ -14,7 +14,15 @@ import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
 import { isUserPremium, addPremiumUser, removePremiumUser } from './services/premium-service';
-import { addProfileMonitor, userMonitorCount, listUserMonitors, startMonitorLoop } from './services/monitor-service';
+import {
+  addProfileMonitor,
+  removeProfileMonitor,
+  userMonitorCount,
+  listUserMonitors,
+  startMonitorLoop,
+  CHECK_INTERVAL_HOURS,
+  MAX_MONITORS_PER_USER,
+} from './services/monitor-service';
 import { UserInfo } from 'types';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
@@ -61,6 +69,13 @@ bot.command('help', async (ctx) => {
     '`/help` - Show this help message\n' +
     '`/premium` - Info about premium features\n';
 
+  if (isUserPremium(String(ctx.from.id)) || ctx.from.id === BOT_ADMIN_ID) {
+    finalHelpText +=
+      '\n*Premium Commands:*\n' +
+      '`/monitor` - Monitor a profile for new stories\n' +
+      '`/unmonitor` - Stop monitoring a profile\n';
+  }
+
   if (ctx.from.id == BOT_ADMIN_ID) {
     finalHelpText +=
       '\n*Admin Commands:*\n' +
@@ -98,20 +113,50 @@ bot.command('monitor', async (ctx) => {
   if (!args.length) {
     const list = listUserMonitors(userId);
     if (list.length === 0) {
-      return ctx.reply('Usage: /monitor <@username>');
+      return ctx.reply(
+        `Usage: /monitor <@username>\n` +
+          `You can monitor up to ${MAX_MONITORS_PER_USER} profiles. ` +
+          `Checks run every ${CHECK_INTERVAL_HOURS}h.`
+      );
     }
-    const msg = '👀 Currently monitoring:\n' + list.map((m) => '- @' + m.target_username).join('\n');
+    const msg =
+      `👀 Currently monitoring (${list.length}/${MAX_MONITORS_PER_USER}):\n` +
+      list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n') +
+      `\nChecks run every ${CHECK_INTERVAL_HOURS}h. ` +
+      'Use /unmonitor <@username> to remove.';
     return ctx.reply(msg);
   }
   const username = args[0].replace('@', '');
   if (!isAdmin) {
-    const limit = 5;
-    if (userMonitorCount(userId) >= limit) {
-      return ctx.reply(`🚫 You can monitor up to ${limit} profiles.`);
+    if (userMonitorCount(userId) >= MAX_MONITORS_PER_USER) {
+      return ctx.reply(`🚫 You can monitor up to ${MAX_MONITORS_PER_USER} profiles.`);
     }
   }
   addProfileMonitor(userId, username);
   await ctx.reply(`✅ Now monitoring @${username} for active stories.`);
+});
+
+bot.command('unmonitor', async (ctx) => {
+  const userId = String(ctx.from.id);
+  const isAdmin = ctx.from.id === BOT_ADMIN_ID;
+  const isPremium = isUserPremium(userId);
+  if (!isAdmin && !isPremium) {
+    return ctx.reply('🚫 Monitoring profiles is available for premium users.');
+  }
+  const args = ctx.message.text.split(' ').slice(1);
+  if (!args.length) {
+    const list = listUserMonitors(userId);
+    if (list.length === 0) {
+      return ctx.reply('You are not monitoring any profiles.');
+    }
+    const msg =
+      '👀 Currently monitoring:\n' +
+      list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n');
+    return ctx.reply(msg);
+  }
+  const username = args[0].replace('@', '');
+  removeProfileMonitor(userId, username);
+  await ctx.reply(`🛑 Stopped monitoring @${username}.`);
 });
 
 // --- Admin Commands ---
@@ -315,6 +360,13 @@ async function startApp() {
   console.log('[App] Kicking off initial queue processing...');
   processQueue();
   startMonitorLoop();
+  await bot.telegram.setMyCommands([
+    { command: 'start', description: 'Show usage instructions' },
+    { command: 'help', description: 'Show help message' },
+    { command: 'premium', description: 'Info about premium features' },
+    { command: 'monitor', description: 'Monitor a profile for new stories' },
+    { command: 'unmonitor', description: 'Stop monitoring a profile' },
+  ]);
   bot.launch({ dropPendingUpdates: true }).then(() => {
     console.log('✅ Telegram bot started successfully and is ready for commands.');
   });
