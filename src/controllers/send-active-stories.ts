@@ -1,4 +1,4 @@
-//src/controllers/send-active-stories.ts
+// src/controllers/send-active-stories.ts
 
 import { Userbot } from 'config/userbot';
 import { bot } from 'index'; // Corrected path to use tsconfig alias
