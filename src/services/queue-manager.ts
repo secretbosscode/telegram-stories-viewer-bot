@@ -40,10 +40,10 @@ export async function handleNewTask(user: UserInfo) {
       return;
     }
 
-    // FIX: This call now correctly passes the full user object as task_details.
     await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
     await bot.telegram.sendMessage(telegram_id, `✅ Your request for ${target_username} has been queued!`);
     
+    // Trigger the queue processor immediately in case it's idle.
     setImmediate(processQueue);
   } catch(e: any) {
     console.error('[handleNewTask] Error during task validation/enqueueing:', e);
@@ -54,19 +54,24 @@ export async function handleNewTask(user: UserInfo) {
 let isProcessing = false;
 
 export async function processQueue() {
-  if (isProcessing) return;
+  if (isProcessing) {
+    console.log('[QueueManager] Processor is already running. Exiting this loop.');
+    return;
+  }
 
   const job: DownloadQueueItem | null = await getNextQueueItemFx();
-  if (!job) return;
+  if (!job) {
+    console.log('[QueueManager] Queue is empty. Processor is going to sleep.');
+    return;
+  }
 
   isProcessing = true;
   await markProcessingFx(job.id);
   
-  // This logic is now correct because getNextQueueItem returns the full task.
   const currentTask: UserInfo = { ...job.task, chatId: job.chatId, instanceId: job.id };
 
   try {
-    console.log(`[QueueManager] Starting processing for ${currentTask.link}`);
+    console.log(`[QueueManager] Starting processing for ${currentTask.link} (Job ID: ${job.id})`);
     
     let storiesResult;
     if (currentTask.linkType === 'username') {
@@ -83,17 +88,24 @@ export async function processQueue() {
     await sendStoriesFx(payload);
     
     await markDoneFx(job.id);
+    console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
 
   } catch (err: any) {
     console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
     await markErrorFx({ jobId: job.id, message: err?.message || 'Unknown processing error' });
-    await bot.telegram.sendMessage(job.chatId, `❌ Your download for ${currentTask.link} failed. Reason: ${err?.message || 'Unknown error'}`);
+    // The user-facing error message is now handled inside send-stories.ts
   }
 
   isProcessing = false;
+  
+  // Clean up old jobs and immediately check for the next one.
   await cleanupQueueFx();
   setImmediate(processQueue);
 }
 
-console.log('[QueueManager] Initializing queue processor...');
+// =========================================================================
+// FINAL FIX: Kick-start the queue processor when the application launches.
+// This will pick up any jobs that were left over from a previous session.
+// =========================================================================
+console.log('[QueueManager] Initializing queue processor on startup...');
 setImmediate(processQueue);
