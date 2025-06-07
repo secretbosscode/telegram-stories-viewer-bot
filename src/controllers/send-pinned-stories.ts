@@ -1,3 +1,5 @@
+// src/controllers/send-pinned-stories.ts
+
 import { Userbot } from 'config/userbot';
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
