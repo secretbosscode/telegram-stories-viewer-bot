@@ -5,7 +5,7 @@ import { Markup } from 'telegraf';
 import { Api } from 'telegram';
 
 // CORRECTED: Import InlineKeyboardButton for precise typing
-import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram';
+import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram'; // <--- This import is key for fixing TS2724
 
 // CORRECTED: Import types from your central types.ts file
 import { SendStoriesArgs, MappedStoryItem, StoriesModel, NotifyAdminParams } from 'types';
@@ -34,19 +34,19 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       const from = i + 1;
       const to = Math.min(i + PER_PAGE, mapped.length);
       // CORRECTED LINE: Removed LaTeX delimiters and used template literal correctly
-      nextStories[`${from}-${to}`] = mapped.slice(i, i + PER_PAGE).map((x: MappedStoryItem) => x.id);
+      nextStories[`${from}-${to}`] = mapped.slice(i, i + PER_PAGE).map((x: MappedStoryItem) => x.id); // <--- 'x' is typed here
     }
     mapped = currentStories;
   }
 
   // === If any stories missing media, refetch via Userbot ===
-  const storiesWithoutMedia: MappedStoryItem[] = mapped.filter((x: MappedStoryItem) => !x.media);
+  const storiesWithoutMedia: MappedStoryItem[] = mapped.filter((x: MappedStoryItem) => !x.media); // <--- 'x' is typed here
   if (storiesWithoutMedia.length > 0) {
-    mapped = mapped.filter((x: MappedStoryItem) => Boolean(x.media));
+    mapped = mapped.filter((x: MappedStoryItem) => Boolean(x.media)); // <--- 'x' is typed here
     try {
       const client = await Userbot.getInstance();
       const entity = await client.getEntity(task.link!);
-      const ids = storiesWithoutMedia.map((x: MappedStoryItem) => x.id);
+      const ids = storiesWithoutMedia.map((x: MappedStoryItem) => x.id); // <--- 'x' is typed here
       const storiesWithMediaApi = await client.invoke(
         new Api.stories.GetStoriesByID({ id: ids, peer: entity })
       );
@@ -66,7 +66,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
 
     // --- Only upload files with buffer and size <= 47MB (Telegram API limit fudge) ---
     const uploadableStories: MappedStoryItem[] = mapped.filter(
-      (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 47
+      (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 47 // <--- 'x' is typed here
     );
 
     // --- Notify user about upload ---
@@ -81,7 +81,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       for (const album of chunkedList) {
         await bot.telegram.sendMediaGroup(
           task.chatId,
-          album.map((x: MappedStoryItem) => ({
+          album.map((x: MappedStoryItem) => ({ // <--- 'x' is typed here
             media: { source: x.buffer! },
             type: x.mediaType,
             caption: x.caption ?? 'Active stories',
@@ -106,7 +106,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       );
       // Chunk 3 buttons per row
       // CORRECTED: Explicitly typed 'acc' and 'curr' in reduce
-      const keyboard = btns.reduce((acc: InlineKeyboardButton[][], curr: InlineKeyboardButton, index: number) => {
+      const keyboard = btns.reduce((acc: InlineKeyboardButton[][], curr: InlineKeyboardButton, index: number) => { // <--- Types fixed here
         const chunkIndex = Math.floor(index / 3);
         if (!acc[chunkIndex]) acc[chunkIndex] = [];
         acc[chunkIndex].push(curr);
