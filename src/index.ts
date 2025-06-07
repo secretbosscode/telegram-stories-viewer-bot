@@ -1,12 +1,8 @@
 // src/index.ts
 
-// These global error handlers are critical. They must be at the very top.
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('CRITICAL_ERROR: Unhandled Rejection at:', promise, 'reason:', reason);
-});
-process.on('uncaughtException', (error, origin) => {
-  console.error('CRITICAL_ERROR: Uncaught Exception:', error, 'origin:', origin);
-});
+// Global error handlers must be at the absolute top.
+process.on('unhandledRejection', (reason, promise) => { console.error('CRITICAL_ERROR: Unhandled Rejection at:', promise, 'reason:', reason); });
+process.on('uncaughtException', (error, origin) => { console.error('CRITICAL_ERROR: Uncaught Exception:', error, 'origin:', origin); });
 console.log("Global error handlers have been attached.");
 
 import { IContextBot } from 'config/context-interface';
@@ -39,9 +35,11 @@ function isActivated(userId: number): boolean {
 }
 
 // =========================================================================
-//  COMMAND & EVENT HANDLERS (No changes needed here)
+//  COMMAND & EVENT HANDLERS
+//  FINAL FIX: Handlers are now ordered from most specific to least specific.
 // =========================================================================
 
+// 1. Specific command handlers come first.
 bot.start(async (ctx) => {
   await saveUser(ctx.from);
   await ctx.reply(
@@ -53,8 +51,52 @@ bot.start(async (ctx) => {
   );
 });
 
-// ... your /help, /premium, and other admin commands are all fine.
+bot.command('help', async (ctx) => {
+  let finalHelpText = '*Ghost Stories Bot Help*\\n\\n' +
+    '*General Commands:*\\n' +
+    '`/start` \\- Show usage instructions\\n' +
+    '`/help` \\- Show this help message\\n' +
+    '`/premium` \\- Info about premium features\\n';
 
+  if (ctx.from.id.toString() === BOT_ADMIN_ID) {
+    finalHelpText += '\\n*Admin Commands:*\\n' +
+      '`/setpremium <ID or @username>` \\- Mark user as premium\\n' +
+      '`/unsetpremium <ID or @username>` \\- Remove premium status\\n' +
+      '`/ispremium <ID or @username>` \\- Check if user is premium\\n' +
+      '`/listpremium` \\- List all premium users\\n' +
+      '`/users` \\- List all users\\n' +
+      '`/restart` \\- Shows the restart confirmation button\\n';
+  }
+  // Note: Switched to MarkdownV2 and escaped special characters.
+  await ctx.reply(finalHelpText, { parse_mode: 'MarkdownV2' });
+});
+
+bot.command('premium', async (ctx) => {
+    await ctx.reply(
+        '🌟 *Premium Access*\\n\\n' +
+        'Premium users get:\\n' +
+        '✅ Unlimited story downloads\\n' +
+        '✅ No cooldowns or waiting in queues\\n\\n' +
+        'Payments and subscriptions are coming soon\\!',
+        { parse_mode: 'MarkdownV2' }
+    );
+});
+
+// ... your other admin bot.command() handlers go here ...
+bot.command('users', async (ctx) => {
+    // ...
+});
+bot.command('setpremium', async (ctx) => {
+    // ...
+});
+// etc.
+
+// 2. More specific event handlers like 'callback_query' come next.
+bot.on('callback_query', async (ctx) => {
+    // your callback query logic is fine
+});
+
+// 3. The generic, catch-all 'text' handler comes LAST.
 bot.on('text', async (ctx) => {
   const text = ctx.message.text;
   const userId = ctx.from.id;
@@ -62,7 +104,9 @@ bot.on('text', async (ctx) => {
   if (!isActivated(userId)) {
     return ctx.reply('👋 Please type /start to begin using the bot.');
   }
-
+  
+  // This text handler should now ONLY process story requests.
+  // All commands like /help, /start, etc. have already been handled.
   const isStoryLink = text.startsWith('https') || text.startsWith('t.me/');
   const isUsername = text.startsWith('@') || text.startsWith('+');
 
@@ -80,38 +124,26 @@ bot.on('text', async (ctx) => {
     return;
   }
 
+  // If the text was not a command and not a valid story request, send the fallback.
   await ctx.reply('🚫 Invalid input. Send a username like `@durov` or a story link. Type /help for more info.');
 });
 
-// ... your other handlers like bot.on('callback_query') are fine.
-
-// =========================================================================
+// =============================
 // BOT LAUNCH & QUEUE STARTUP
-// This new structure ensures everything initializes in the correct order.
-// =========================================================================
+// =============================
 
 async function startApp() {
   console.log('[App] Initializing...');
-  
-  // 1. Reset any jobs that were stuck in 'processing' from a previous run.
   resetStuckJobs();
-
-  // 2. IMPORTANT: Wait for the userbot (gram.js client) to fully initialize.
   await initUserbot();
-
-  // 3. Start the main queue processor loop *after* the userbot is ready.
   console.log('[App] Starting queue processor...');
   processQueue();
-
-  // 4. Finally, launch the Telegram bot to start receiving messages.
   bot.launch({ dropPendingUpdates: true }).then(() => {
     console.log('✅ Telegram bot started successfully and is ready for commands.');
   });
 }
 
-// Run the main startup sequence.
 startApp();
 
-// Graceful shutdown handlers
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
