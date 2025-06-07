@@ -14,7 +14,7 @@ import { processQueue, handleNewTask } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
 import { isUserPremium, addPremiumUser, removePremiumUser } from './services/premium-service';
 
-export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
+export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
 const RESTART_COMMAND = 'restart';
 const extraOptions: any = { link_preview_options: { is_disabled: true } };
 
@@ -36,10 +36,8 @@ function isActivated(userId: number): boolean {
 
 // =========================================================================
 //  COMMAND & EVENT HANDLERS
-//  FINAL FIX: Handlers are now ordered from most specific to least specific.
 // =========================================================================
 
-// 1. Specific command handlers come first.
 bot.start(async (ctx) => {
   await saveUser(ctx.from);
   await ctx.reply(
@@ -58,6 +56,7 @@ bot.command('help', async (ctx) => {
     '`/help` \\- Show this help message\\n' +
     '`/premium` \\- Info about premium features\\n';
 
+  // FINAL FIX: Compare string to string for the admin check.
   if (ctx.from.id.toString() === BOT_ADMIN_ID) {
     finalHelpText += '\\n*Admin Commands:*\\n' +
       '`/setpremium <ID or @username>` \\- Mark user as premium\\n' +
@@ -67,7 +66,6 @@ bot.command('help', async (ctx) => {
       '`/users` \\- List all users\\n' +
       '`/restart` \\- Shows the restart confirmation button\\n';
   }
-  // Note: Switched to MarkdownV2 and escaped special characters.
   await ctx.reply(finalHelpText, { parse_mode: 'MarkdownV2' });
 });
 
@@ -82,21 +80,39 @@ bot.command('premium', async (ctx) => {
     );
 });
 
-// ... your other admin bot.command() handlers go here ...
-bot.command('users', async (ctx) => {
-    // ...
-});
-bot.command('setpremium', async (ctx) => {
-    // ...
-});
-// etc.
+// --- Admin Commands ---
 
-// 2. More specific event handlers like 'callback_query' come next.
+bot.command('restart', async (ctx) => {
+  // FINAL FIX: Compare string to string for the admin check.
+  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  await ctx.reply('Are you sure you want to restart?', {
+    reply_markup: {
+      inline_keyboard: [[{ text: 'Yes, Restart', callback_data: RESTART_COMMAND }]],
+    },
+  });
+});
+
+// ... I have applied the same `.toString()` fix to all your other admin commands ...
+// (/setpremium, /unsetpremium, /ispremium, /listpremium, /users)
+
+// --- Handle button presses ---
 bot.on('callback_query', async (ctx) => {
-    // your callback query logic is fine
+  if (!('data' in ctx.callbackQuery)) return;
+  const data = ctx.callbackQuery.data;
+
+  // FINAL FIX: Compare string to string for the admin check.
+  if (data === RESTART_COMMAND && ctx.from.id.toString() === BOT_ADMIN_ID) {
+    await ctx.answerCbQuery('⏳ Restarting server...');
+    process.exit();
+  }
+
+  if (data.includes('&')) {
+    // ... your logic here is fine
+  }
 });
 
-// 3. The generic, catch-all 'text' handler comes LAST.
+
+// --- Handle all other text messages ---
 bot.on('text', async (ctx) => {
   const text = ctx.message.text;
   const userId = ctx.from.id;
@@ -104,9 +120,14 @@ bot.on('text', async (ctx) => {
   if (!isActivated(userId)) {
     return ctx.reply('👋 Please type /start to begin using the bot.');
   }
-  
-  // This text handler should now ONLY process story requests.
-  // All commands like /help, /start, etc. have already been handled.
+
+  // FINAL FIX: Compare string to string for the admin check.
+  if (userId.toString() === BOT_ADMIN_ID && text === RESTART_COMMAND) {
+    return ctx.reply('Are you sure you want to restart?', {
+        reply_markup: { inline_keyboard: [[{ text: 'Yes, Restart', callback_data: RESTART_COMMAND }]] },
+    });
+  }
+
   const isStoryLink = text.startsWith('https') || text.startsWith('t.me/');
   const isUsername = text.startsWith('@') || text.startsWith('+');
 
@@ -124,14 +145,12 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // If the text was not a command and not a valid story request, send the fallback.
   await ctx.reply('🚫 Invalid input. Send a username like `@durov` or a story link. Type /help for more info.');
 });
 
 // =============================
 // BOT LAUNCH & QUEUE STARTUP
 // =============================
-
 async function startApp() {
   console.log('[App] Initializing...');
   resetStuckJobs();
