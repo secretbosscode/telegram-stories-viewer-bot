@@ -13,6 +13,7 @@ import { db, resetStuckJobs } from './db';
 import { processQueue, handleNewTask } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
 import { isUserPremium, addPremiumUser, removePremiumUser } from './services/premium-service';
+import { addProfileMonitor, userMonitorCount, listUserMonitors, startMonitorLoop } from './services/monitor-service';
 import { UserInfo } from 'types';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
@@ -84,6 +85,33 @@ bot.command('premium', async (ctx) => {
     );
 });
 
+bot.command('monitor', async (ctx) => {
+  const userId = String(ctx.from.id);
+  const isAdmin = ctx.from.id === BOT_ADMIN_ID;
+  const isPremium = isUserPremium(userId);
+  if (!isAdmin && !isPremium) {
+    return ctx.reply('🚫 Monitoring profiles is available for premium users.');
+  }
+  const args = ctx.message.text.split(' ').slice(1);
+  if (!args.length) {
+    const list = listUserMonitors(userId);
+    if (list.length === 0) {
+      return ctx.reply('Usage: /monitor <@username>');
+    }
+    const msg = '👀 Currently monitoring:\n' + list.map((m) => '- @' + m.target_username).join('\n');
+    return ctx.reply(msg);
+  }
+  const username = args[0].replace('@', '');
+  if (!isAdmin) {
+    const limit = 5;
+    if (userMonitorCount(userId) >= limit) {
+      return ctx.reply(`🚫 You can monitor up to ${limit} profiles.`);
+    }
+  }
+  addProfileMonitor(userId, username);
+  await ctx.reply(`✅ Now monitoring @${username} for active stories.`);
+});
+
 // --- Admin Commands ---
 
 bot.command('restart', async (ctx) => {
@@ -101,7 +129,7 @@ bot.command('setpremium', async (ctx) => {
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
   try {
     const args = ctx.message.text.split(' ').slice(1);
-    if (!args.length) return ctx.reply('Usage: /setpremium <telegram_id | @username>');
+    if (!args.length) return ctx.reply('Usage: /setpremium <telegram_id | @username> [days]');
     let telegramId: string | undefined, username: string | undefined;
     if (args[0].startsWith('@')) {
       username = args[0].replace('@', '');
@@ -112,8 +140,9 @@ bot.command('setpremium', async (ctx) => {
       telegramId = args[0];
     } else { return ctx.reply('Invalid argument.'); }
     if (!telegramId) return ctx.reply('Could not resolve telegram ID.');
-    addPremiumUser(telegramId, username);
-    await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium!`);
+    const days = args[1] ? parseInt(args[1], 10) : undefined;
+    addPremiumUser(telegramId, username, days);
+    await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium${days ? ' for ' + days + ' day(s)' : ''}!`);
   } catch (e) { console.error("Error in /setpremium:", e); await ctx.reply("An error occurred."); }
 });
 
@@ -264,6 +293,7 @@ async function startApp() {
   // FIX: Clarified the log message for consistency.
   console.log('[App] Kicking off initial queue processing...');
   processQueue();
+  startMonitorLoop();
   bot.launch({ dropPendingUpdates: true }).then(() => {
     console.log('✅ Telegram bot started successfully and is ready for commands.');
   });

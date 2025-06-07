@@ -15,15 +15,22 @@ export const db = new Database(DB_PATH);
 
 // --- Schema Setup ---
 
-// Users Table (Unchanged)
+// Users Table with premium expiration
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     telegram_id TEXT PRIMARY KEY NOT NULL,
     username TEXT,
     is_premium INTEGER DEFAULT 0,
+    premium_until INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 `);
+
+// Add premium_until column if database was created with an older schema
+const userColumns = db.prepare("PRAGMA table_info(users)").all() as any[];
+if (!userColumns.some((c) => c.name === 'premium_until')) {
+  db.exec('ALTER TABLE users ADD COLUMN premium_until INTEGER');
+}
 
 // Download Queue Table
 // CHANGE 1: Added the `task_details` column to store the full UserInfo object as JSON text.
@@ -37,6 +44,17 @@ db.exec(`
     processed_ts INTEGER,
     error TEXT,
     task_details TEXT
+  );
+`);
+
+// Monitored profiles table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS monitors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id TEXT NOT NULL,
+    target_username TEXT NOT NULL,
+    last_checked INTEGER,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
   );
 `);
 
@@ -143,4 +161,42 @@ export function isDuplicatePending(telegram_id: string, target_username: string)
     LIMIT 1
   `).get(telegram_id, target_username);
   return !!row;
+}
+
+// ----- Monitor utils -----
+export interface MonitorRow {
+  id: number;
+  telegram_id: string;
+  target_username: string;
+  last_checked?: number;
+}
+
+export function addMonitor(telegram_id: string, target_username: string): void {
+  db.prepare(`
+    INSERT INTO monitors (telegram_id, target_username)
+    VALUES (?, ?)
+  `).run(telegram_id, target_username);
+}
+
+export function removeMonitor(telegram_id: string, target_username: string): void {
+  db.prepare(`DELETE FROM monitors WHERE telegram_id = ? AND target_username = ?`).run(telegram_id, target_username);
+}
+
+export function listMonitors(telegram_id: string): MonitorRow[] {
+  return db.prepare(`SELECT * FROM monitors WHERE telegram_id = ?`).all(telegram_id) as MonitorRow[];
+}
+
+export function countMonitors(telegram_id: string): number {
+  const row = db.prepare(`SELECT COUNT(*) as c FROM monitors WHERE telegram_id = ?`).get(telegram_id) as { c: number };
+  return row?.c || 0;
+}
+
+export function getDueMonitors(cutoff: number): MonitorRow[] {
+  return db.prepare(
+    `SELECT * FROM monitors WHERE last_checked IS NULL OR last_checked < ?`
+  ).all(cutoff) as MonitorRow[];
+}
+
+export function updateMonitorChecked(id: number): void {
+  db.prepare(`UPDATE monitors SET last_checked = strftime('%s','now') WHERE id = ?`).run(id);
 }
