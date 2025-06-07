@@ -8,9 +8,11 @@ import {
   removeMonitor,
   countMonitors,
   listMonitors,
-  getDueMonitors,
+  listAllMonitors,
   updateMonitorChecked,
   MonitorRow,
+  getMonitor,
+  findMonitor,
 } from '../db';
 import { UserInfo } from 'types';
 import { BOT_ADMIN_ID } from 'config/env-config';
@@ -18,11 +20,19 @@ import { BOT_ADMIN_ID } from 'config/env-config';
 export const CHECK_INTERVAL_HOURS = 6;
 export const MAX_MONITORS_PER_USER = 5;
 
+const monitorTimers = new Map<number, NodeJS.Timeout>();
+
 export function addProfileMonitor(userId: string, username: string): void {
-  addMonitor(userId, username);
+  const row = addMonitor(userId, username);
+  scheduleMonitor(row);
 }
 
 export function removeProfileMonitor(userId: string, username: string): void {
+  const row = findMonitor(userId, username);
+  if (row && monitorTimers.has(row.id)) {
+    clearTimeout(monitorTimers.get(row.id)!);
+    monitorTimers.delete(row.id);
+  }
   removeMonitor(userId, username);
 }
 
@@ -35,7 +45,10 @@ export function listUserMonitors(userId: string): MonitorRow[] {
 }
 
 export function startMonitorLoop(): void {
-  setInterval(checkMonitors, CHECK_INTERVAL_HOURS * 3600 * 1000);
+  const all = listAllMonitors();
+  for (const m of all) {
+    scheduleMonitor(m);
+  }
 }
 
 async function fetchActiveStories(username: string) {
@@ -47,23 +60,31 @@ async function fetchActiveStories(username: string) {
   return mapStories(activeResult.stories?.stories || []);
 }
 
-export async function checkMonitors(): Promise<void> {
-  const cutoff = Math.floor(Date.now() / 1000) - CHECK_INTERVAL_HOURS * 3600;
-  const monitors = getDueMonitors(cutoff);
-  for (const m of monitors) {
-    const task: UserInfo = {
-      chatId: m.telegram_id,
-      link: m.target_username,
-      linkType: 'username',
-      locale: '',
-      initTime: Date.now(),
-      isPremium: isUserPremium(m.telegram_id) || m.telegram_id === BOT_ADMIN_ID.toString(),
-    };
-    const mapped = await fetchActiveStories(task.link);
-    if (mapped.length) {
-      await sendActiveStories({ stories: mapped, task });
-    }
-    updateMonitorChecked(m.id);
+function scheduleMonitor(m: MonitorRow) {
+  const last = m.last_checked ? m.last_checked * 1000 : 0;
+  const next = last + CHECK_INTERVAL_HOURS * 3600 * 1000;
+  const delay = Math.max(next - Date.now(), 0);
+  const timer = setTimeout(() => checkSingleMonitor(m.id), delay);
+  monitorTimers.set(m.id, timer);
+}
+
+async function checkSingleMonitor(id: number) {
+  const m = getMonitor(id);
+  if (!m) return; // might have been removed
+  const task: UserInfo = {
+    chatId: m.telegram_id,
+    link: m.target_username,
+    linkType: 'username',
+    locale: '',
+    initTime: Date.now(),
+    isPremium: isUserPremium(m.telegram_id) || m.telegram_id === BOT_ADMIN_ID.toString(),
+  };
+
+  const mapped = await fetchActiveStories(task.link);
+  if (mapped.length) {
+    await sendActiveStories({ stories: mapped, task });
   }
+  updateMonitorChecked(m.id);
+  scheduleMonitor({ ...m, last_checked: Math.floor(Date.now() / 1000) });
 }
 
