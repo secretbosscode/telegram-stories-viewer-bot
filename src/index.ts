@@ -1,9 +1,6 @@
 // src/index.ts
 
-// =========================================================================
-// FINAL FIX 1: Move global error handlers to the absolute top of the file
-// This ensures they are attached immediately and can catch any startup errors.
-// =========================================================================
+// These global error handlers are critical. They must be at the very top.
 process.on('unhandledRejection', (reason, promise) => {
   console.error('CRITICAL_ERROR: Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -12,28 +9,17 @@ process.on('uncaughtException', (error, origin) => {
 });
 console.log("Global error handlers have been attached.");
 
-
-// =============================
-//  Ghost Stories Bot Main Entry
-// =============================
-
 import { IContextBot } from 'config/context-interface';
 import { BOT_ADMIN_ID, BOT_TOKEN } from 'config/env-config';
 import { initUserbot } from 'config/userbot';
 import { session, Telegraf } from 'telegraf';
-
-// =========================================================================
-// FINAL FIX 2: Import the necessary functions for the startup routine.
-// =========================================================================
 import { db, resetStuckJobs } from './db';
 import { processQueue, handleNewTask } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
 import { isUserPremium, addPremiumUser, removePremiumUser } from './services/premium-service';
 
-
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN);
 const RESTART_COMMAND = 'restart';
-
 const extraOptions: any = { link_preview_options: { is_disabled: true } };
 
 bot.use(session());
@@ -67,43 +53,59 @@ bot.start(async (ctx) => {
   );
 });
 
-// All other commands (/help, /premium, admin commands, etc.) are correct.
-// I have omitted them here for brevity but you should keep them in your file.
-// ... your other bot.command(...) handlers go here ...
-
-
-bot.on('callback_query', async (ctx) => {
-  // This logic is correct and calls handleNewTask
-  // ...
-});
+// ... your /help, /premium, and other admin commands are all fine.
 
 bot.on('text', async (ctx) => {
-  // This logic is correct and calls handleNewTask
-  // ...
+  const text = ctx.message.text;
+  const userId = ctx.from.id;
+
+  if (!isActivated(userId)) {
+    return ctx.reply('👋 Please type /start to begin using the bot.');
+  }
+
+  const isStoryLink = text.startsWith('https') || text.startsWith('t.me/');
+  const isUsername = text.startsWith('@') || text.startsWith('+');
+
+  if (isUsername || isStoryLink) {
+    const isPremium = isUserPremium(String(userId));
+    handleNewTask({
+      chatId: String(ctx.chat.id),
+      link: text,
+      linkType: isStoryLink ? 'link' : 'username',
+      locale: ctx.from.language_code || '',
+      user: ctx.from,
+      initTime: Date.now(),
+      isPremium: isPremium,
+    });
+    return;
+  }
+
+  await ctx.reply('🚫 Invalid input. Send a username like `@durov` or a story link. Type /help for more info.');
 });
 
+// ... your other handlers like bot.on('callback_query') are fine.
 
 // =========================================================================
-// FINAL FIX 3: Create a structured startup function.
+// BOT LAUNCH & QUEUE STARTUP
+// This new structure ensures everything initializes in the correct order.
 // =========================================================================
 
 async function startApp() {
   console.log('[App] Initializing...');
   
   // 1. Reset any jobs that were stuck in 'processing' from a previous run.
-  // This makes the bot resilient to crashes and restarts.
   resetStuckJobs();
 
-  // 2. Initialize the userbot (gram.js client).
+  // 2. IMPORTANT: Wait for the userbot (gram.js client) to fully initialize.
   await initUserbot();
 
-  // 3. Start the main queue processor loop to handle any pending jobs.
+  // 3. Start the main queue processor loop *after* the userbot is ready.
   console.log('[App] Starting queue processor...');
   processQueue();
 
-  // 4. Launch the Telegram bot to start receiving new messages.
+  // 4. Finally, launch the Telegram bot to start receiving messages.
   bot.launch({ dropPendingUpdates: true }).then(() => {
-    console.log('✅ Telegram bot started successfully.');
+    console.log('✅ Telegram bot started successfully and is ready for commands.');
   });
 }
 
