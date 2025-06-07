@@ -57,8 +57,8 @@ bot.command('help', async (ctx) => {
     '`/help` \\- Show this help message\\n' +
     '`/premium` \\- Info about premium features\\n';
 
-  // FINAL FIX: Compare string to string for the admin check.
-  if (ctx.from.id.toString() === BOT_ADMIN_ID) {
+  // FINAL FIX: Use loose equality (==) to bypass build environment type issues.
+  if (ctx.from.id == BOT_ADMIN_ID) {
     finalHelpText += '\\n*Admin Commands:*\\n' +
       '`/setpremium <ID or @username>` \\- Mark user as premium\\n' +
       '`/unsetpremium <ID or @username>` \\- Remove premium status\\n' +
@@ -84,8 +84,8 @@ bot.command('premium', async (ctx) => {
 // --- Admin Commands ---
 
 bot.command('restart', async (ctx) => {
-  // FINAL FIX: Compare string to string.
-  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  // FINAL FIX: Use loose inequality (!=).
+  if (ctx.from.id != BOT_ADMIN_ID) return;
   await ctx.reply('Are you sure you want to restart?', {
     reply_markup: {
       inline_keyboard: [[{ text: 'Yes, Restart', callback_data: RESTART_COMMAND }]],
@@ -94,39 +94,33 @@ bot.command('restart', async (ctx) => {
 });
 
 bot.command('setpremium', async (ctx) => {
-  // FINAL FIX: Compare string to string.
-  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  if (ctx.from.id != BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
-  // ... your existing logic here
-  // Note: Ensure any logic inside this function also uses .toString() if comparing IDs.
+  // ... your logic
 });
 
 bot.command('unsetpremium', async (ctx) => {
-  // FINAL FIX: Compare string to string.
-  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  if (ctx.from.id != BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
-  // ... your existing logic here
+  // ... your logic
 });
 
 bot.command('ispremium', async (ctx) => {
-  // FINAL FIX: Compare string to string.
-  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  if (ctx.from.id != BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
-  // ... your existing logic here
+  // ... your logic
 });
 
 bot.command('listpremium', async (ctx) => {
-  // FINAL FIX: Compare string to string.
-  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  if (ctx.from.id != BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
-  // ... your existing logic here
+  // ... your logic
 });
 
 bot.command('users', async (ctx) => {
-  // FINAL FIX: Compare string to string.
-  if (ctx.from.id.toString() !== BOT_ADMIN_ID) return;
+  if (ctx.from.id != BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
-  // ... your existing logic here
+  // ... your logic
 });
 
 
@@ -135,8 +129,8 @@ bot.on('callback_query', async (ctx) => {
   if (!('data' in ctx.callbackQuery)) return;
   const data = ctx.callbackQuery.data;
 
-  // FINAL FIX: Compare string to string.
-  if (data === RESTART_COMMAND && ctx.from.id.toString() === BOT_ADMIN_ID) {
+  // FINAL FIX: Use loose equality (==).
+  if (data === RESTART_COMMAND && ctx.from.id == BOT_ADMIN_ID) {
     await ctx.answerCbQuery('⏳ Restarting server...');
     process.exit();
   }
@@ -173,8 +167,8 @@ bot.on('text', async (ctx) => {
     return ctx.reply('👋 Please type /start to begin using the bot.');
   }
 
-  // FINAL FIX: Compare string to string.
-  if (userId.toString() === BOT_ADMIN_ID && text === RESTART_COMMAND) {
+  // FINAL FIX: Use loose equality (==).
+  if (userId == BOT_ADMIN_ID && text === RESTART_COMMAND) {
     return ctx.reply('Are you sure you want to restart?', {
         reply_markup: { inline_keyboard: [[{ text: 'Yes, Restart', callback_data: RESTART_COMMAND }]] },
     });
