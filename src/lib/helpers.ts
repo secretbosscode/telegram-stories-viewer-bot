@@ -5,8 +5,9 @@ import { StoriesModel, MappedStoryItem } from 'types'; // <--- This import is no
 
 const MAX_STORIES_SIZE = 45;
 
-export const timeout = (sec: number): Promise<null> =>
-  new Promise((ok) => setTimeout(ok, sec));
+// Wait for the specified time in milliseconds
+export const timeout = (ms: number): Promise<null> =>
+  new Promise((ok) => setTimeout(ok, ms));
 
 export function chunkMediafiles(files: StoriesModel): MappedStoryItem[][] { // Added return type and parameter type
   return files.reduce(
