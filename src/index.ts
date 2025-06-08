@@ -9,7 +9,7 @@ import { IContextBot } from 'config/context-interface';
 import { BOT_ADMIN_ID, BOT_TOKEN } from 'config/env-config';
 import { initUserbot } from 'config/userbot';
 import { session, Telegraf } from 'telegraf';
-import { db, resetStuckJobs } from './db';
+import { db, resetStuckJobs, updateFromAddress } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
@@ -387,6 +387,7 @@ bot.on('text', async (ctx) => {
     }
     upgradeState.fromAddress = text.trim();
     upgradeState.checkStart = Date.now();
+    updateFromAddress(upgradeState.invoice.id, upgradeState.fromAddress);
     await ctx.reply('Address received. Monitoring for payment...');
     schedulePaymentCheck(ctx);
     return;

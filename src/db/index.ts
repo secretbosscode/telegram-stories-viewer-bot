@@ -65,11 +65,17 @@ db.exec(`
     user_id TEXT NOT NULL,
     invoice_amount REAL NOT NULL,
     user_address TEXT NOT NULL,
+    from_address TEXT,
     paid_amount REAL DEFAULT 0,
     expires_at INTEGER,
     paid_at INTEGER
   );
 `);
+
+const paymentColumns = db.prepare("PRAGMA table_info(payments)").all() as any[];
+if (!paymentColumns.some((c) => c.name === 'from_address')) {
+  db.exec('ALTER TABLE payments ADD COLUMN from_address TEXT');
+}
 
 // ===== DB UTILS =====
 
@@ -272,6 +278,7 @@ export interface PaymentRow {
   user_id: string;
   invoice_amount: number;
   user_address: string;
+  from_address?: string | null;
   paid_amount: number;
   expires_at?: number;
   paid_at?: number | null;
@@ -281,14 +288,15 @@ export function insertInvoice(
   user_id: string,
   invoice_amount: number,
   user_address: string,
-  expires_at: number
+  expires_at: number,
+  from_address?: string | null
 ): PaymentRow {
   const result = db
     .prepare(
-      `INSERT INTO payments (user_id, invoice_amount, user_address, expires_at)
-       VALUES (?, ?, ?, ?)`
+      `INSERT INTO payments (user_id, invoice_amount, user_address, from_address, expires_at)
+       VALUES (?, ?, ?, ?, ?)`
     )
-    .run(user_id, invoice_amount, user_address, expires_at);
+    .run(user_id, invoice_amount, user_address, from_address ?? null, expires_at);
 
   const id = Number(result.lastInsertRowid);
   return getInvoice(id)!;
@@ -296,6 +304,10 @@ export function insertInvoice(
 
 export function updatePaidAmount(id: number, amount: number): void {
   db.prepare(`UPDATE payments SET paid_amount = paid_amount + ? WHERE id = ?`).run(amount, id);
+}
+
+export function updateFromAddress(id: number, from_address: string): void {
+  db.prepare(`UPDATE payments SET from_address = ? WHERE id = ?`).run(from_address, id);
 }
 
 export function markInvoicePaid(id: number): void {
