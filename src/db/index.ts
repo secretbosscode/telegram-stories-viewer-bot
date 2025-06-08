@@ -89,15 +89,20 @@ db.exec(`
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
-export function enqueueDownload(telegram_id: string, target_username: string, task_details: UserInfo): void {
+export function enqueueDownload(
+  telegram_id: string,
+  target_username: string,
+  task_details: UserInfo,
+): number {
   const now = Math.floor(Date.now() / 1000);
   const detailsJson = JSON.stringify(task_details); // Convert object to JSON string for storage.
-  
+
   const stmt = db.prepare(`
     INSERT INTO download_queue (telegram_id, target_username, enqueued_ts, status, task_details)
     VALUES (?, ?, ?, 'pending', ?)
   `);
-  stmt.run(telegram_id, target_username, now, detailsJson);
+  const info = stmt.run(telegram_id, target_username, now, detailsJson);
+  return Number(info.lastInsertRowid);
 }
 
 // CHANGE 3: `getNextQueueItem` now correctly retrieves and parses the full task details.
@@ -203,6 +208,40 @@ export function isDuplicatePending(telegram_id: string, target_username: string)
     LIMIT 1
   `).get(telegram_id, target_username);
   return !!row;
+}
+
+export function findPendingJobId(telegram_id: string): number | undefined {
+  const row = db.prepare(
+    `SELECT id FROM download_queue WHERE telegram_id = ? AND status = 'pending' ORDER BY enqueued_ts ASC LIMIT 1`,
+  ).get(telegram_id) as { id?: number } | undefined;
+  return row?.id;
+}
+
+export function getQueueStats(jobId: number): { position: number; eta: number } {
+  const job = db
+    .prepare(
+      `SELECT q.enqueued_ts, IFNULL(u.is_premium,0) as is_premium FROM download_queue q LEFT JOIN users u ON u.telegram_id = q.telegram_id WHERE q.id = ?`,
+    )
+    .get(jobId) as { enqueued_ts: number; is_premium: number } | undefined;
+
+  if (!job) return { position: -1, eta: 0 };
+
+  const ahead = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM download_queue q LEFT JOIN users u ON u.telegram_id = q.telegram_id WHERE q.status = 'pending' AND (u.is_premium > @p OR (u.is_premium = @p AND q.enqueued_ts < @t))`,
+    )
+    .get({ p: job.is_premium, t: job.enqueued_ts }) as { c: number };
+
+  const processing = db.prepare(`SELECT COUNT(*) as c FROM download_queue WHERE status = 'processing'`).get() as { c: number };
+
+  const position = ahead.c + processing.c + 1;
+
+  const avgRow = db
+    .prepare(`SELECT AVG(processed_ts - enqueued_ts) as avg FROM download_queue WHERE processed_ts IS NOT NULL`)
+    .get() as { avg: number | null };
+  const avg = avgRow && avgRow.avg ? avgRow.avg : 30;
+
+  return { position, eta: Math.round(avg * (position - 1)) };
 }
 
 // ----- Monitor utils -----
