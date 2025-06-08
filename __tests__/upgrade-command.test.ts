@@ -31,6 +31,7 @@ describe('upgrade command', () => {
     expect(spy).toHaveBeenCalledWith('123', 5);
     expect(ctx.session.upgrade?.invoice).toBe(fakeInvoice);
     expect(replies.length).toBe(1);
+    expect(replies[0][0]).toContain('Invoice #1');
     expect(replies[0][0]).toContain('```');
     expect(replies[0][0]).toContain('addr');
     spy.mockRestore();

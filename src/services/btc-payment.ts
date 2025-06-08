@@ -26,10 +26,12 @@ export interface PaymentCheckResult {
 }
 
 const paymentTimers = new Map<number, NodeJS.Timeout>();
+const reminderTimers = new Map<number, NodeJS.Timeout>();
 
 // Allow invoices to be considered paid when at least 90% of the expected
 // amount is received to account for network fees.
 const PAYMENT_TOLERANCE = 0.1; // 10%
+const REMINDER_DELAY_MS = 60 * 60 * 1000; // 1 hour
 
 function scheduleInvoiceCheck(
   invoice: PaymentRow,
@@ -43,6 +45,10 @@ function scheduleInvoiceCheck(
     if (!inv) {
       deletePaymentCheck(invoice.id);
       paymentTimers.delete(invoice.id);
+      if (reminderTimers.has(invoice.id)) {
+        clearTimeout(reminderTimers.get(invoice.id)!);
+        reminderTimers.delete(invoice.id);
+      }
       return;
     }
 
@@ -51,6 +57,10 @@ function scheduleInvoiceCheck(
         await botInstance.telegram.sendMessage(userId, '❌ Invoice expired.');
       deletePaymentCheck(invoice.id);
       paymentTimers.delete(invoice.id);
+      if (reminderTimers.has(invoice.id)) {
+        clearTimeout(reminderTimers.get(invoice.id)!);
+        reminderTimers.delete(invoice.id);
+      }
       return;
     }
 
@@ -72,6 +82,10 @@ function scheduleInvoiceCheck(
         await botInstance.telegram.sendMessage(userId, '✅ Payment received! Premium extended by 30 days.');
       deletePaymentCheck(invoice.id);
       paymentTimers.delete(invoice.id);
+      if (reminderTimers.has(invoice.id)) {
+        clearTimeout(reminderTimers.get(invoice.id)!);
+        reminderTimers.delete(invoice.id);
+      }
       return;
     } else if (newInv && newInv.id !== invoice.id) {
       invoice = newInv;
@@ -84,6 +98,10 @@ function scheduleInvoiceCheck(
       deletePaymentCheck(inv.id);
       upsertPaymentCheck(newInv.id, Math.floor(Date.now() / 1000), checkStart);
       paymentTimers.delete(inv.id);
+      if (reminderTimers.has(inv.id)) {
+        clearTimeout(reminderTimers.get(inv.id)!);
+        reminderTimers.delete(inv.id);
+      }
       scheduleInvoiceCheck(newInv, userId, fromAddress, checkStart);
       return;
     }
@@ -98,6 +116,18 @@ function scheduleInvoiceCheck(
   upsertPaymentCheck(invoice.id, Math.floor(Date.now() / 1000) + Math.floor(initialDelay / 1000), checkStart);
   const timer = setTimeout(doCheck, initialDelay);
   paymentTimers.set(invoice.id, timer);
+  if (!reminderTimers.has(invoice.id)) {
+    const rTimer = setTimeout(() => {
+      if (botInstance) {
+        botInstance.telegram.sendMessage(
+          userId,
+          `❓ Payment not detected yet. If you have already sent it, please run /verify <txid> ${invoice.id} to confirm.`
+        ).catch(() => {});
+      }
+      reminderTimers.delete(invoice.id);
+    }, REMINDER_DELAY_MS);
+    reminderTimers.set(invoice.id, rTimer);
+  }
 }
 
 async function fetchTransactions(address: string): Promise<any[]> {
@@ -117,6 +147,25 @@ async function fetchTransactions(address: string): Promise<any[]> {
     }
   }
   return [];
+}
+
+async function fetchTransactionById(txid: string): Promise<any | null> {
+  const urls = [
+    `https://blockstream.info/api/tx/${txid}`,
+    `https://mempool.space/api/tx/${txid}`,
+    `https://api.blockcypher.com/v1/btc/main/txs/${txid}`,
+    `https://sochain.com/api/v2/get_tx/BTC/${txid}`,
+  ];
+  const results = await Promise.allSettled(
+    urls.map((u) => fetch(u).then((r) => r.json()))
+  );
+  for (const res of results) {
+    if (res.status === 'fulfilled' && res.value) {
+      const val = res.value.data ?? res.value;
+      if (val && typeof val === 'object') return val;
+    }
+  }
+  return null;
 }
 
 /** Fetch BTC/USD prices from multiple sources and return the average */
@@ -286,6 +335,45 @@ export async function checkPayment(
   }
 
   return { invoice: null, unexpectedSenders: Array.from(unexpected) };
+}
+
+export async function verifyPaymentByTxid(
+  invoiceId: number,
+  txid: string,
+): Promise<PaymentRow | null> {
+  const invoice = getInvoice(invoiceId);
+  if (!invoice) return null;
+  const tx = await fetchTransactionById(txid);
+  if (!tx) return null;
+  const outs = tx.vout ?? tx.outputs;
+  const ins = tx.vin ?? tx.inputs;
+  const toUs = outs?.find(
+    (o: any) =>
+      o.scriptpubkey_address === invoice.user_address ||
+      o.addr === invoice.user_address ||
+      o.addresses?.includes?.(invoice.user_address),
+  );
+  if (!toUs) return null;
+  const fromAddrs = (ins || [])
+    .map((i: any) =>
+      i.prevout?.scriptpubkey_address || i.prev_out?.addr || i.addresses?.[0],
+    )
+    .filter(Boolean);
+  const val =
+    toUs.value ?? toUs.prevout?.value ?? toUs.output_value ?? toUs.value_sat;
+  const amount = typeof val === 'number' ? val / 1e8 : Number(val) / 1e8;
+  if (amount > invoice.paid_amount) {
+    updatePaidAmount(invoice.id, amount - invoice.paid_amount);
+  }
+  const threshold = invoice.invoice_amount * (1 - PAYMENT_TOLERANCE);
+  if (amount >= threshold) {
+    if (!invoice.from_address && fromAddrs[0]) {
+      updateFromAddress(invoice.id, fromAddrs[0]);
+    }
+    markInvoicePaid(invoice.id);
+    return getInvoice(invoice.id) || null;
+  }
+  return null;
 }
 
 export function schedulePaymentCheck(ctx: IContextBot): void {

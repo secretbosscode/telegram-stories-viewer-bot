@@ -15,6 +15,7 @@ export async function handleUpgrade(ctx: IContextBot): Promise<void> {
       awaitingAddressUntil: Date.now() + 60 * 60 * 1000,
     };
     const msg = [
+      `Invoice #${invoice.id}`,
       'Send the following amount:',
       '```',
       `${invoice.invoice_amount.toFixed(8)} BTC`,

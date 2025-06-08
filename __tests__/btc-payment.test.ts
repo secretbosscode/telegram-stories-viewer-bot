@@ -92,3 +92,32 @@ describe('checkPayment tolerance', () => {
     global.fetch = originalFetch as any;
   });
 });
+
+describe('verifyPaymentByTxid', () => {
+  beforeEach(() => {
+    db.prepare('DELETE FROM payments').run();
+    (markInvoicePaid as jest.Mock).mockClear();
+    (updatePaidAmount as jest.Mock).mockClear();
+  });
+
+  test('invoice marked paid for provided txid', async () => {
+    const invoice = insertInvoice('u1', 1, 'dest', 0);
+    const tx = {
+      vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
+      vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
+    };
+    const originalFetch = global.fetch;
+    global.fetch = (jest.fn() as any)
+      .mockResolvedValue({ json: async () => tx })
+      .mockResolvedValue({ json: async () => tx })
+      .mockResolvedValue({ json: async () => tx })
+      .mockResolvedValue({ json: async () => ({ data: tx }) });
+
+    const res = await btc.verifyPaymentByTxid(invoice.id, 'abc');
+
+    expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 1);
+    expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
+    expect(res?.paid_at).toBeDefined();
+    global.fetch = originalFetch as any;
+  });
+});

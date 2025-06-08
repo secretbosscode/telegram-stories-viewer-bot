@@ -187,6 +187,16 @@ Just send a message to the bot with the desired Telegram username, phone number,
 
 Free users cannot monitor profiles. Premium users can monitor up to **5** profiles for new stories, while admins have no limit. Each monitored account is checked every **6 hours** on its own schedule. Use `/monitor <@username|+19875551234>` to add a profile by username or phone number (digits only, no hyphens), and `/unmonitor <@username>` to remove one. After adding a monitor, the bot tells you how many slots you have left. Send `/monitor` or `/unmonitor` without arguments to see your current list.
 
+### Manual Payment Verification
+
+If your upgrade payment is not confirmed within an hour, you can verify it manually. Locate the invoice number in the upgrade reply (for example `Invoice #42`) and obtain the transaction hash (TXID) from your wallet. Then run:
+
+```
+/verify <txid> <invoice_id>
+```
+
+The bot will check the blockchain immediately and credit Premium time if the amount matches.
+
 ## Development
 
 Before running any build or lint commands, install dependencies:
