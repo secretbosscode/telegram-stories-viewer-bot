@@ -55,14 +55,15 @@ export async function handleNewTask(user: UserInfo) {
         await bot.telegram.sendMessage(telegram_id, `⏳ You can request stories for "${target_username}" once every ${cooldown} hours.`);
         return;
       }
-      if (await isDuplicatePendingFx({ telegram_id, target_username })) {
-        await sendTemporaryMessage(
-          bot,
-          telegram_id,
-          `⚠️ This download is already in the queue.`
-        );
-        return;
-      }
+    }
+
+    if (await isDuplicatePendingFx({ telegram_id, target_username })) {
+      await sendTemporaryMessage(
+        bot,
+        telegram_id,
+        `⚠️ This download is already in the queue.`
+      );
+      return;
     }
 
     const jobId = await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
