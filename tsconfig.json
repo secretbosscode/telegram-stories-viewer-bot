@@ -17,6 +17,7 @@
       "db/*": ["db/*"],
       "services/*": ["services/*"],
       "lib/*": ["lib/*"],
+      "lib": ["lib/index.ts"],
       "repositories/*": ["repositories/*"],
       "types": ["types.ts"], // Maps 'types' alias directly to src/types.ts
       "index": ["index.ts"] // Maps 'index' alias directly to src/index.ts
