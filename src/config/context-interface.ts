@@ -1,5 +1,6 @@
 import { Context, Scenes } from 'telegraf';
 import { User } from 'telegraf/typings/core/types/typegram';
+import { PaymentRow } from 'db';
 
 export interface UserSession extends User {
   messagesToRemove: number[];
@@ -8,7 +9,7 @@ export interface UserSession extends User {
 interface SceneSession extends Scenes.SceneSession {
   usersList: UserSession[] | undefined;
   upgrade?: {
-    invoice: { address: string; amountBtc: number };
+    invoice: PaymentRow;
     awaitingAddressUntil: number;
     fromAddress?: string;
     checkStart?: number;

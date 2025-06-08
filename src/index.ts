@@ -23,7 +23,7 @@ import {
   CHECK_INTERVAL_HOURS,
   MAX_MONITORS_PER_USER,
 } from './services/monitor-service';
-import { getBtcPriceUsd, createInvoice, checkPayment } from "./services/payment-service";
+import { createInvoice, schedulePaymentCheck } from './services/btc-payment';
 import { UserInfo } from 'types';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
@@ -105,21 +105,20 @@ bot.command('premium', async (ctx) => {
         `✅ Monitor up to ${MAX_MONITORS_PER_USER} users' active stories\n` +
         '✅ No cooldowns or waiting in queues\n\n' +
         'Run `/upgrade` to purchase 30 days of Premium for $5 in BTC.\n' +
-        'Send payment to `3Q3hChMZxmTXLNyf5TNrqF9jUGodEJbCq4`.\n' +
-        'Invoices expire after one hour.',
+        'You will receive a unique payment address. Invoices expire after one hour.',
         { parse_mode: 'Markdown' }
     );
 });
 
 bot.command('upgrade', async (ctx) => {
   try {
-    const invoice = await createInvoice(ctx.from.id, 5);
+    const invoice = await createInvoice(String(ctx.from.id), 5);
     ctx.session.upgrade = {
       invoice,
       awaitingAddressUntil: Date.now() + 60 * 60 * 1000,
     };
     await ctx.reply(
-      `Send *${invoice.amountBtc} BTC* (~$5) to the following address:\n\`${invoice.address}\`\n` +
+      `Send *${invoice.invoice_amount.toFixed(8)} BTC* (~$5) to the following address:\n\`${invoice.user_address}\`\n` +
         'Reply with the address you will pay from within one hour.',
       { parse_mode: 'Markdown' }
     );
@@ -394,39 +393,6 @@ bot.on('text', async (ctx) => {
   await ctx.reply('🚫 Invalid input. Send `@username`, `+19875551234` or a story link. Type /help for more info.');
 });
 
-function schedulePaymentCheck(ctx: IContextBot) {
-  const state = ctx.session.upgrade;
-  if (!state) return;
-  const check = async () => {
-    const st = ctx.session.upgrade;
-    if (!st) return;
-    if (!st.fromAddress) return;
-    if (Date.now() - (st.checkStart ?? 0) > 24 * 60 * 60 * 1000) {
-      await ctx.reply('❌ Invoice expired.');
-      ctx.session.upgrade = undefined;
-      return;
-    }
-    const paid = await checkPayment(st.invoice.address);
-    if (paid >= st.invoice.amountBtc) {
-      extendPremium(String(ctx.from!.id), 30);
-      await ctx.reply('✅ Payment received! Premium extended by 30 days.');
-      ctx.session.upgrade = undefined;
-      return;
-    } else if (paid > 0) {
-      const remaining = +(st.invoice.amountBtc - paid).toFixed(8);
-      const newInvoice = await createInvoice(ctx.from!.id, remaining * (await getBtcPriceUsd()));
-      st.invoice = newInvoice;
-      await ctx.reply(
-        `Received ${paid} BTC. Please send remaining ${remaining} BTC to address:\n\`${newInvoice.address}\``,
-        { parse_mode: 'Markdown' }
-      );
-    }
-    const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
-    st.timerId = setTimeout(check, delay);
-  };
-  const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
-  state.timerId = setTimeout(check, delay);
-}
 
 
 // =============================
