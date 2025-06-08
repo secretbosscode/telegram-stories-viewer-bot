@@ -61,7 +61,7 @@ export async function handleNewTask(user: UserInfo) {
       }
     }
 
-    if (await isDuplicatePendingFx({ telegram_id, target_username })) {
+    if (await isDuplicatePendingFx({ telegram_id, target_username, nextStoriesIds })) {
       await sendTemporaryMessage(
         bot,
         telegram_id,
