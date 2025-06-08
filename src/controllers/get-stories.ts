@@ -3,7 +3,7 @@
 import { Userbot } from 'config/userbot';
 import { createEffect } from 'effector';
 import { bot } from 'index';
-import { timeout } from 'lib';
+import { timeout, sendTemporaryMessage } from 'lib';
 import { UserInfo, NotifyAdminParams } from 'types';
 import { Api } from 'telegram';
 import { FloodWaitError } from 'telegram/errors';
@@ -16,7 +16,11 @@ import { notifyAdmin } from 'controllers/send-message';
 // =========================================================================
 export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
   try {
-    await bot.telegram.sendMessage(task.chatId, '⏳ Fetching story lists...');
+    await sendTemporaryMessage(
+      bot,
+      task.chatId,
+      '⏳ Fetching story lists...'
+    );
 
     const client = await Userbot.getInstance();
     const entity = await client.getEntity(task.link);
@@ -116,7 +120,11 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
 // =========================================================================
 export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
   try {
-    await bot.telegram.sendMessage(task.chatId, '⏳ Fetching specific story...');
+    await sendTemporaryMessage(
+      bot,
+      task.chatId,
+      '⏳ Fetching specific story...'
+    );
 
     const client = await Userbot.getInstance();
     const linkPaths = task.link.split('/');
