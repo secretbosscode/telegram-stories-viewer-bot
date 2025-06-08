@@ -33,6 +33,8 @@ import {
   removePremiumUser,
   extendPremium,
   getPremiumDaysLeft,
+  grantFreeTrial,
+  hasUsedFreeTrial,
 } from './services/premium-service';
 import {
   addProfileMonitor,
@@ -139,13 +141,17 @@ function isActivated(userId: number): boolean {
 
 bot.start(async (ctx) => {
   await saveUser(ctx.from);
-  await ctx.reply(
+  let msg =
     "🔗 Please send one of the following:\n\n" +
-      "*Username with '@' symbol:*\n`@durov`\n\n" +
-      "*Phone number with '+' symbol:*\n`+19875551234`\n\n" +
-      '*Direct link to a story:*\n`https://t.me/durov/s/1`',
-    { ...extraOptions, parse_mode: 'Markdown' }
-  );
+    "*Username with '@' symbol:*\n`@durov`\n\n" +
+    "*Phone number with '+' symbol:*\n`+19875551234`\n\n" +
+    '*Direct link to a story:*\n`https://t.me/durov/s/1`';
+  if (!isUserPremium(String(ctx.from.id)) && !hasUsedFreeTrial(String(ctx.from.id))) {
+    msg =
+      '🎁 New here? Use /freetrial to get 7 days of Premium access for free!\n\n' +
+      msg;
+  }
+  await ctx.reply(msg, { ...extraOptions, parse_mode: 'Markdown' });
 });
 
 bot.command('help', async (ctx) => {
@@ -155,6 +161,7 @@ bot.command('help', async (ctx) => {
     '`/start` - Show usage instructions\n' +
     '`/help` - Show this help message\n' +
     '`/premium` - Info about premium features\n' +
+    '`/freetrial` - Get 7 days of Premium access\n' +
     '`/queue` - View your place in the download queue\n' +
     '`/verify <txid> <invoice>` - Manually verify a payment if it is not detected\n';
 
@@ -192,6 +199,19 @@ bot.command('premium', handlePremium);
 
 bot.command('upgrade', async (ctx) => {
   await handleUpgrade(ctx);
+});
+
+bot.command('freetrial', async (ctx) => {
+  const userId = String(ctx.from.id);
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  if (isUserPremium(userId)) {
+    return ctx.reply('✅ You already have Premium access.');
+  }
+  if (hasUsedFreeTrial(userId)) {
+    return ctx.reply('❌ You have already used your free trial.');
+  }
+  grantFreeTrial(userId);
+  await ctx.reply('🎉 Free trial activated! You now have Premium access for 7 days.');
 });
 
 bot.command('verify', async (ctx) => {
@@ -596,6 +616,7 @@ async function startApp() {
     { command: 'help', description: 'Show help message' },
     { command: 'premium', description: 'Info about premium features' },
     { command: 'upgrade', description: 'Upgrade to premium' },
+    { command: 'freetrial', description: 'Free 7-day premium trial' },
     { command: 'verify', description: 'Manually verify a payment' },
     { command: 'queue', description: 'Show your queue status' },
     { command: 'monitor', description: 'Monitor a profile for new stories' },

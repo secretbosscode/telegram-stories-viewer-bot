@@ -21,6 +21,7 @@ db.exec(`
     telegram_id TEXT PRIMARY KEY NOT NULL,
     username TEXT,
     is_premium INTEGER DEFAULT 0,
+    free_trial_used INTEGER DEFAULT 0,
     premium_until INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
@@ -30,6 +31,9 @@ db.exec(`
 const userColumns = db.prepare("PRAGMA table_info(users)").all() as any[];
 if (!userColumns.some((c) => c.name === 'premium_until')) {
   db.exec('ALTER TABLE users ADD COLUMN premium_until INTEGER');
+}
+if (!userColumns.some((c) => c.name === 'free_trial_used')) {
+  db.exec("ALTER TABLE users ADD COLUMN free_trial_used INTEGER DEFAULT 0");
 }
 
 // Download Queue Table
