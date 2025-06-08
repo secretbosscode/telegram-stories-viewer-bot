@@ -30,11 +30,11 @@ import {
   MAX_MONITORS_PER_USER,
 } from './services/monitor-service';
 import {
-  createInvoice,
   schedulePaymentCheck,
   resumePendingChecks,
   setBotInstance,
 } from './services/btc-payment';
+import { handleUpgrade } from 'controllers/upgrade';
 import { UserInfo } from 'types';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
@@ -138,21 +138,7 @@ bot.command('premium', async (ctx) => {
 });
 
 bot.command('upgrade', async (ctx) => {
-  try {
-    const invoice = await createInvoice(String(ctx.from.id), 5);
-    ctx.session.upgrade = {
-      invoice,
-      awaitingAddressUntil: Date.now() + 60 * 60 * 1000,
-    };
-    await ctx.reply(
-      `Send *${invoice.invoice_amount.toFixed(8)} BTC* (~$5) to the following address:\n\`${invoice.user_address}\`\n` +
-        'Reply with the address you will pay from within one hour.',
-      { parse_mode: 'Markdown' }
-    );
-  } catch (e) {
-    console.error('upgrade cmd error', e);
-    await ctx.reply('Failed to create invoice. Please try again later.');
-  }
+  await handleUpgrade(ctx);
 });
 
 bot.command('monitor', async (ctx) => {
