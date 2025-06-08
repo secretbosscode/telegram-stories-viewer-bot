@@ -3,15 +3,22 @@ import { bot } from 'index';
 import { sendTemporaryMessage, chunkArray } from 'lib';
 import { Api } from 'telegram';
 import { notifyAdmin } from 'controllers/send-message';
+import { User } from 'telegraf/typings/core/types/typegram';
 // No need for the private _downloadPhoto helper; use downloadMedia instead
 
 /**
  * Download and send profile photos and videos for a given username or phone number.
  * Sends up to LIMIT items as a media group.
+ *
+ * @param chatId - ID of the chat to send media to
+ * @param input - Username or phone number to look up
+ * @param user - Telegram user requesting the media (for admin audit)
+ * @param limit - Optional limit on number of items to fetch
  */
 export async function sendProfileMedia(
   chatId: number | string,
   input: string,
+  user?: User,
   limit?: number,
 ) {
   try {
@@ -67,7 +74,7 @@ export async function sendProfileMedia(
       notifyAdmin({
         status: 'info',
         baseInfo: `📸 Sent ${sendAlbum.length} profile media item(s) of ${input}`,
-        task: { chatId: String(chatId) } as any,
+        task: { chatId: String(chatId), user } as any,
       });
     } else {
       await bot.telegram.sendMessage(chatId, 'Failed to download profile media.');

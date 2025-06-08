@@ -47,7 +47,7 @@ describe('sendProfileMedia', () => {
     };
     (mockGetInstance as any).mockResolvedValue(fakeClient);
 
-    await sendProfileMedia(1, '@user');
+    await sendProfileMedia(1, '@user', { id: 42, username: 'tester' } as any);
 
     expect(bot.telegram.sendMediaGroup).toHaveBeenCalledTimes(2);
     const total = (bot.telegram.sendMediaGroup as jest.Mock).mock.calls
@@ -58,6 +58,13 @@ describe('sendProfileMedia', () => {
       bot,
       1,
       '📸 Sent 11 profile media item(s) of @user',
+    );
+    expect(notifyAdmin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'info',
+        baseInfo: '📸 Sent 11 profile media item(s) of @user',
+        task: { chatId: '1', user: { id: 42, username: 'tester' } },
+      }),
     );
   });
 });
