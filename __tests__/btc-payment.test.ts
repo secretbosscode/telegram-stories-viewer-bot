@@ -15,6 +15,10 @@ jest.mock('../src/db', () => {
       expires_at INTEGER,
       paid_at INTEGER
     );
+    CREATE TABLE payment_txids (
+      invoice_id INTEGER,
+      txid TEXT UNIQUE
+    );
   `);
   return {
     db,
@@ -28,6 +32,12 @@ jest.mock('../src/db', () => {
     markInvoicePaid: jest.fn(),
     updatePaidAmount: jest.fn(),
     getInvoice: (id: number) => db.prepare('SELECT * FROM payments WHERE id = ?').get(id),
+    recordTxid: (invoice_id: number, txid: string) => {
+      db.prepare('INSERT OR IGNORE INTO payment_txids (invoice_id, txid) VALUES (?, ?)').run(invoice_id, txid);
+    },
+    isTxidUsed: (txid: string) => {
+      return !!db.prepare('SELECT 1 FROM payment_txids WHERE txid = ?').get(txid);
+    },
   };
 });
 
@@ -77,6 +87,7 @@ describe('checkPayment tolerance', () => {
     const invoice = insertInvoice('u1', 1, 'dest', 0, 'sender');
 
     const tx = {
+      txid: 'tx1',
       vout: [{ scriptpubkey_address: 'dest', value: 0.91 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
     };
@@ -88,6 +99,43 @@ describe('checkPayment tolerance', () => {
 
     expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 0.91);
     expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
+
+    global.fetch = originalFetch as any;
+  });
+});
+
+describe('txid reuse prevention', () => {
+  beforeEach(() => {
+    db.prepare('DELETE FROM payments').run();
+    db.prepare('DELETE FROM payment_txids').run();
+    (markInvoicePaid as jest.Mock).mockClear();
+    (updatePaidAmount as jest.Mock).mockClear();
+  });
+
+  test('reused txid ignored', async () => {
+    const invoice = insertInvoice('u1', 1, 'dest', 0, 'sender');
+    const tx = {
+      txid: 'abc',
+      vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
+      vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
+    };
+
+    const mockFetch = (jest.fn() as any).mockResolvedValue({ json: async () => [tx] });
+    const originalFetch = global.fetch;
+    global.fetch = mockFetch as any;
+
+    await btc.checkPayment(invoice as any);
+    expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 1);
+    expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
+
+    invoice.paid_amount = 1;
+
+    (updatePaidAmount as jest.Mock).mockClear();
+    (markInvoicePaid as jest.Mock).mockClear();
+
+    await btc.checkPayment(invoice as any);
+    expect(updatePaidAmount).not.toHaveBeenCalled();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
 
     global.fetch = originalFetch as any;
   });

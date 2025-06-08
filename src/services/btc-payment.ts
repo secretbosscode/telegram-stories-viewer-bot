@@ -4,6 +4,8 @@ import {
   updatePaidAmount,
   getInvoice,
   updateFromAddress,
+  recordTxid,
+  isTxidUsed,
   PaymentRow,
   upsertPaymentCheck,
   deletePaymentCheck,
@@ -119,6 +121,23 @@ async function fetchTransactions(address: string): Promise<any[]> {
   return [];
 }
 
+async function fetchTransactionByTxid(txid: string): Promise<any | null> {
+  const urls = [
+    `https://blockstream.info/api/tx/${txid}`,
+    `https://mempool.space/api/tx/${txid}`,
+    `https://api.blockcypher.com/v1/btc/main/txs/${txid}`,
+  ];
+  const results = await Promise.allSettled(
+    urls.map((u) => fetch(u).then((r) => r.json())),
+  );
+  for (const res of results) {
+    if (res.status === 'fulfilled' && res.value) {
+      return res.value;
+    }
+  }
+  return null;
+}
+
 /** Fetch BTC/USD prices from multiple sources and return the average */
 export async function getBtcPriceUsd(): Promise<number> {
   const endpoints = [
@@ -230,13 +249,15 @@ async function queryAddressBalance(address: string): Promise<number> {
 export async function checkPayment(
   invoice: PaymentRow,
 ): Promise<PaymentCheckResult> {
-  const balance = await queryAddressBalance(invoice.user_address);
-  let receivedFromUser = 0;
+  let receivedFromUser = invoice.paid_amount;
   const unexpected = new Set<string>();
+  const txidsToRecord: string[] = [];
+
 
   if (invoice.from_address) {
     const txs = await fetchTransactions(invoice.user_address);
     for (const tx of txs) {
+      const txid = tx.txid || tx.hash || tx.id;
       const outs = tx.vout ?? tx.outputs;
       const ins = tx.vin ?? tx.inputs;
       const toUs = outs?.find(
@@ -258,7 +279,13 @@ export async function checkPayment(
           toUs.value ??
           toUs.prevout?.value ??
           toUs.output_value;
-        if (typeof val === 'number') receivedFromUser += val / 1e8;
+        if (typeof val === 'number') {
+          const amount = val / 1e8;
+          if (!txid || !isTxidUsed(txid)) {
+            receivedFromUser += amount;
+            if (txid) txidsToRecord.push(txid);
+          }
+        }
       } else {
         fromAddrs.forEach((a: string) => unexpected.add(a));
       }
@@ -267,12 +294,13 @@ export async function checkPayment(
 
   if (receivedFromUser > invoice.paid_amount) {
     updatePaidAmount(invoice.id, receivedFromUser - invoice.paid_amount);
+    for (const t of txidsToRecord) recordTxid(invoice.id, t);
   }
 
   // Accept slightly underpaid invoices if they meet the tolerance threshold.
   const threshold = invoice.invoice_amount * (1 - PAYMENT_TOLERANCE);
 
-  if (receivedFromUser >= threshold) {
+  if (receivedFromUser >= threshold && txidsToRecord.length > 0) {
     markInvoicePaid(invoice.id);
     return { invoice: getInvoice(invoice.id) || null };
   }
@@ -315,4 +343,39 @@ export function resumePendingChecks(): void {
     }
     scheduleInvoiceCheck(inv, inv.user_id, inv.from_address, row.check_start, row.next_check);
   }
+}
+
+export async function verifyPaymentByTxid(invoice: PaymentRow, txid: string): Promise<boolean> {
+  if (isTxidUsed(txid)) return false;
+  const tx = await fetchTransactionByTxid(txid);
+  if (!tx) return false;
+  const outs = tx.vout ?? tx.outputs;
+  const ins = tx.vin ?? tx.inputs;
+  const toUs = outs?.find(
+    (o: any) =>
+      o.scriptpubkey_address === invoice.user_address ||
+      o.addr === invoice.user_address ||
+      o.addresses?.includes?.(invoice.user_address),
+  );
+  if (!toUs) return false;
+  const fromAddrs = (ins || [])
+    .map((i: any) =>
+      i.prevout?.scriptpubkey_address ||
+      i.prev_out?.addr ||
+      i.addresses?.[0],
+    )
+    .filter(Boolean);
+  if (!fromAddrs.includes(invoice.from_address || '')) return false;
+
+  const val = toUs.value ?? toUs.prevout?.value ?? toUs.output_value;
+  if (typeof val !== 'number') return false;
+  const amount = val / 1e8;
+  updatePaidAmount(invoice.id, amount);
+  recordTxid(invoice.id, txid);
+  const newInv = getInvoice(invoice.id)!;
+  const threshold = invoice.invoice_amount * (1 - PAYMENT_TOLERANCE);
+  if (newInv.paid_amount >= threshold) {
+    markInvoicePaid(invoice.id);
+  }
+  return true;
 }

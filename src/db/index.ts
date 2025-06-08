@@ -72,6 +72,14 @@ db.exec(`
   );
 `);
 
+// Table to track txids that have been used for invoices
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payment_txids (
+    invoice_id INTEGER NOT NULL,
+    txid TEXT NOT NULL UNIQUE
+  );
+`);
+
 const paymentColumns = db.prepare("PRAGMA table_info(payments)").all() as any[];
 if (!paymentColumns.some((c) => c.name === 'from_address')) {
   db.exec('ALTER TABLE payments ADD COLUMN from_address TEXT');
@@ -368,6 +376,19 @@ export function updateFromAddress(id: number, from_address: string): void {
 
 export function markInvoicePaid(id: number): void {
   db.prepare(`UPDATE payments SET paid_at = strftime('%s','now') WHERE id = ?`).run(id);
+}
+
+export function recordTxid(invoice_id: number, txid: string): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO payment_txids (invoice_id, txid) VALUES (?, ?)`,
+  ).run(invoice_id, txid);
+}
+
+export function isTxidUsed(txid: string): boolean {
+  const row = db
+    .prepare(`SELECT 1 FROM payment_txids WHERE txid = ?`)
+    .get(txid);
+  return !!row;
 }
 
 export function getInvoice(id: number): PaymentRow | undefined {
