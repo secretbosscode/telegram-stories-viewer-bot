@@ -146,7 +146,8 @@ bot.command('help', async (ctx) => {
     '*General Commands:*\n' +
     '`/start` - Show usage instructions\n' +
     '`/help` - Show this help message\n' +
-    '`/premium` - Info about premium features\n';
+    '`/premium` - Info about premium features\n' +
+    '`/queue` - View your place in the download queue\n';
 
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
@@ -161,7 +162,7 @@ bot.command('help', async (ctx) => {
   if (ctx.from.id == BOT_ADMIN_ID) {
     finalHelpText +=
       '\n*Admin Commands:*\n' +
-      '`/setpremium <ID or @username>` - Mark user as premium\n' +
+      '`/setpremium <ID or @username> [days]` - Mark user as premium (0 = never expires)\n' +
       '`/unsetpremium <ID or @username>` - Remove premium status\n' +
       '`/ispremium <ID or @username>` - Check if user is premium\n' +
       '`/listpremium` - List all premium users\n' +
@@ -174,16 +175,28 @@ bot.command('help', async (ctx) => {
 });
 
 bot.command('premium', async (ctx) => {
+  const userId = String(ctx.from.id);
+  if (isUserPremium(userId)) {
+    const days = getPremiumDaysLeft(userId);
+    const daysText =
+      days === Infinity ? 'never expires' : `${days} day${days === 1 ? '' : 's'}`;
     await ctx.reply(
-        '🌟 *Premium Access*\n\n' +
-        'Premium users get:\n' +
-        '✅ Unlimited story downloads\n' +
-        `✅ Monitor up to ${MAX_MONITORS_PER_USER} users' active stories\n` +
-        '✅ No cooldowns or waiting in queues\n\n' +
-        'Run `/upgrade` to purchase 30 days of Premium for $5 in BTC.\n' +
-        'You will receive a unique payment address. Invoices expire after one hour.',
-        { parse_mode: 'Markdown' }
+      `✅ You already have Premium access. Your plan ${
+        days === Infinity ? 'never expires.' : 'expires in ' + daysText + '.'
+      }`
     );
+    return;
+  }
+  await ctx.reply(
+    '🌟 *Premium Access*\n\n' +
+      'Premium users get:\n' +
+      '✅ Unlimited story downloads\n' +
+      `✅ Monitor up to ${MAX_MONITORS_PER_USER} users' active stories\n` +
+      '✅ No cooldowns or waiting in queues\n\n' +
+      'Run `/upgrade` to unlock Premium features.\n' +
+      'You will receive a unique payment address. Invoices expire after one hour.',
+    { parse_mode: 'Markdown' }
+  );
 });
 
 bot.command('upgrade', async (ctx) => {
