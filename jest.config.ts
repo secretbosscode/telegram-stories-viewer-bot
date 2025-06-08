@@ -8,6 +8,7 @@ const config: Config = {
     '^config/(.*)$': '<rootDir>/src/config/$1',
     '^controllers/(.*)$': '<rootDir>/src/controllers/$1',
     '^db/(.*)$': '<rootDir>/src/db/$1',
+    '^db$': '<rootDir>/src/db/index.ts',
     '^services/(.*)$': '<rootDir>/src/services/$1',
     '^lib/(.*)$': '<rootDir>/src/lib/$1',
     '^lib$': '<rootDir>/src/lib/index.ts',
