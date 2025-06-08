@@ -177,7 +177,7 @@ Just send a message to the bot with the desired Telegram username, phone number,
 
 ### Monitoring Profiles
 
-Free users cannot monitor profiles. Premium users can monitor up to **5** profiles for new stories, while admins have no limit. Each monitored account is checked every **6 hours** on its own schedule. Use `/monitor <@username|+19875551234>` to add a profile by username or phone number (digits only, no hyphens), and `/unmonitor <@username>` to remove one. Send `/monitor` or `/unmonitor` without arguments to see your current list.
+Free users cannot monitor profiles. Premium users can monitor up to **5** profiles for new stories, while admins have no limit. Each monitored account is checked every **6 hours** on its own schedule. Use `/monitor <@username|+19875551234>` to add a profile by username or phone number (digits only, no hyphens), and `/unmonitor <@username>` to remove one. After adding a monitor, the bot tells you how many slots you have left. Send `/monitor` or `/unmonitor` without arguments to see your current list.
 
 ## Development
 

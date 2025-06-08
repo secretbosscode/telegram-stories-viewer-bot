@@ -99,13 +99,10 @@ bot.command('help', async (ctx) => {
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
   if (isPremium || isAdmin) {
-    const limitDesc = isAdmin
-      ? 'unlimited'
-      : `up to ${MAX_MONITORS_PER_USER}`;
     finalHelpText +=
       '\n*Premium Commands:*\n' +
-      `\`/monitor\` - Monitor a profile for new stories (${limitDesc})\n` +
-      '               (use @username or a phone number like +19875551234, no hyphens)\n' +
+      '`/monitor` - Monitor a profile for new stories\n' +
+      '  Use @username or a phone number like +19875551234 (no hyphens)\n' +
       '`/unmonitor` - Stop monitoring a profile\n';
   }
 
@@ -191,7 +188,18 @@ bot.command('monitor', async (ctx) => {
     }
   }
   addProfileMonitor(userId, username);
-  await ctx.reply(`✅ Now monitoring ${input} for active stories.`);
+  const currentCount = userMonitorCount(userId);
+  const remainingText = isAdmin
+    ? 'You can monitor unlimited profiles.'
+    : `You have ${Math.max(
+        MAX_MONITORS_PER_USER - currentCount,
+        0
+      )} monitor${
+        MAX_MONITORS_PER_USER - currentCount === 1 ? '' : 's'
+      } left.`;
+  await ctx.reply(
+    `✅ Now monitoring ${input} for active stories. ${remainingText}`
+  );
 });
 
 bot.command('unmonitor', async (ctx) => {
