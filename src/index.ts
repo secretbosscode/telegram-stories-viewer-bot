@@ -518,9 +518,22 @@ export async function handleCallbackQuery(ctx: IContextBot) {
     };
     handleNewTask(task);
     try {
-      await ctx.editMessageReplyMarkup(undefined);
+      const message = ctx.callbackQuery.message as any;
+      const markup = message?.reply_markup?.inline_keyboard;
+      if (markup) {
+        const newKeyboard = markup
+          .map((row: any[]) =>
+            row.filter((btn: any) => btn.callback_data !== data)
+          )
+          .filter((row: any[]) => row.length > 0);
+        await ctx.editMessageReplyMarkup(
+          newKeyboard.length ? { inline_keyboard: newKeyboard } : undefined
+        );
+      } else {
+        await ctx.editMessageReplyMarkup(undefined);
+      }
     } catch (e) {
-      console.error('Failed to clear inline keyboard:', e);
+      console.error('Failed to update inline keyboard:', e);
     }
     await ctx.answerCbQuery();
   }
