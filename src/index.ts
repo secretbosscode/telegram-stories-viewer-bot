@@ -41,6 +41,7 @@ import {
 } from './services/btc-payment';
 import { handleUpgrade } from 'controllers/upgrade';
 import { UserInfo } from 'types';
+import { sendTemporaryMessage } from 'lib';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
 setBotInstance(bot);
@@ -83,7 +84,11 @@ bot.use(async (ctx, next) => {
     if (isUserPremium(String(id))) {
       const days = getPremiumDaysLeft(String(id));
       const daysText = days === Infinity ? 'unlimited' : days.toString();
-      await ctx.reply(`You have ${daysText} day${days === 1 ? '' : 's'} of Premium left.`).catch(() => {});
+      await sendTemporaryMessage(
+        bot,
+        ctx.chat!.id,
+        `You have ${daysText} day${days === 1 ? '' : 's'} of Premium left.`
+      ).catch(() => {});
     }
   } catch (e) {
     console.error('premium middleware error', e);

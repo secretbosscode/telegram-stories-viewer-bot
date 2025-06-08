@@ -2,6 +2,7 @@
 
 import { bot } from 'index'; // Corrected path to use tsconfig alias
 import { Api } from 'telegram';
+import { sendTemporaryMessage } from 'lib';
 
 // CORRECTED: Import types from your central types.ts file
 import { SendParticularStoryArgs, UserInfo, MappedStoryItem, NotifyAdminParams } from 'types'; // <--- Corrected import path & added MappedStoryItem, NotifyAdminParams
@@ -25,14 +26,14 @@ export async function sendParticularStory({
 
   try {
     // Notify user that download is starting
-    await bot.telegram
-      .sendMessage(task.chatId, '⏳ Downloading...')
-      .catch((err) => {
+    await sendTemporaryMessage(bot, task.chatId, '⏳ Downloading...').catch(
+      (err) => {
         console.error(
           `[sendParticularStory] Failed to send 'Downloading' message to ${task.chatId}:`,
           err
         );
-      });
+      }
+    );
 
     // Actually download the story (media file to buffer)
     await downloadStories(mapped, 'active'); // 'active' is a string literal, ok.
@@ -41,14 +42,16 @@ export async function sendParticularStory({
 
     if (singleStory && singleStory.buffer) { // <--- Added check for singleStory existence
       // Notify user that upload is starting
-      await bot.telegram
-        .sendMessage(task.chatId, '⏳ Uploading to Telegram...')
-        .catch((err) => {
-          console.error(
-            `[sendParticularStory] Failed to send 'Uploading' message to ${task.chatId}:`,
-            err
-          );
-        });
+      await sendTemporaryMessage(
+        bot,
+        task.chatId,
+        '⏳ Uploading to Telegram...'
+      ).catch((err) => {
+        console.error(
+          `[sendParticularStory] Failed to send 'Uploading' message to ${task.chatId}:`,
+          err
+        );
+      });
 
       // Send the media group (single file as an array)
       await bot.telegram.sendMediaGroup(task.chatId, [

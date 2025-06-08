@@ -9,6 +9,22 @@ const MAX_STORIES_SIZE = 45;
 export const timeout = (ms: number): Promise<null> =>
   new Promise((ok) => setTimeout(ok, ms));
 
+// Send a Telegram message and automatically delete it after a delay
+export async function sendTemporaryMessage(
+  bot: import('telegraf').Telegraf<any>,
+  chatId: number | string,
+  text: string,
+  options?: Parameters<typeof bot.telegram.sendMessage>[2],
+  delayMs = 60_000,
+): Promise<void> {
+  const msg = await bot.telegram.sendMessage(chatId, text, options);
+  setTimeout(() => {
+    bot.telegram.deleteMessage(chatId, msg.message_id).catch(() => {
+      /* ignore deletion errors */
+    });
+  }, delayMs);
+}
+
 export function chunkMediafiles(files: StoriesModel): MappedStoryItem[][] { // Added return type and parameter type
   return files.reduce(
     (acc: MappedStoryItem[][], curr: MappedStoryItem) => { // CORRECTED: Explicitly typed 'acc' and 'curr'

@@ -2,6 +2,7 @@
 
 import { bot } from 'index'; // Corrected path to use tsconfig alias
 import { Api } from 'telegram';
+import { sendTemporaryMessage } from 'lib';
 
 // CORRECTED: Import types from your central types.ts file
 import { SendPaginatedStoriesArgs, MappedStoryItem, NotifyAdminParams } from 'types'; // <--- Corrected import path & added MappedStoryItem, NotifyAdminParams
@@ -25,14 +26,14 @@ export async function sendPaginatedStories({
 
   try {
     // Notify user that download is starting
-    await bot.telegram
-      .sendMessage(task.chatId, '⏳ Downloading...')
-      .catch((err) => {
+    await sendTemporaryMessage(bot, task.chatId, '⏳ Downloading...').catch(
+      (err) => {
         console.error(
           `[sendPaginatedStories] Failed to send 'Downloading' message to ${task.chatId}:`,
           err
         );
-      });
+      }
+    );
 
     // Actually download the stories (media files to buffer)
     await downloadStories(mapped, 'pinned'); // 'pinned' is a string literal, ok.
@@ -44,14 +45,16 @@ export async function sendPaginatedStories({
 
     if (uploadableStories.length > 0) {
       // Notify user that upload is starting
-      await bot.telegram
-        .sendMessage(task.chatId, '⏳ Uploading to Telegram...')
-        .catch((err) => {
-          console.error(
-            `[sendPaginatedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
-            err
-          );
-        });
+      await sendTemporaryMessage(
+        bot,
+        task.chatId,
+        '⏳ Uploading to Telegram...'
+      ).catch((err) => {
+        console.error(
+          `[sendPaginatedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
+          err
+        );
+      });
 
       // Send all media as a group (album)
       await bot.telegram.sendMediaGroup(

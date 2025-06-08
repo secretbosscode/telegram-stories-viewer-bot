@@ -3,7 +3,7 @@
 import { Userbot } from 'config/userbot';
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
-import { chunkMediafiles, timeout } from 'lib';
+import { chunkMediafiles, timeout, sendTemporaryMessage } from 'lib';
 import { Markup } from 'telegraf';
 import { Api } from 'telegram';
 
@@ -82,14 +82,16 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
 
     console.log(`[SendPinnedStories] [${task.link}] Preparing to download ${mapped.length} pinned stories.`);
 
-    await bot.telegram
-      .sendMessage(task.chatId!, '⏳ Downloading Pinned stories...')
-      .catch((err) => {
-        console.error(
-          `[SendPinnedStories] Failed to send 'Downloading Pinned stories' message to ${task.chatId}:`,
-          err
-        );
-      });
+    await sendTemporaryMessage(
+      bot,
+      task.chatId!,
+      '⏳ Downloading Pinned stories...'
+    ).catch((err) => {
+      console.error(
+        `[SendPinnedStories] Failed to send 'Downloading Pinned stories' message to ${task.chatId}:`,
+        err
+      );
+    });
 
     // =========================================================================
     // CRITICAL STABILITY LOGIC: Download Timeout
@@ -110,17 +112,16 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     console.log(`[SendPinnedStories] [${task.link}] Found ${uploadableStories.length} uploadable pinned stories after download.`);
 
     if (uploadableStories.length > 0) {
-      await bot.telegram
-        .sendMessage(
-          task.chatId!,
-          `📥 ${uploadableStories.length} Pinned stories downloaded successfully!\n⏳ Uploading stories to Telegram...`
-        )
-        .catch((err) => {
-          console.error(
-            `[SendPinnedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
-            err
-          );
-        });
+      await sendTemporaryMessage(
+        bot,
+        task.chatId!,
+        `📥 ${uploadableStories.length} Pinned stories downloaded successfully!\n⏳ Uploading stories to Telegram...`
+      ).catch((err) => {
+        console.error(
+          `[SendPinnedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
+          err
+        );
+      });
 
       const chunkedList = chunkMediafiles(uploadableStories);
       for (let i = 0; i < chunkedList.length; i++) {

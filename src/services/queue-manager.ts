@@ -12,6 +12,7 @@ import {
 } from 'db/effects'; 
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
+import { sendTemporaryMessage } from 'lib';
 import { UserInfo, DownloadQueueItem, SendStoriesFxParams } from 'types';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
@@ -38,13 +39,21 @@ export async function handleNewTask(user: UserInfo) {
         return;
       }
       if (await isDuplicatePendingFx({ telegram_id, target_username })) {
-        await bot.telegram.sendMessage(telegram_id, `⚠️ This download is already in the queue.`);
+        await sendTemporaryMessage(
+          bot,
+          telegram_id,
+          `⚠️ This download is already in the queue.`
+        );
         return;
       }
     }
 
     await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
-    await bot.telegram.sendMessage(telegram_id, `✅ Your request for ${target_username} has been queued!`);
+    await sendTemporaryMessage(
+      bot,
+      telegram_id,
+      `✅ Your request for ${target_username} has been queued!`
+    );
     
     setImmediate(processQueue);
   } catch(e: any) {
