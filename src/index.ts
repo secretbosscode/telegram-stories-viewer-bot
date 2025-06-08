@@ -55,7 +55,7 @@ import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
 import { UserInfo } from 'types';
-import { sendTemporaryMessage } from 'lib';
+import { sendTemporaryMessage, updatePremiumPinnedMessage } from 'lib';
 import {
   recordProfileRequestFx,
   wasProfileRequestedRecentlyFx,
@@ -168,12 +168,7 @@ bot.use(async (ctx, next) => {
     if (text.startsWith('/premium')) return;
     if (isUserPremium(String(id))) {
       const days = getPremiumDaysLeft(String(id));
-      const daysText = days === Infinity ? 'unlimited' : days.toString();
-      await sendTemporaryMessage(
-        bot,
-        ctx.chat!.id,
-        `You have ${daysText} day${days === 1 ? '' : 's'} of Premium left.`
-      ).catch(() => {});
+      await updatePremiumPinnedMessage(bot, ctx.chat!.id, String(id), days);
     }
   } catch (e) {
     console.error('premium middleware error', e);

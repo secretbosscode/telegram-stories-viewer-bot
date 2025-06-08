@@ -1,5 +1,13 @@
 import { jest } from '@jest/globals';
 
+process.env.NODE_ENV = 'test';
+
+jest.mock('../src/config/env-config', () => ({
+  BOT_ADMIN_ID: 0,
+  BOT_TOKEN: 'token',
+  LOG_FILE: '/tmp/test.log',
+}));
+
 const sendParticularStory = jest.fn();
 jest.mock('../src/controllers/send-particular-story', () => ({ sendParticularStory }));
 const sendPaginatedStories = jest.fn();
