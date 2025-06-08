@@ -3,7 +3,10 @@
 // Global error handlers must be at the absolute top.
 process.on('unhandledRejection', (reason, promise) => { console.error('CRITICAL_ERROR: Unhandled Rejection at:', promise, 'reason:', reason); });
 process.on('uncaughtException', (error, origin) => { console.error('CRITICAL_ERROR: Uncaught Exception:', error, 'origin:', origin); });
-console.log("Global error handlers have been attached.");
+console.log('Global error handlers have been attached.');
+
+// Redirect console output to a debug log file for easier troubleshooting
+import './config/setup-logs';
 
 import { IContextBot } from 'config/context-interface';
 import { BOT_ADMIN_ID, BOT_TOKEN, LOG_FILE } from 'config/env-config';
@@ -51,6 +54,11 @@ if (!fs.existsSync(logDir)) {
 }
 
 bot.use(session());
+bot.use(async (ctx, next) => {
+  const text = 'message' in ctx && ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+  console.log(`[Update] from ${ctx.from?.id} type=${ctx.updateType} text=${text}`);
+  await next();
+});
 bot.catch((error, ctx) => {
   console.error(`A global error occurred for chat ${ctx.chat?.id}:`, error);
   const logEntry =
