@@ -33,7 +33,8 @@ const reminderTimers = new Map<number, NodeJS.Timeout>();
 // Allow invoices to be considered paid when at least 90% of the expected
 // amount is received to account for network fees.
 const PAYMENT_TOLERANCE = 0.1; // 10%
-const REMINDER_DELAY_MS = 60 * 60 * 1000; // 1 hour
+// Send a reminder if payment hasn't been detected after 45 minutes
+const REMINDER_DELAY_MS = 45 * 60 * 1000; // 45 minutes
 
 function scheduleInvoiceCheck(
   invoice: PaymentRow,
@@ -121,10 +122,13 @@ function scheduleInvoiceCheck(
   if (!reminderTimers.has(invoice.id)) {
     const rTimer = setTimeout(() => {
       if (botInstance) {
-        botInstance.telegram.sendMessage(
-          userId,
-          `❓ Payment not detected yet. If you have already sent it, please run /verify <txid> ${invoice.id} to confirm.`
-        ).catch(() => {});
+        botInstance.telegram
+          .sendMessage(
+            userId,
+            `❓ Payment not detected yet. If you have already sent it, please run /verify <txid> ${invoice.id} to confirm.\n` +
+              `You can find the transaction ID (txid) in your wallet's transaction details.`
+          )
+          .catch(() => {});
       }
       reminderTimers.delete(invoice.id);
     }, REMINDER_DELAY_MS);
