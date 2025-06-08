@@ -64,7 +64,11 @@ export async function sendProfileMedia(
         chatId,
         `📸 Sent ${sendAlbum.length} profile media item(s) of ${input}`,
       );
-      notifyAdmin({ status: 'info', baseInfo: `📸 Sent ${sendAlbum.length} profile media item(s) of ${input}` });
+      notifyAdmin({
+        status: 'info',
+        baseInfo: `📸 Sent ${sendAlbum.length} profile media item(s) of ${input}`,
+        task: { chatId: String(chatId) } as any,
+      });
     } else {
       await bot.telegram.sendMessage(chatId, 'Failed to download profile media.');
     }
