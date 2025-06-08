@@ -126,18 +126,35 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
       const chunkedList = chunkMediafiles(uploadableStories);
       for (let i = 0; i < chunkedList.length; i++) {
         const album = chunkedList[i];
+        const isSingle = album.length === 1;
         try {
-            await bot.telegram.sendMediaGroup(
-              task.chatId,
-              album.map((x: MappedStoryItem) => ({ // <--- 'x' typed here
-                media: { source: x.buffer! },
-                type: x.mediaType!,
-                caption: x.caption ?? `Pinned story ${x.id}`,
-              }))
-            );
+          await bot.telegram.sendMediaGroup(
+            task.chatId,
+            album.map((x: MappedStoryItem) => ({
+              media: { source: x.buffer! },
+              type: x.mediaType!,
+              caption: isSingle ? undefined : x.caption ?? `Pinned story ${x.id}`,
+            }))
+          );
         } catch (sendError) {
-            console.error(`[SendPinnedStories] [${task.link}] Error sending media group chunk ${i + 1}:`, sendError);
-            throw sendError;
+          console.error(
+            `[SendPinnedStories] [${task.link}] Error sending media group chunk ${i + 1}:`,
+            sendError,
+          );
+          throw sendError;
+        }
+        if (isSingle) {
+          const story = album[0];
+          await sendTemporaryMessage(
+            bot,
+            task.chatId!,
+            story.caption ?? `Pinned story ${story.id}`,
+          ).catch((err) => {
+            console.error(
+              `[SendPinnedStories] Failed to send temporary caption to ${task.chatId}:`,
+              err,
+            );
+          });
         }
         await timeout(500);
       }
