@@ -161,7 +161,7 @@ bot.telegram.sendMediaGroup(
    - Leave <code>USERBOT_PHONE_CODE</code> empty for the first run.
    - Fill in <code>BOT_ADMIN_ID</code>, <code>BTC_WALLET_ADDRESS</code>, etc.
   - Optional: <code>LOG_FILE</code> to change where runtime errors are logged (defaults to <code>./data/error.log</code>).
-  - Optional: <code>DEBUG_LOG_FILE</code> to store verbose debug logs (defaults to <code>./data/debug.log</code>).
+  - Optional: <code>DEBUG_LOG_FILE</code> to also store verbose debug logs on disk. Leave empty to disable file logging.
 2. Build and start the container:
 
 ```shell
@@ -178,7 +178,7 @@ Once authentication completes the session file is saved, so you can remove the
 
 Use <code>docker logs ghost-stories-bot</code> to see recent output from the running container.
 Runtime errors are also written to the file specified by <code>LOG_FILE</code> (default <code>./data/error.log</code>).
-Verbose output from <code>console.log</code> and other statements is mirrored to <code>DEBUG_LOG_FILE</code> when set (default <code>./data/debug.log</code>).
+Verbose output from <code>console.log</code> and other statements always appears in the container logs. Set <code>DEBUG_LOG_FILE</code> if you also want a persistent copy on disk.
 
 <h2>🚀 Usage</h2>
 Just send a message to the bot with the desired Telegram username, phone number, or the direct link to story. Wait for the bot to retrieve and deliver the stories back to you

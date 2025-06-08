@@ -40,4 +40,4 @@ export const BTC_WALLET_ADDRESS = getEnvVar('BTC_WALLET_ADDRESS');
 export const LOG_FILE = process.env.LOG_FILE || parsed?.LOG_FILE || path.join(__dirname, '../../data/error.log');
 
 // debug log file path for verbose logging
-export const DEBUG_LOG_FILE = process.env.DEBUG_LOG_FILE || parsed?.DEBUG_LOG_FILE || path.join(__dirname, '../../data/debug.log');
+export const DEBUG_LOG_FILE = process.env.DEBUG_LOG_FILE || parsed?.DEBUG_LOG_FILE || '';
