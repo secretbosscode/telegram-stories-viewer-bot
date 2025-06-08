@@ -47,60 +47,66 @@
   <summary>Initiate the userbot:</summary>
   <br/>
 
-  ```typescript
-  import { TelegramClient } from 'telegram';
-  import { StoreSession } from 'telegram/sessions';
+```typescript
+import { TelegramClient } from 'telegram';
+import { StoreSession } from 'telegram/sessions';
 
-  async function main() {
-    const client = await initClient();
-  }
+async function main() {
+  const client = await initClient();
+}
 
-  async function initClient() {
-    const storeSession = new StoreSession('userbot-session');
+async function initClient() {
+  const storeSession = new StoreSession('userbot-session');
 
-    const client = new TelegramClient(
-      storeSession,
-      USERBOT_API_ID,
-      USERBOT_API_HASH,
-      {
-        connectionRetries: 5,
-      }
-    );
+  const client = new TelegramClient(
+    storeSession,
+    USERBOT_API_ID,
+    USERBOT_API_HASH,
+    {
+      connectionRetries: 5,
+    },
+  );
 
-    await client.start({
-      phoneNumber: USERBOT_PHONE_NUMBER,
-      password: async () => await input.text('Please enter your password: '),
-      phoneCode: async () => await input.text('Please enter the code you received: '),
-      onError: (err) => console.log('error: ', err),
-    });
-    console.log('You should now be connected.');
-    console.log(client.session.save()); // Save the session to avoid logging in again
-    await client.sendMessage('me', { message: 'Hi!' });
+  await client.start({
+    phoneNumber: USERBOT_PHONE_NUMBER,
+    password: async () => await input.text('Please enter your password: '),
+    phoneCode: async () =>
+      await input.text('Please enter the code you received: '),
+    onError: (err) => console.log('error: ', err),
+  });
+  console.log('You should now be connected.');
+  console.log(client.session.save()); // Save the session to avoid logging in again
+  await client.sendMessage('me', { message: 'Hi!' });
 
-    return client;
-  }
+  return client;
+}
 ```
 
 </details>
 
 • Get user's entities by username:
+
 ```typescript
 const username = '@chupapee';
 const entity = await client.getEntity(username);
 ```
+
 • Get stories data by entity:
+
 ```typescript
 import { Api } from 'telegram';
 
 const activeStories = await client.invoke(
-  new Api.stories.GetPeerStories({ peer: entity })
+  new Api.stories.GetPeerStories({ peer: entity }),
 );
 
 const pinnedStories = await client.invoke(
-  new Api.stories.GetPinnedStories({ peer: entity })
+  new Api.stories.GetPinnedStories({ peer: entity }),
 );
 ```
+
 • Download stories using `media` prop of story object:
+
 ```typescript
 const stories = await downloadStories(activeStories, pinnedStories);
 
@@ -120,7 +126,9 @@ async function downloadStories(activeStories, pinnedStories) {
   return result;
 }
 ```
+
 • Send downloaded stories to user using Telegraf api (not Gramjs's userbot):
+
 ```typescript
 import { Telegraf } from 'telegraf';
 
@@ -130,8 +138,8 @@ bot.telegram.sendMediaGroup(
   stories.map((story) => ({
     media: { source: story.buffer },
     type: story.mediaType,
-  }))
-)
+  })),
+);
 ```
 
 <h2>🧰 Tools Used</h2>
@@ -146,17 +154,20 @@ bot.telegram.sendMediaGroup(
 <p>To run this project locally, follow these steps:</p>
 
 - Install all dependencies (or run <code>./setup.sh</code>)
+
 ```shell
 yarn install
 ```
 
 - Configure Credentials:
 
-Set up your Telegram and userbot credentials in the configuration file
+Set up your Telegram and userbot credentials in the configuration file. Also, specify
+`BTC_WALLET_ADDRESS` with the Bitcoin address that will receive premium payments.
 
 - Start the bot:
 
 Launch the bot in development mode using:
+
 ```shell
 yarn dev
 ```
@@ -175,7 +186,6 @@ Just send a message to the bot with the desired Telegram username, phone number,
 ### Monitoring Profiles
 
 Free users cannot monitor profiles. Premium users can monitor up to **5** profiles for new stories, while admins have no limit. Each monitored account is checked every **6 hours** on its own schedule. Use `/monitor <@username|+19875551234>` to add a profile by username or phone number (digits only, no hyphens), and `/unmonitor <@username>` to remove one. Send `/monitor` or `/unmonitor` without arguments to see your current list.
-
 
 ## Development
 
