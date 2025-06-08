@@ -1,7 +1,7 @@
 {
   "ts-node": { "files": true },
   "compilerOptions": {
-    "types": ["node"],
+    "types": ["node", "jest"],
     "target": "ESNext",
     "module": "commonjs",
     "outDir": "dist",
