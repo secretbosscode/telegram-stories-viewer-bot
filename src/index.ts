@@ -488,22 +488,22 @@ bot.command('history', async (ctx) => {
 });
 
 // --- Handle button presses ---
-bot.on('callback_query', async (ctx) => {
-  if (!('data' in ctx.callbackQuery)) return;
+export async function handleCallbackQuery(ctx: IContextBot) {
+  if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
   const data = ctx.callbackQuery.data;
 
-  if (data === RESTART_COMMAND && ctx.from.id == BOT_ADMIN_ID) {
+  if (data === RESTART_COMMAND && ctx.from?.id == BOT_ADMIN_ID) {
     await ctx.answerCbQuery('⏳ Restarting server...');
     process.exit();
   }
 
   if (data.includes('&')) {
-    const isPremium = isUserPremium(String(ctx.from.id));
+    const isPremium = isUserPremium(String(ctx.from?.id));
     if (!isPremium) {
       return ctx.answerCbQuery('This feature requires Premium access.', { show_alert: true });
     }
     const [username, nextStoriesIds] = data.split('&');
-    const user = ctx.from;
+    const user = ctx.from!;
     const task: UserInfo = {
       chatId: String(user.id),
       link: username,
@@ -517,9 +517,16 @@ bot.on('callback_query', async (ctx) => {
       isPaginated: true,
     };
     handleNewTask(task);
+    try {
+      await ctx.editMessageReplyMarkup(undefined);
+    } catch (e) {
+      console.error('Failed to clear inline keyboard:', e);
+    }
     await ctx.answerCbQuery();
   }
-});
+}
+
+bot.on('callback_query', handleCallbackQuery);
 
 // --- Handle all other text messages ---
 bot.on('text', async (ctx) => {
@@ -608,7 +615,8 @@ async function startApp() {
   });
 }
 
-startApp();
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+if (process.env.NODE_ENV !== 'test') {
+  startApp();
+  process.once('SIGINT', () => bot.stop('SIGINT'));
+  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+}
