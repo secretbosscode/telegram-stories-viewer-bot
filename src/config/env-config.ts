@@ -35,3 +35,6 @@ export const USERBOT_PHONE_CODE = process.env.USERBOT_PHONE_CODE || parsed?.USER
 // supabase
 export const SUPABASE_PROJECT_URL = getEnvVar('SUPABASE_PROJECT_URL');
 export const SUPABASE_API_KEY = getEnvVar('SUPABASE_API_KEY');
+
+// payments
+export const BTC_WALLET_ADDRESS = getEnvVar('BTC_WALLET_ADDRESS');
