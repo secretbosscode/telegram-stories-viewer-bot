@@ -56,7 +56,11 @@ import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
 import { UserInfo } from 'types';
 import { sendTemporaryMessage } from 'lib';
-import { recordProfileRequestFx, wasProfileRequestedRecentlyFx } from './db/effects';
+import {
+  recordProfileRequestFx,
+  wasProfileRequestedRecentlyFx,
+  getProfileRequestCooldownRemainingFx,
+} from './db/effects';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
 setBotInstance(bot);
@@ -318,8 +322,17 @@ bot.command('profile', async (ctx) => {
       hours: cooldown,
     })
   ) {
-    return ctx.reply(
-      `⏳ You can request profile media for "${input}" once every ${cooldown} hours.`,
+    const remaining = await getProfileRequestCooldownRemainingFx({
+      telegram_id: userId,
+      target_username: input,
+      hours: cooldown,
+    });
+    const h = Math.floor(remaining / 3600);
+    const m = Math.floor((remaining % 3600) / 60);
+    return sendTemporaryMessage(
+      bot,
+      ctx.chat!.id,
+      `⏳ You can request profile media for "${input}" once every ${cooldown} hours.\nTry again in ${h}h ${m}m.`,
     );
   }
 

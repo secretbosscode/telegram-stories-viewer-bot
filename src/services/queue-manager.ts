@@ -8,6 +8,7 @@ import {
   markErrorFx,
   cleanupQueueFx,
   wasRecentlyDownloadedFx,
+  getDownloadCooldownRemainingFx,
   isDuplicatePendingFx,
   getQueueStatsFx,
   findPendingJobFx,
@@ -56,7 +57,14 @@ export async function handleNewTask(user: UserInfo) {
 
     if (!isPaginatedRequest) {
       if (await wasRecentlyDownloadedFx({ telegram_id, target_username, hours: cooldown })) {
-        await bot.telegram.sendMessage(telegram_id, `⏳ You can request stories for "${target_username}" once every ${cooldown} hours.`);
+        const remaining = await getDownloadCooldownRemainingFx({ telegram_id, target_username, hours: cooldown });
+        const h = Math.floor(remaining / 3600);
+        const m = Math.floor((remaining % 3600) / 60);
+        await sendTemporaryMessage(
+          bot,
+          telegram_id,
+          `⏳ You can request stories for "${target_username}" once every ${cooldown} hours.\nTry again in ${h}h ${m}m.`,
+        );
         return;
       }
     }

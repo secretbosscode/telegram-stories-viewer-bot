@@ -37,6 +37,11 @@ export const wasRecentlyDownloadedFx = createEffect(
   }
 );
 
+export const getDownloadCooldownRemainingFx = createEffect(
+  (params: { telegram_id: string; target_username: string; hours: number }) =>
+    db.getDownloadCooldownRemaining(params.telegram_id, params.target_username, params.hours),
+);
+
 export const isDuplicatePendingFx = createEffect(
   async (
     params: { telegram_id: string; target_username: string; nextStoriesIds?: number[] },
@@ -64,4 +69,13 @@ export const recordProfileRequestFx = createEffect(
 export const wasProfileRequestedRecentlyFx = createEffect(
   (params: { telegram_id: string; target_username: string; hours: number }) =>
     db.wasProfileRequestedRecently(params.telegram_id, params.target_username, params.hours),
+);
+
+export const getProfileRequestCooldownRemainingFx = createEffect(
+  (params: { telegram_id: string; target_username: string; hours: number }) =>
+    db.getProfileRequestCooldownRemaining(
+      params.telegram_id,
+      params.target_username,
+      params.hours,
+    ),
 );

@@ -240,6 +240,26 @@ export function wasRecentlyDownloaded(telegram_id: string, target_username: stri
   return !!row;
 }
 
+export function getDownloadCooldownRemaining(
+  telegram_id: string,
+  target_username: string,
+  hours: number,
+): number {
+  if (hours <= 0) return 0;
+  const row = db
+    .prepare(
+      `SELECT processed_ts FROM download_queue
+       WHERE telegram_id = ? AND target_username = ? AND status = 'done'
+       ORDER BY processed_ts DESC
+       LIMIT 1`,
+    )
+    .get(telegram_id, target_username) as { processed_ts: number } | undefined;
+  if (!row) return 0;
+  const expiresAt = row.processed_ts + hours * 3600;
+  const remaining = expiresAt - Math.floor(Date.now() / 1000);
+  return remaining > 0 ? remaining : 0;
+}
+
 export function recordProfileRequest(telegram_id: string, target_username: string): void {
   db.prepare(
     `INSERT INTO profile_requests (telegram_id, target_username, requested_at) VALUES (?, ?, strftime('%s','now'))`,
@@ -259,6 +279,26 @@ export function wasProfileRequestedRecently(
     )
     .get(telegram_id, target_username, cutoff);
   return !!row;
+}
+
+export function getProfileRequestCooldownRemaining(
+  telegram_id: string,
+  target_username: string,
+  hours: number,
+): number {
+  if (hours <= 0) return 0;
+  const row = db
+    .prepare(
+      `SELECT requested_at FROM profile_requests
+       WHERE telegram_id = ? AND target_username = ?
+       ORDER BY requested_at DESC
+       LIMIT 1`,
+    )
+    .get(telegram_id, target_username) as { requested_at: number } | undefined;
+  if (!row) return 0;
+  const expiresAt = row.requested_at + hours * 3600;
+  const remaining = expiresAt - Math.floor(Date.now() / 1000);
+  return remaining > 0 ? remaining : 0;
 }
 
 export function isDuplicatePending(
