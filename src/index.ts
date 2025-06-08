@@ -324,7 +324,7 @@ bot.command('profile', async (ctx) => {
   }
 
   await recordProfileRequestFx({ telegram_id: userId, target_username: input });
-  await sendProfileMedia(ctx.chat!.id, input);
+  await sendProfileMedia(ctx.chat!.id, input, ctx.from);
 });
 
 bot.command('monitor', async (ctx) => {
