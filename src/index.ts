@@ -13,7 +13,13 @@ import { db, resetStuckJobs } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
-import { isUserPremium, addPremiumUser, removePremiumUser, extendPremium } from './services/premium-service';
+import {
+  isUserPremium,
+  addPremiumUser,
+  removePremiumUser,
+  extendPremium,
+  getPremiumDaysLeft,
+} from './services/premium-service';
 import {
   addProfileMonitor,
   removeProfileMonitor,
@@ -34,6 +40,21 @@ bot.use(session());
 bot.catch((error, ctx) => {
   console.error(`A global error occurred for chat ${ctx.chat?.id}:`, error);
   ctx.reply('Sorry, an unexpected error occurred. Please try again later.').catch(() => {});
+});
+
+bot.use(async (ctx, next) => {
+  await next();
+  try {
+    const id = ctx.from?.id;
+    if (!id) return;
+    if (isUserPremium(String(id))) {
+      const days = getPremiumDaysLeft(String(id));
+      const daysText = days === Infinity ? 'unlimited' : days.toString();
+      await ctx.reply(`You have ${daysText} day${days === 1 ? '' : 's'} of Premium left.`).catch(() => {});
+    }
+  } catch (e) {
+    console.error('premium middleware error', e);
+  }
 });
 
 function isActivated(userId: number): boolean {
