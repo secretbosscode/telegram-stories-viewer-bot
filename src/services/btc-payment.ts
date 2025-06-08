@@ -117,31 +117,56 @@ async function fetchTransactions(address: string): Promise<any[]> {
 
 /** Fetch BTC/USD prices from multiple sources and return the average */
 export async function getBtcPriceUsd(): Promise<number> {
-  const endpoints = {
-    coinbase: 'https://api.coinbase.com/v2/prices/spot?currency=USD',
-    binance: 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT',
-    coingecko:
-      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
-  } as const;
+  const endpoints = [
+    {
+      url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+      parse: (d: any) => Number(d?.bitcoin?.usd),
+    },
+    {
+      url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot',
+      parse: (d: any) => Number(d?.data?.amount),
+    },
+    {
+      url: 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT',
+      parse: (d: any) => Number(d?.price),
+    },
+    {
+      url: 'https://www.bitstamp.net/api/v2/ticker/btcusd/',
+      parse: (d: any) => Number(d?.last),
+    },
+    {
+      url: 'https://api.kraken.com/0/public/Ticker?pair=XBTUSD',
+      parse: (d: any) => Number(d?.result?.XXBTZUSD?.c?.[0]),
+    },
+    {
+      url: 'https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT',
+      parse: (d: any) => Number(d?.data?.[0]?.last),
+    },
+    {
+      url: 'https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD',
+      parse: (d: any) => Number(d?.USD),
+    },
+    {
+      url: 'https://api.coinpaprika.com/v1/tickers/btc-bitcoin',
+      parse: (d: any) => Number(d?.quotes?.USD?.price),
+    },
+    {
+      url: 'https://api.coincap.io/v2/assets/bitcoin',
+      parse: (d: any) => Number(d?.data?.priceUsd),
+    },
+  ];
 
-  const requests = await Promise.allSettled([
-    fetch(endpoints.coinbase).then((r) => r.json()),
-    fetch(endpoints.binance).then((r) => r.json()),
-    fetch(endpoints.coingecko).then((r) => r.json()),
-  ]);
+  const requests = await Promise.allSettled(
+    endpoints.map((e) => fetch(e.url).then((r) => r.json())),
+  );
 
   const prices: number[] = [];
-  if (requests[0].status === 'fulfilled') {
-    const amt = Number(requests[0].value?.data?.amount);
-    if (!isNaN(amt)) prices.push(amt);
-  }
-  if (requests[1].status === 'fulfilled') {
-    const amt = Number(requests[1].value?.price);
-    if (!isNaN(amt)) prices.push(amt);
-  }
-  if (requests[2].status === 'fulfilled') {
-    const amt = Number(requests[2].value?.bitcoin?.usd);
-    if (!isNaN(amt)) prices.push(amt);
+  for (let i = 0; i < requests.length; i++) {
+    const res = requests[i];
+    if (res.status === 'fulfilled') {
+      const val = endpoints[i].parse(res.value);
+      if (!isNaN(val)) prices.push(val);
+    }
   }
 
   if (!prices.length) throw new Error('Unable to fetch BTC price');

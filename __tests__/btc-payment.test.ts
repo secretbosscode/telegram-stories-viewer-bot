@@ -46,9 +46,15 @@ describe('createInvoice rounding', () => {
     const price = 12345.6789;
     const originalFetch = global.fetch;
     global.fetch = (jest.fn() as any)
+      .mockResolvedValueOnce({ json: async () => ({ bitcoin: { usd: price } }) })
       .mockResolvedValueOnce({ json: async () => ({ data: { amount: price } }) })
       .mockResolvedValueOnce({ json: async () => ({ price }) })
-      .mockResolvedValueOnce({ json: async () => ({ bitcoin: { usd: price } }) });
+      .mockResolvedValueOnce({ json: async () => ({ last: price }) })
+      .mockResolvedValueOnce({ json: async () => ({ result: { XXBTZUSD: { c: [price] } } }) })
+      .mockResolvedValueOnce({ json: async () => ({ data: [{ last: price }] }) })
+      .mockResolvedValueOnce({ json: async () => ({ USD: price }) })
+      .mockResolvedValueOnce({ json: async () => ({ quotes: { USD: { price } } }) })
+      .mockResolvedValueOnce({ json: async () => ({ data: { priceUsd: price } }) });
 
     const invoice = await btc.createInvoice('u1', 5);
     const expected = Math.round((5 / price) * 1e8) / 1e8;
