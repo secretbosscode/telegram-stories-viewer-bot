@@ -101,9 +101,19 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
           album.map((x: MappedStoryItem) => ({ // <--- 'x' is typed here
             media: { source: x.buffer! },
             type: x.mediaType,
-            caption: x.caption ?? `Active story from ${task.link}`,
+            caption: x.caption ?? undefined,
           }))
         );
+        await sendTemporaryMessage(
+          bot,
+          task.chatId,
+          `Active story from ${task.link}`,
+        ).catch((err) => {
+          console.error(
+            `[sendActiveStories] Failed to send temporary caption to ${task.chatId}:`,
+            err,
+          );
+        });
       }
     } else {
       await bot.telegram.sendMessage(
