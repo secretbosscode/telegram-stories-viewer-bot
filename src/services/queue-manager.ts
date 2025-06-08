@@ -19,6 +19,9 @@ import { UserInfo, DownloadQueueItem, SendStoriesFxParams } from 'types';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 
+// How long we allow a job to run before considering it failed
+export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
 const COOLDOWN_HOURS = { free: 12, premium: 2, admin: 0 };
 
 function formatEta(seconds: number): string {
@@ -97,8 +100,21 @@ export async function processQueue() {
 
   isProcessing = true;
   await markProcessingFx(job.id);
-  
+
   const currentTask: UserInfo = { ...job.task, chatId: job.chatId, instanceId: job.id };
+
+  let timedOut = false;
+  const timeoutId = setTimeout(async () => {
+    timedOut = true;
+    await markErrorFx({ jobId: job.id, message: 'Processing timeout' });
+    await sendTemporaryMessage(
+      bot,
+      job.chatId,
+      `❌ Your download for ${currentTask.link} failed. Reason: Processing timeout`
+    );
+    isProcessing = false;
+    setImmediate(processQueue);
+  }, PROCESSING_TIMEOUT_MS);
 
   try {
     console.log(`[QueueManager] Starting processing for ${currentTask.link} (Job ID: ${job.id})`);
@@ -112,18 +128,26 @@ export async function processQueue() {
     }
 
     const payload: SendStoriesFxParams = { task: currentTask, ...(storiesResult as object) };
-    await sendStoriesFx(payload);
-    
-    await markDoneFx(job.id);
-    console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
+    if (!timedOut) {
+      await sendStoriesFx(payload);
+      await markDoneFx(job.id);
+      console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
+    }
 
   } catch (err: any) {
-    console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
-    await markErrorFx({ jobId: job.id, message: err?.message || 'Unknown processing error' });
-    await bot.telegram.sendMessage(job.chatId, `❌ Your download for ${currentTask.link} failed. Reason: ${err?.message || 'Unknown error'}`);
+    if (!timedOut) {
+      console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
+      await markErrorFx({ jobId: job.id, message: err?.message || 'Unknown processing error' });
+      await bot.telegram.sendMessage(job.chatId, `❌ Your download for ${currentTask.link} failed. Reason: ${err?.message || 'Unknown error'}`);
+    }
   } finally {
-    isProcessing = false;
-    await cleanupQueueFx();
-    setImmediate(processQueue);
+    clearTimeout(timeoutId);
+    if (!timedOut) {
+      isProcessing = false;
+      await cleanupQueueFx();
+      setImmediate(processQueue);
+    } else {
+      await cleanupQueueFx();
+    }
   }
 }
