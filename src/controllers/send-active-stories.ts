@@ -64,7 +64,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     await sendTemporaryMessage(
       bot,
       task.chatId,
-      '⏳ Downloading Active stories...'
+      `⏳ Downloading Active stories from ${task.link}...`
     ).catch((err) => {
       console.error(
         `[sendActiveStories] Failed to send 'Downloading Active stories' message to ${task.chatId}:`,
@@ -85,7 +85,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       await sendTemporaryMessage(
         bot,
         task.chatId,
-        `📥 ${uploadableStories.length} Active stories downloaded successfully!\n⏳ Uploading stories to Telegram...`
+        `📥 ${uploadableStories.length} Active stories from ${task.link} downloaded successfully!\n⏳ Uploading stories to Telegram...`
       ).catch((err) => {
         console.error(
           `[sendActiveStories] Failed to send 'Uploading' message to ${task.chatId}:`,
@@ -101,7 +101,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
           album.map((x: MappedStoryItem) => ({ // <--- 'x' is typed here
             media: { source: x.buffer! },
             type: x.mediaType,
-            caption: x.caption ?? 'Active stories',
+            caption: x.caption ?? `Active story from ${task.link}`,
           }))
         );
       }
@@ -131,8 +131,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       }, []);
       await bot.telegram.sendMessage(
         task.chatId,
-        // CORRECTED LINE: Removed LaTeX delimiters and used template literal correctly
-        `Uploaded ${PER_PAGE}/${stories.length} active stories ✅`,
+        `Uploaded ${PER_PAGE}/${stories.length} active stories from ${task.link} ✅`,
         Markup.inlineKeyboard(keyboard)
       );
     }
