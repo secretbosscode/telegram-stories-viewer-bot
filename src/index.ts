@@ -103,7 +103,9 @@ bot.command('premium', async (ctx) => {
         '✅ Unlimited story downloads\n' +
         `✅ Monitor up to ${MAX_MONITORS_PER_USER} users' active stories\n` +
         '✅ No cooldowns or waiting in queues\n\n' +
-        'Payments and subscriptions are coming soon!',
+        'Run `/upgrade` to purchase 30 days of Premium for $5 in BTC.\n' +
+        'Send payment to `3Q3hChMZxmTXLNyf5TNrqF9jUGodEJbCq4`.\n' +
+        'Invoices expire after one hour.',
         { parse_mode: 'Markdown' }
     );
 });
