@@ -27,6 +27,7 @@ jest.mock('../src/db', () => {
     },
     markInvoicePaid: jest.fn(),
     updatePaidAmount: jest.fn(),
+    updateFromAddress: jest.fn(),
     getInvoice: (id: number) => db.prepare('SELECT * FROM payments WHERE id = ?').get(id),
   };
 });
@@ -35,7 +36,13 @@ jest.mock('../src/db', () => {
 jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr' }));
 
 // Import after mocks
-import { db, markInvoicePaid, updatePaidAmount, insertInvoice } from '../src/db';
+import {
+  db,
+  markInvoicePaid,
+  updatePaidAmount,
+  updateFromAddress,
+  insertInvoice,
+} from '../src/db';
 import * as btc from '../src/services/btc-payment';
 
 describe('createInvoice rounding', () => {
@@ -87,6 +94,51 @@ describe('checkPayment tolerance', () => {
     await btc.checkPayment(invoice as any);
 
     expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 0.91);
+    expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
+
+    global.fetch = originalFetch as any;
+  });
+});
+
+describe('verifyPaymentByTxid sender check', () => {
+  beforeEach(() => {
+    db.prepare('DELETE FROM payments').run();
+    (markInvoicePaid as jest.Mock).mockClear();
+    (updatePaidAmount as jest.Mock).mockClear();
+    (updateFromAddress as jest.Mock).mockClear();
+  });
+
+  test('returns null when sender does not match', async () => {
+    const invoice = insertInvoice('u1', 1, 'dest', 0, 'sender');
+    const tx = {
+      vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
+      vin: [{ prevout: { scriptpubkey_address: 'other' } }],
+    };
+    const originalFetch = global.fetch;
+    global.fetch = (jest.fn() as any).mockResolvedValue({ json: async () => tx });
+
+    const result = await btc.verifyPaymentByTxid(invoice as any, 'txid');
+
+    expect(result).toBeNull();
+    expect(updatePaidAmount).not.toHaveBeenCalled();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+
+    global.fetch = originalFetch as any;
+  });
+
+  test('sets sender when missing and matches', async () => {
+    const invoice = insertInvoice('u2', 1, 'dest', 0, null as any);
+    const tx = {
+      vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
+      vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
+    };
+    const originalFetch = global.fetch;
+    global.fetch = (jest.fn() as any).mockResolvedValue({ json: async () => tx });
+
+    await btc.verifyPaymentByTxid(invoice as any, 'txid');
+
+    expect(updateFromAddress).toHaveBeenCalledWith(invoice.id, 'sender');
+    expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 1);
     expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
 
     global.fetch = originalFetch as any;
