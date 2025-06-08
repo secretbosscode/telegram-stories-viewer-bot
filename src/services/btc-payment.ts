@@ -59,9 +59,9 @@ function scheduleInvoiceCheck(
     if (result.unexpectedSenders && result.unexpectedSenders.length) {
       if (botInstance)
         await botInstance.telegram.sendMessage(
-        userId,
-        `⚠️ Payment from unexpected address(es): ${result.unexpectedSenders.join(', ')}. Please pay from ${fromAddress}.`,
-      );
+          userId,
+          `⚠️ Payment from unexpected address(es): ${result.unexpectedSenders.join(', ')}. Please pay from ${fromAddress}.`,
+        );
     }
 
     const newInv = result.invoice;
@@ -69,7 +69,10 @@ function scheduleInvoiceCheck(
     if (newInv && newInv.paid_at) {
       extendPremium(userId, 30);
       if (botInstance)
-        await botInstance.telegram.sendMessage(userId, '✅ Payment received! Premium extended by 30 days.');
+        await botInstance.telegram.sendMessage(
+          userId,
+          '✅ Payment received! Premium extended by 30 days.',
+        );
       deletePaymentCheck(invoice.id);
       paymentTimers.delete(invoice.id);
       return;
@@ -77,10 +80,10 @@ function scheduleInvoiceCheck(
       invoice = newInv;
       if (botInstance)
         await botInstance.telegram.sendMessage(
-        userId,
-        `Partial payment detected. Please send remaining ${newInv.invoice_amount.toFixed(8)} BTC to address:\n\`${newInv.user_address}\``,
-        { parse_mode: 'Markdown' },
-      );
+          userId,
+          `Partial payment detected. Please send remaining ${newInv.invoice_amount.toFixed(8)} BTC to address:\n\`${newInv.user_address}\``,
+          { parse_mode: 'Markdown' },
+        );
       deletePaymentCheck(inv.id);
       upsertPaymentCheck(newInv.id, Math.floor(Date.now() / 1000), checkStart);
       paymentTimers.delete(inv.id);
@@ -89,13 +92,23 @@ function scheduleInvoiceCheck(
     }
 
     const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
-    upsertPaymentCheck(invoice.id, Math.floor(Date.now() / 1000) + Math.floor(delay / 1000), checkStart);
+    upsertPaymentCheck(
+      invoice.id,
+      Math.floor(Date.now() / 1000) + Math.floor(delay / 1000),
+      checkStart,
+    );
     const timer = setTimeout(doCheck, delay);
     paymentTimers.set(invoice.id, timer);
   };
 
-  const initialDelay = nextCheck ? Math.max(nextCheck * 1000 - Date.now(), 0) : 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
-  upsertPaymentCheck(invoice.id, Math.floor(Date.now() / 1000) + Math.floor(initialDelay / 1000), checkStart);
+  const initialDelay = nextCheck
+    ? Math.max(nextCheck * 1000 - Date.now(), 0)
+    : 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
+  upsertPaymentCheck(
+    invoice.id,
+    Math.floor(Date.now() / 1000) + Math.floor(initialDelay / 1000),
+    checkStart,
+  );
   const timer = setTimeout(doCheck, initialDelay);
   paymentTimers.set(invoice.id, timer);
 }
@@ -117,6 +130,64 @@ async function fetchTransactions(address: string): Promise<any[]> {
     }
   }
   return [];
+}
+
+async function fetchTransactionByTxid(txid: string): Promise<any | null> {
+  const urls = [
+    `https://blockstream.info/api/tx/${txid}`,
+    `https://mempool.space/api/tx/${txid}`,
+    `https://api.blockcypher.com/v1/btc/main/txs/${txid}`,
+  ];
+  const results = await Promise.allSettled(
+    urls.map((u) => fetch(u).then((r) => r.json())),
+  );
+  for (const res of results) {
+    if (res.status === 'fulfilled') return res.value;
+  }
+  return null;
+}
+
+export async function verifyPaymentByTxid(
+  invoice: PaymentRow,
+  txid: string,
+): Promise<PaymentRow | null> {
+  const tx = await fetchTransactionByTxid(txid);
+  if (!tx) return null;
+
+  const outs = tx.vout ?? tx.outputs;
+  const ins = tx.vin ?? tx.inputs;
+
+  const dest = outs?.find(
+    (o: any) =>
+      o.scriptpubkey_address === invoice.user_address ||
+      o.addr === invoice.user_address ||
+      o.addresses?.includes?.(invoice.user_address),
+  );
+  if (!dest) return null;
+
+  const fromAddrs = (ins || [])
+    .map(
+      (i: any) =>
+        i.prevout?.scriptpubkey_address || i.prev_out?.addr || i.addresses?.[0],
+    )
+    .filter(Boolean);
+
+  if (!invoice.from_address && fromAddrs.length) {
+    updateFromAddress(invoice.id, fromAddrs[0]);
+    invoice.from_address = fromAddrs[0];
+  }
+
+  if (invoice.from_address && !fromAddrs.includes(invoice.from_address)) {
+    return null;
+  }
+
+  const val = dest.value ?? dest.prevout?.value ?? dest.output_value;
+  if (typeof val === 'number') {
+    updatePaidAmount(invoice.id, val / 1e8);
+    markInvoicePaid(invoice.id);
+  }
+
+  return getInvoice(invoice.id) || null;
 }
 
 /** Fetch BTC/USD prices from multiple sources and return the average */
@@ -247,17 +318,15 @@ export async function checkPayment(
       );
       if (!toUs) continue;
       const fromAddrs = (ins || [])
-        .map((i: any) =>
-          i.prevout?.scriptpubkey_address ||
-          i.prev_out?.addr ||
-          i.addresses?.[0],
+        .map(
+          (i: any) =>
+            i.prevout?.scriptpubkey_address ||
+            i.prev_out?.addr ||
+            i.addresses?.[0],
         )
         .filter(Boolean);
       if (fromAddrs.includes(invoice.from_address)) {
-        const val =
-          toUs.value ??
-          toUs.prevout?.value ??
-          toUs.output_value;
+        const val = toUs.value ?? toUs.prevout?.value ?? toUs.output_value;
         if (typeof val === 'number') receivedFromUser += val / 1e8;
       } else {
         fromAddrs.forEach((a: string) => unexpected.add(a));
@@ -313,6 +382,12 @@ export function resumePendingChecks(): void {
       deletePaymentCheck(row.invoice_id);
       continue;
     }
-    scheduleInvoiceCheck(inv, inv.user_id, inv.from_address, row.check_start, row.next_check);
+    scheduleInvoiceCheck(
+      inv,
+      inv.user_id,
+      inv.from_address,
+      row.check_start,
+      row.next_check,
+    );
   }
 }
