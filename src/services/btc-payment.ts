@@ -27,6 +27,10 @@ export interface PaymentCheckResult {
 
 const paymentTimers = new Map<number, NodeJS.Timeout>();
 
+// Allow invoices to be considered paid when at least 90% of the expected
+// amount is received to account for network fees.
+const PAYMENT_TOLERANCE = 0.1; // 10%
+
 function scheduleInvoiceCheck(
   invoice: PaymentRow,
   userId: string,
@@ -265,7 +269,10 @@ export async function checkPayment(
     updatePaidAmount(invoice.id, receivedFromUser - invoice.paid_amount);
   }
 
-  if (receivedFromUser >= invoice.invoice_amount) {
+  // Accept slightly underpaid invoices if they meet the tolerance threshold.
+  const threshold = invoice.invoice_amount * (1 - PAYMENT_TOLERANCE);
+
+  if (receivedFromUser >= threshold) {
     markInvoicePaid(invoice.id);
     return { invoice: getInvoice(invoice.id) || null };
   }
