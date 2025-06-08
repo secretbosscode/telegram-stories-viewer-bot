@@ -23,7 +23,7 @@ export interface DownloadQueueItem {
   id: string; // Changed from number to string to match DB output
   chatId: string; // Mapped from telegram_id in DB
   task: UserInfo; // Contains detailed task info
-  status: 'pending' | 'in_progress' | 'done' | 'error';
+  status: 'pending' | 'processing' | 'done' | 'error';
   enqueued_ts: number;
   processed_ts?: number;
   error?: string;
