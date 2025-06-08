@@ -82,4 +82,27 @@ describe('callback query handler', () => {
       inline_keyboard: [[{ text: '1', callback_data: 'user&[1]' }]],
     });
   });
+
+  test('deletes message when last button pressed', async () => {
+    const ctx = {
+      callbackQuery: {
+        data: 'user&[1]',
+        message: {
+          message_id: 42,
+          reply_markup: {
+            inline_keyboard: [[{ text: '1', callback_data: 'user&[1]' }]],
+          },
+        },
+      },
+      from: { id: 1, language_code: 'en' },
+      editMessageReplyMarkup: jest.fn(),
+      deleteMessage: jest.fn(),
+      answerCbQuery: jest.fn(),
+    } as any;
+
+    await handleCallbackQuery(ctx);
+
+    expect(ctx.editMessageReplyMarkup).toHaveBeenCalledWith(undefined);
+    expect(ctx.deleteMessage).toHaveBeenCalled();
+  });
 });

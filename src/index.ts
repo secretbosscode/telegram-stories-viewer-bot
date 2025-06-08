@@ -532,6 +532,13 @@ export async function handleCallbackQuery(ctx: IContextBot) {
         await ctx.editMessageReplyMarkup(
           newKeyboard.length ? { inline_keyboard: newKeyboard } : undefined
         );
+        if (newKeyboard.length === 0) {
+          try {
+            await ctx.deleteMessage();
+          } catch {
+            /* ignore */
+          }
+        }
       } else {
         await ctx.editMessageReplyMarkup(undefined);
       }
