@@ -6,9 +6,11 @@ process.on('uncaughtException', (error, origin) => { console.error('CRITICAL_ERR
 console.log("Global error handlers have been attached.");
 
 import { IContextBot } from 'config/context-interface';
-import { BOT_ADMIN_ID, BOT_TOKEN } from 'config/env-config';
+import { BOT_ADMIN_ID, BOT_TOKEN, LOG_FILE } from 'config/env-config';
 import { initUserbot } from 'config/userbot';
 import { session, Telegraf } from 'telegraf';
+import fs from 'fs';
+import path from 'path';
 import { db, resetStuckJobs, updateFromAddress } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask } from './services/queue-manager';
@@ -42,10 +44,27 @@ setBotInstance(bot);
 const RESTART_COMMAND = 'restart';
 const extraOptions: any = { link_preview_options: { is_disabled: true } };
 
+const logPath = LOG_FILE;
+const logDir = path.dirname(logPath);
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
+
 bot.use(session());
 bot.catch((error, ctx) => {
   console.error(`A global error occurred for chat ${ctx.chat?.id}:`, error);
-  ctx.reply('Sorry, an unexpected error occurred. Please try again later.').catch(() => {});
+  const logEntry =
+    `[${new Date().toISOString()}] chat:${ctx.chat?.id} ` +
+    (error instanceof Error ? error.stack || error.message : String(error)) +
+    '\n';
+  try {
+    fs.appendFileSync(logPath, logEntry);
+  } catch (e) {
+    console.error('Failed to write to log file', e);
+  }
+  ctx
+    .reply('Sorry, an unexpected error occurred. Please try again later.')
+    .catch(() => {});
 });
 
 bot.use(async (ctx, next) => {
