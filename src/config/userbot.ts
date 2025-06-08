@@ -14,6 +14,22 @@ export class Userbot {
   private static initPromise: Promise<TelegramClient> | null = null;
 
   /**
+   * Force reinitialization of the Telegram client. Useful when the session
+   * becomes invalid (e.g. AUTH_KEY_UNREGISTERED) and we need a fresh login.
+   */
+  public static async reset(): Promise<void> {
+    if (Userbot.client) {
+      try {
+        await Userbot.client.disconnect();
+      } catch (e) {
+        console.error('[Userbot] Error while disconnecting:', e);
+      }
+    }
+    Userbot.client = null;
+    Userbot.initPromise = null;
+  }
+
+  /**
    * Returns singleton instance of TelegramClient. To avoid a race condition
    * when multiple parts of the app request the client simultaneously, the
    * first call stores the initialization promise and subsequent calls await the

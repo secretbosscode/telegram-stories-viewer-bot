@@ -84,6 +84,15 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
 
   } catch (error: any) {
     console.error(`[GetStories] Error in getAllStoriesFx for task ${task.link}:`, error);
+    if (error?.message?.toLowerCase().includes('auth') && error?.message?.includes('key')) {
+      console.warn('[GetStories] Possible session error, reinitializing Userbot');
+      try {
+        await Userbot.reset();
+        await Userbot.getInstance();
+      } catch (reinitErr) {
+        console.error('[GetStories] Failed to reinitialize Userbot:', reinitErr);
+      }
+    }
     if (error instanceof FloodWaitError) {
       const seconds = error.seconds || 60;
       return `⚠️ Too many requests. Please wait about ${Math.ceil(seconds / 60)} minute(s).`;
