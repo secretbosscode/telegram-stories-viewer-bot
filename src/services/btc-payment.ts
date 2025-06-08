@@ -5,14 +5,95 @@ import {
   getInvoice,
   updateFromAddress,
   PaymentRow,
+  upsertPaymentCheck,
+  deletePaymentCheck,
+  listPaymentChecks,
+  PaymentCheckRow,
 } from '../db';
 import { IContextBot } from 'config/context-interface';
 import { BTC_WALLET_ADDRESS } from 'config/env-config';
 import { extendPremium } from './premium-service';
+import type { Telegraf } from 'telegraf';
+
+let botInstance: Telegraf<IContextBot> | null = null;
+export function setBotInstance(b: Telegraf<IContextBot>): void {
+  botInstance = b;
+}
 
 export interface PaymentCheckResult {
   invoice: PaymentRow | null;
   unexpectedSenders?: string[];
+}
+
+const paymentTimers = new Map<number, NodeJS.Timeout>();
+
+function scheduleInvoiceCheck(
+  invoice: PaymentRow,
+  userId: string,
+  fromAddress: string,
+  checkStart: number,
+  nextCheck?: number,
+): void {
+  const doCheck = async () => {
+    const inv = getInvoice(invoice.id);
+    if (!inv) {
+      deletePaymentCheck(invoice.id);
+      paymentTimers.delete(invoice.id);
+      return;
+    }
+
+    if (Date.now() - checkStart * 1000 > 24 * 60 * 60 * 1000) {
+      if (botInstance)
+        await botInstance.telegram.sendMessage(userId, '❌ Invoice expired.');
+      deletePaymentCheck(invoice.id);
+      paymentTimers.delete(invoice.id);
+      return;
+    }
+
+    const result = await checkPayment(inv);
+
+    if (result.unexpectedSenders && result.unexpectedSenders.length) {
+      if (botInstance)
+        await botInstance.telegram.sendMessage(
+        userId,
+        `⚠️ Payment from unexpected address(es): ${result.unexpectedSenders.join(', ')}. Please pay from ${fromAddress}.`,
+      );
+    }
+
+    const newInv = result.invoice;
+
+    if (newInv && newInv.paid_at) {
+      extendPremium(userId, 30);
+      if (botInstance)
+        await botInstance.telegram.sendMessage(userId, '✅ Payment received! Premium extended by 30 days.');
+      deletePaymentCheck(invoice.id);
+      paymentTimers.delete(invoice.id);
+      return;
+    } else if (newInv && newInv.id !== invoice.id) {
+      invoice = newInv;
+      if (botInstance)
+        await botInstance.telegram.sendMessage(
+        userId,
+        `Partial payment detected. Please send remaining ${newInv.invoice_amount.toFixed(8)} BTC to address:\n\`${newInv.user_address}\``,
+        { parse_mode: 'Markdown' },
+      );
+      deletePaymentCheck(inv.id);
+      upsertPaymentCheck(newInv.id, Math.floor(Date.now() / 1000), checkStart);
+      paymentTimers.delete(inv.id);
+      scheduleInvoiceCheck(newInv, userId, fromAddress, checkStart);
+      return;
+    }
+
+    const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
+    upsertPaymentCheck(invoice.id, Math.floor(Date.now() / 1000) + Math.floor(delay / 1000), checkStart);
+    const timer = setTimeout(doCheck, delay);
+    paymentTimers.set(invoice.id, timer);
+  };
+
+  const initialDelay = nextCheck ? Math.max(nextCheck * 1000 - Date.now(), 0) : 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
+  upsertPaymentCheck(invoice.id, Math.floor(Date.now() / 1000) + Math.floor(initialDelay / 1000), checkStart);
+  const timer = setTimeout(doCheck, initialDelay);
+  paymentTimers.set(invoice.id, timer);
 }
 
 async function fetchTransactions(address: string): Promise<any[]> {
@@ -177,45 +258,29 @@ export async function checkPayment(
 
 export function schedulePaymentCheck(ctx: IContextBot): void {
   const state = ctx.session.upgrade;
-  if (!state) return;
+  if (!state || !state.fromAddress) return;
 
-  const doCheck = async () => {
-    const st = ctx.session.upgrade;
-    if (!st) return;
-    if (!st.fromAddress) return;
-    if (Date.now() - (st.checkStart ?? 0) > 24 * 60 * 60 * 1000) {
-      await ctx.reply('❌ Invoice expired.');
-      ctx.session.upgrade = undefined;
-      return;
+  if (!state.checkStart) state.checkStart = Date.now();
+  scheduleInvoiceCheck(
+    state.invoice,
+    String(ctx.from!.id),
+    state.fromAddress,
+    Math.floor(state.checkStart / 1000),
+  );
+}
+
+export function resumePendingChecks(): void {
+  const rows = listPaymentChecks();
+  for (const row of rows) {
+    const inv = getInvoice(row.invoice_id);
+    if (!inv || inv.paid_at || !inv.from_address) {
+      deletePaymentCheck(row.invoice_id);
+      continue;
     }
-
-    const result = await checkPayment(st.invoice);
-
-    if (result.unexpectedSenders && result.unexpectedSenders.length) {
-      await ctx.reply(
-        `⚠️ Payment from unexpected address(es): ${result.unexpectedSenders.join(', ')}. Please pay from ${st.fromAddress}.`,
-      );
+    if (inv.expires_at && inv.expires_at < Math.floor(Date.now() / 1000)) {
+      deletePaymentCheck(row.invoice_id);
+      continue;
     }
-
-    const inv = result.invoice;
-
-    if (inv && inv.paid_at) {
-      extendPremium(String(ctx.from!.id), 30);
-      await ctx.reply('✅ Payment received! Premium extended by 30 days.');
-      ctx.session.upgrade = undefined;
-      return;
-    } else if (inv && inv.id !== st.invoice.id) {
-      st.invoice = inv;
-      await ctx.reply(
-        `Partial payment detected. Please send remaining ${inv.invoice_amount.toFixed(8)} BTC to address:\n\`${inv.user_address}\``,
-        { parse_mode: 'Markdown' },
-      );
-    }
-
-    const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
-    st.timerId = setTimeout(doCheck, delay);
-  };
-
-  const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
-  state.timerId = setTimeout(doCheck, delay);
+    scheduleInvoiceCheck(inv, inv.user_id, inv.from_address, row.check_start, row.next_check);
+  }
 }
