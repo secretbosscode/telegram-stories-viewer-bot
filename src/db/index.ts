@@ -77,6 +77,15 @@ if (!paymentColumns.some((c) => c.name === 'from_address')) {
   db.exec('ALTER TABLE payments ADD COLUMN from_address TEXT');
 }
 
+// Payment checks table to persist pending invoice checks across restarts
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payment_checks (
+    invoice_id INTEGER PRIMARY KEY,
+    next_check INTEGER NOT NULL,
+    check_start INTEGER NOT NULL
+  );
+`);
+
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
@@ -316,4 +325,33 @@ export function markInvoicePaid(id: number): void {
 
 export function getInvoice(id: number): PaymentRow | undefined {
   return db.prepare(`SELECT * FROM payments WHERE id = ?`).get(id) as PaymentRow | undefined;
+}
+
+// ----- Payment check persistence -----
+export interface PaymentCheckRow {
+  invoice_id: number;
+  next_check: number;
+  check_start: number;
+}
+
+export function upsertPaymentCheck(
+  invoice_id: number,
+  next_check: number,
+  check_start?: number,
+): void {
+  db.prepare(
+    `INSERT INTO payment_checks (invoice_id, next_check, check_start)
+     VALUES (?, ?, ?)
+     ON CONFLICT(invoice_id) DO UPDATE SET next_check = excluded.next_check`
+  ).run(invoice_id, next_check, check_start ?? Math.floor(Date.now() / 1000));
+}
+
+export function deletePaymentCheck(invoice_id: number): void {
+  db.prepare(`DELETE FROM payment_checks WHERE invoice_id = ?`).run(invoice_id);
+}
+
+export function listPaymentChecks(): PaymentCheckRow[] {
+  return db
+    .prepare(`SELECT invoice_id, next_check, check_start FROM payment_checks`)
+    .all() as PaymentCheckRow[];
 }

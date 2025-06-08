@@ -29,10 +29,16 @@ import {
   CHECK_INTERVAL_HOURS,
   MAX_MONITORS_PER_USER,
 } from './services/monitor-service';
-import { createInvoice, schedulePaymentCheck } from './services/btc-payment';
+import {
+  createInvoice,
+  schedulePaymentCheck,
+  resumePendingChecks,
+  setBotInstance,
+} from './services/btc-payment';
 import { UserInfo } from 'types';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
+setBotInstance(bot);
 const RESTART_COMMAND = 'restart';
 const extraOptions: any = { link_preview_options: { is_disabled: true } };
 
@@ -429,6 +435,7 @@ async function startApp() {
   console.log('[App] Kicking off initial queue processing...');
   processQueue();
   startMonitorLoop();
+  resumePendingChecks();
   await bot.telegram.setMyCommands([
     { command: 'start', description: 'Show usage instructions' },
     { command: 'help', description: 'Show help message' },
