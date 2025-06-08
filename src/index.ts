@@ -22,6 +22,7 @@ import {
   unblockUser,
   isUserBlocked,
   listBlockedUsers,
+  getInvoice,
 } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
@@ -149,7 +150,7 @@ bot.command('help', async (ctx) => {
     '`/help` - Show this help message\n' +
     '`/premium` - Info about premium features\n' +
     '`/queue` - View your place in the download queue\n' +
-    '`/verify <txid> <invoice>` - Manually verify a payment\n';
+    '`/verify <txid> <invoice>` - Manually verify a payment if it is not detected\n';
 
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
@@ -175,6 +176,8 @@ bot.command('help', async (ctx) => {
       '`/blocklist` - List blocked users\n' +
       '`/restart` - Shows the restart confirmation button\n';
   }
+  finalHelpText +=
+    '\nTo find the transaction ID (txid), check the details of your payment in your wallet.';
   // Using 'Markdown' as it's more forgiving than 'MarkdownV2' for simple text.
   await ctx.reply(finalHelpText, { parse_mode: 'Markdown' });
 });
@@ -216,6 +219,10 @@ bot.command('verify', async (ctx) => {
   const [txid, invoiceIdStr] = args;
   const invoiceId = parseInt(invoiceIdStr, 10);
   if (!txid || !invoiceId) return ctx.reply('Invalid arguments.');
+  const existing = getInvoice(invoiceId);
+  if (existing && existing.paid_at) {
+    return ctx.reply('✅ This invoice has already been verified.');
+  }
   const invoice = await verifyPaymentByTxid(invoiceId, txid);
   if (invoice && invoice.paid_at) {
     extendPremium(String(ctx.from.id), 30);
@@ -387,7 +394,11 @@ bot.command('listpremium', async (ctx) => {
     const rows = db.prepare('SELECT telegram_id, username FROM users WHERE is_premium = 1').all() as any[];
     if (!rows.length) return ctx.reply('No premium users found.');
     let msg = `🌟 Premium users (${rows.length}):\n`;
-    rows.forEach((u, i) => { msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id}\n`; });
+    rows.forEach((u, i) => {
+      const days = getPremiumDaysLeft(String(u.telegram_id));
+      const daysText = days === Infinity ? 'never expires' : `${days}d`;
+      msg += `${i + 1}. ${u.username ? '@' + u.username : u.telegram_id} - ${daysText}\n`;
+    });
     await ctx.reply(msg);
   } catch (e) { console.error("Error in /listpremium:", e); await ctx.reply("An error occurred."); }
 });
@@ -579,6 +590,7 @@ async function startApp() {
     { command: 'help', description: 'Show help message' },
     { command: 'premium', description: 'Info about premium features' },
     { command: 'upgrade', description: 'Upgrade to premium' },
+    { command: 'verify', description: 'Manually verify a payment' },
     { command: 'queue', description: 'Show your queue status' },
     { command: 'monitor', description: 'Monitor a profile for new stories' },
     { command: 'unmonitor', description: 'Stop monitoring a profile' },
