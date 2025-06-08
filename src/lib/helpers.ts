@@ -2,7 +2,12 @@
 
 // CORRECTED: Import StoriesModel and MappedStoryItem from your central types.ts file
 import { StoriesModel, MappedStoryItem } from 'types'; // <--- This import is now correct and centralized
-import { getPinnedMessageId, setPinnedMessageId } from 'repositories/user-repository';
+import {
+  getPinnedMessageId,
+  setPinnedMessageId,
+  getPinnedMessageUpdatedAt,
+  setPinnedMessageUpdatedAt,
+} from 'repositories/user-repository';
 
 const MAX_STORIES_SIZE = 45;
 
@@ -75,12 +80,18 @@ export async function updatePremiumPinnedMessage(
   telegramId: string,
   daysLeft: number,
 ): Promise<void> {
+  const lastUpdated = getPinnedMessageUpdatedAt(telegramId);
+  const now = Math.floor(Date.now() / 1000);
+  if (lastUpdated && now - lastUpdated < 86400) {
+    return;
+  }
   const daysText = daysLeft === Infinity ? 'unlimited' : daysLeft.toString();
   const text = `🌟 Premium: ${daysText} day${daysLeft === 1 ? '' : 's'} remaining`;
   const pinnedId = getPinnedMessageId(telegramId);
   if (pinnedId) {
     try {
       await bot.telegram.editMessageText(chatId, pinnedId, undefined, text);
+      setPinnedMessageUpdatedAt(telegramId, now);
       return;
     } catch (err) {
       // message might have been deleted or can't be edited
@@ -94,6 +105,7 @@ export async function updatePremiumPinnedMessage(
       disable_notification: true,
     });
     setPinnedMessageId(telegramId, msg.message_id);
+    setPinnedMessageUpdatedAt(telegramId, now);
   } catch (err) {
     console.error('Failed to update premium pinned message', err);
   }
