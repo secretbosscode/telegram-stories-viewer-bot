@@ -53,6 +53,7 @@ import {
 } from './services/btc-payment';
 import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
+import { sendProfileMedia } from 'controllers/send-profile-media';
 import { UserInfo } from 'types';
 import { sendTemporaryMessage } from 'lib';
 
@@ -72,6 +73,7 @@ const BASE_COMMANDS = [
   { command: 'freetrial', description: 'Free 7-day premium trial' },
   { command: 'verify', description: 'Manually verify a payment' },
   { command: 'queue', description: 'Show your queue status' },
+  { command: 'profile', description: 'Get profile media for a user' },
 ];
 
 const PREMIUM_COMMANDS = [
@@ -214,6 +216,7 @@ bot.command('help', async (ctx) => {
     '`/premium` - Info about premium features\n' +
     '`/freetrial` - Get 7 days of Premium access\n' +
     '`/queue` - View your place in the download queue\n' +
+    '`/profile` - Get profile media\n' +
     '`/verify <txid> <invoice>` - Manually verify a payment if it is not detected\n';
 
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
@@ -293,6 +296,16 @@ bot.command('queue', async (ctx) => {
   if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
   const msg = await getQueueStatusForUser(String(ctx.from.id));
   await sendTemporaryMessage(bot, ctx.chat!.id, msg);
+});
+
+bot.command('profile', async (ctx) => {
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length === 0) {
+    return ctx.reply('Usage: /profile <@username|+phone>');
+  }
+  const input = args[0];
+  await sendProfileMedia(ctx.chat!.id, input);
 });
 
 bot.command('monitor', async (ctx) => {
