@@ -9,6 +9,7 @@ import { createInvoice } from 'services/btc-payment';
 export async function handleUpgrade(ctx: IContextBot): Promise<void> {
   try {
     const invoice = await createInvoice(String(ctx.from!.id), 5);
+    ctx.session ??= {} as any;
     ctx.session.upgrade = {
       invoice,
       awaitingAddressUntil: Date.now() + 60 * 60 * 1000,

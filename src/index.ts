@@ -397,7 +397,7 @@ bot.on('text', async (ctx) => {
     });
   }
 
-  const upgradeState = ctx.session.upgrade;
+  const upgradeState = ctx.session?.upgrade;
   if (upgradeState && !upgradeState.fromAddress) {
     if (Date.now() > upgradeState.awaitingAddressUntil) {
       ctx.session.upgrade = undefined;

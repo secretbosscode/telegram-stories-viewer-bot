@@ -282,7 +282,7 @@ export async function checkPayment(
 }
 
 export function schedulePaymentCheck(ctx: IContextBot): void {
-  const state = ctx.session.upgrade;
+  const state = ctx.session?.upgrade;
   if (!state || !state.fromAddress) return;
 
   if (!state.checkStart) state.checkStart = Date.now();
