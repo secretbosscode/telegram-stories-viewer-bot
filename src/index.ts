@@ -214,6 +214,9 @@ bot.command('upgrade', async (ctx) => {
 bot.command('verify', async (ctx) => {
   const args = ctx.message.text.split(' ').slice(1);
   if (args.length < 2) {
+    if (isUserPremium(String(ctx.from.id))) {
+      return ctx.reply('✅ You already have Premium access.');
+    }
     return ctx.reply('Usage: /verify <txid> <invoice_id>');
   }
   const [txid, invoiceIdStr] = args;
