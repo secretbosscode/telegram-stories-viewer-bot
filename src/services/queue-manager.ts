@@ -20,7 +20,8 @@ import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 
 // How long we allow a job to run before considering it failed
-export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for regular jobs
+export const PAGINATED_PROCESSING_TIMEOUT_MS = 20 * 60 * 1000; // longer for paginated requests
 
 const COOLDOWN_HOURS = { free: 12, premium: 2, admin: 0 };
 
@@ -69,7 +70,15 @@ export async function handleNewTask(user: UserInfo) {
       return;
     }
 
-    const jobId = await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
+    const jobDetails: UserInfo = {
+      ...user,
+      storyRequestType: Array.isArray(nextStoriesIds) && nextStoriesIds.length > 0
+        ? 'paginated'
+        : user.storyRequestType,
+      isPaginated: Array.isArray(nextStoriesIds) && nextStoriesIds.length > 0,
+    };
+
+    const jobId = await enqueueDownloadFx({ telegram_id, target_username, task_details: jobDetails });
     const { position, eta } = await getQueueStatsFx(jobId);
     await sendTemporaryMessage(
       bot,
@@ -104,6 +113,10 @@ export async function processQueue() {
   const currentTask: UserInfo = { ...job.task, chatId: job.chatId, instanceId: job.id };
 
   let timedOut = false;
+  const timeoutMs = currentTask.storyRequestType === 'paginated'
+    ? PAGINATED_PROCESSING_TIMEOUT_MS
+    : PROCESSING_TIMEOUT_MS;
+
   const timeoutId = setTimeout(async () => {
     timedOut = true;
     await markErrorFx({ jobId: job.id, message: 'Processing timeout' });
@@ -114,7 +127,7 @@ export async function processQueue() {
     );
     isProcessing = false;
     setImmediate(processQueue);
-  }, PROCESSING_TIMEOUT_MS);
+  }, timeoutMs);
 
   try {
     console.log(`[QueueManager] Starting processing for ${currentTask.link} (Job ID: ${job.id})`);

@@ -16,6 +16,7 @@ export interface UserInfo {
   isPremium?: boolean;
   instanceId?: string;
   storyRequestType?: 'active' | 'pinned' | 'particular' | 'paginated';
+  isPaginated?: boolean;
 }
 
 // DownloadQueueItem: An item in the download queue (DB structure)
