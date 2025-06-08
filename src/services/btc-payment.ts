@@ -47,7 +47,7 @@ export async function createInvoice(
   expectedUsd: number,
 ): Promise<PaymentRow> {
   const price = await getBtcPriceUsd();
-  const invoiceAmount = expectedUsd / price;
+  const invoiceAmount = Math.round((expectedUsd / price) * 1e8) / 1e8;
   const expires = Math.floor(Date.now() / 1000) + 15 * 60;
   return insertInvoice(userId, invoiceAmount, BTC_WALLET_ADDRESS, expires);
 }
