@@ -11,16 +11,14 @@ services:
     container_name: ghost-stories-bot
     # This ensures the bot always restarts if it stops or if the server reboots.
     restart: unless-stopped
+    # Load environment variables from the provided .env file.
+    env_file:
+      - .env
     # This section passes the PUID and PGID to the entrypoint.sh script.
     # It's set to your TrueNAS default of 568.
     environment:
       - PUID=568
       - PGID=568
-      # You can add your BOT_TOKEN and other secrets here,
-      # but using a .env file is more secure.
-      # - BOT_TOKEN=your_token_here
-      # - BOT_ADMIN_ID=your_id_here
-      # - BTC_WALLET_ADDRESS=your_btc_wallet_here
     # This mounts your persistent data directory on the host to the /app/data
     # directory inside the container.
     volumes:

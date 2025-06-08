@@ -151,34 +151,26 @@ bot.telegram.sendMediaGroup(
 ☄️ <a href="https://effector.dev/">Effector</a> ☄️ - used for writing the business logic of the app, ensuring efficient state management and handling of complex workflows
 
 <h2>🛠 Setup</h2>
-<p>To run this project locally, follow these steps:</p>
+<p>The project can be run entirely through Docker without any manual build steps.</p>
 
-- Install all dependencies (or run <code>./setup.sh</code>)
-
-```shell
-yarn install
-```
-
-- Configure Credentials:
-
-Set up your Telegram and userbot credentials in the configuration file. Also, specify
-`BTC_WALLET_ADDRESS` with the Bitcoin address that will receive premium payments.
-
-- Start the bot:
-
-Launch the bot in development mode using:
+1. Copy <code>.env.example</code> to <code>.env</code> and fill in the required values:
+   - <code>DEV_BOT_TOKEN</code> or <code>PROD_BOT_TOKEN</code> – get your bot token from <a href="https://t.me/BotFather">BotFather</a>.
+   - <code>USERBOT_API_ID</code> and <code>USERBOT_API_HASH</code> – obtain these from <a href="https://my.telegram.org">my.telegram.org</a>.
+   - <code>USERBOT_PHONE_NUMBER</code> – the phone number of the account that will act as the userbot.
+   - Optional: <code>USERBOT_PASSWORD</code> if that account has two‑factor authentication enabled.
+   - Leave <code>USERBOT_PHONE_CODE</code> empty for the first run.
+   - Fill in <code>BOT_ADMIN_ID</code>, <code>SUPABASE_PROJECT_URL</code>, <code>SUPABASE_API_KEY</code>, <code>BTC_WALLET_ADDRESS</code>, etc.
+2. Build and start the container:
 
 ```shell
-yarn dev
+docker compose up -d
 ```
 
-- Enter Userbot Login Code:
-
-Upon starting the bot, you'll receive a login code from Telegram. Enter this code when prompted by the userbot
-
-- Ready to Go:
-
-Once the bot and userbot are up and running, the Telegram Story Viewer is ready to use!
+The first start will fail with <code>USERBOT_PHONE_CODE is required for first login!</code>.
+Telegram will send a login code to the phone number specified in <code>USERBOT_PHONE_NUMBER</code>.
+Add this code to your <code>.env</code> as <code>USERBOT_PHONE_CODE</code> and run the command again.
+Once authentication completes the session file is saved, so you can remove the
+<code>USERBOT_PHONE_CODE</code> line from the environment file.
 
 <h2>🚀 Usage</h2>
 Just send a message to the bot with the desired Telegram username, phone number, or the direct link to story. Wait for the bot to retrieve and deliver the stories back to you
