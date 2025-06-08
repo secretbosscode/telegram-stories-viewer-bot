@@ -1,4 +1,11 @@
-import { addPremiumUser, isUserPremium, removePremiumUser, getPremiumDaysLeft } from '../src/services/premium-service';
+import {
+  addPremiumUser,
+  isUserPremium,
+  removePremiumUser,
+  getPremiumDaysLeft,
+  grantFreeTrial,
+  hasUsedFreeTrial,
+} from '../src/services/premium-service';
 
 // Mock the ../db module used by premium-service to use an in-memory DB
 jest.mock('../src/db', () => {
@@ -9,6 +16,7 @@ jest.mock('../src/db', () => {
       telegram_id TEXT PRIMARY KEY NOT NULL,
       username TEXT,
       is_premium INTEGER DEFAULT 0,
+      free_trial_used INTEGER DEFAULT 0,
       premium_until INTEGER,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -53,5 +61,13 @@ describe('premium-service', () => {
     const daysLeft = getPremiumDaysLeft('4');
     expect(daysLeft).toBeGreaterThanOrEqual(1);
     expect(daysLeft).toBeLessThanOrEqual(2);
+  });
+
+  test('grantFreeTrial sets premium and marks trial used', () => {
+    grantFreeTrial('5');
+    const row = db.prepare('SELECT * FROM users WHERE telegram_id = ?').get('5') as any;
+    expect(row.is_premium).toBe(1);
+    expect(row.free_trial_used).toBe(1);
+    expect(hasUsedFreeTrial('5')).toBe(true);
   });
 });

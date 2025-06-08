@@ -9,6 +9,8 @@ export interface UserModel {
   telegram_id: string;
   username?: string;
   is_premium: 0 | 1; // SQLite stores booleans as 0 or 1
+  premium_until?: number | null;
+  free_trial_used?: 0 | 1;
   created_at: string;
 }
 

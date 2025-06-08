@@ -5,6 +5,7 @@ export interface UserRow {
   username?: string;
   is_premium?: number;
   premium_until?: number | null;
+  free_trial_used?: number;
 }
 
 /**
@@ -76,5 +77,24 @@ export const getPremiumDaysLeft = (telegramId: string): number => {
   const secondsLeft = row.premium_until - Math.floor(Date.now() / 1000);
   if (secondsLeft <= 0) return 0;
   return Math.ceil(secondsLeft / 86400);
+};
+
+export const hasUsedFreeTrial = (telegramId: string): boolean => {
+  const row = db
+    .prepare('SELECT free_trial_used FROM users WHERE telegram_id = ?')
+    .get(telegramId) as UserRow | undefined;
+  return !!row?.free_trial_used;
+};
+
+export const grantFreeTrial = (telegramId: string): void => {
+  const until = Math.floor(Date.now() / 1000) + 7 * 86400;
+  db.prepare(
+    `INSERT INTO users (telegram_id, is_premium, premium_until, free_trial_used)
+     VALUES (?, 1, ?, 1)
+     ON CONFLICT(telegram_id) DO UPDATE SET
+       is_premium = 1,
+       premium_until = excluded.premium_until,
+       free_trial_used = 1`
+  ).run(telegramId, until);
 };
 
