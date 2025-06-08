@@ -14,14 +14,18 @@ export interface UserRow {
  */
 export const isUserPremium = (telegramId: string): boolean => {
   const row = db
-    .prepare('SELECT is_premium, premium_until FROM users WHERE telegram_id = ?')
+    .prepare(
+      'SELECT is_premium, premium_until FROM users WHERE telegram_id = ?',
+    )
     .get(telegramId) as UserRow | undefined;
 
   if (!row) return false;
 
   if (row.premium_until && row.premium_until < Math.floor(Date.now() / 1000)) {
     // Expired - reset
-    db.prepare('UPDATE users SET is_premium = 0 WHERE telegram_id = ?').run(telegramId);
+    db.prepare('UPDATE users SET is_premium = 0 WHERE telegram_id = ?').run(
+      telegramId,
+    );
     return false;
   }
   return !!row.is_premium;
@@ -32,19 +36,23 @@ export const isUserPremium = (telegramId: string): boolean => {
  * @param telegramId Telegram user ID.
  * @param username (optional) Telegram username.
  */
-export const addPremiumUser = (telegramId: string, username?: string, days?: number): void => {
+export const addPremiumUser = (
+  telegramId: string,
+  username?: string,
+  days?: number,
+): void => {
   const expires = days ? Math.floor(Date.now() / 1000) + days * 86400 : null;
   if (username) {
     db.prepare(
       `INSERT INTO users (telegram_id, username, is_premium, premium_until)
        VALUES (?, ?, 1, ?)
-       ON CONFLICT(telegram_id) DO UPDATE SET is_premium = 1, username = excluded.username, premium_until = ?`
+       ON CONFLICT(telegram_id) DO UPDATE SET is_premium = 1, username = excluded.username, premium_until = ?`,
     ).run(telegramId, username, expires, expires);
   } else {
     db.prepare(
       `INSERT INTO users (telegram_id, is_premium, premium_until)
        VALUES (?, 1, ?)
-       ON CONFLICT(telegram_id) DO UPDATE SET is_premium = 1, premium_until = ?`
+       ON CONFLICT(telegram_id) DO UPDATE SET is_premium = 1, premium_until = ?`,
     ).run(telegramId, expires, expires);
   }
 };
@@ -55,14 +63,23 @@ export const addPremiumUser = (telegramId: string, username?: string, days?: num
  */
 export const removePremiumUser = (telegramId: string): void => {
   db.prepare(
-    `UPDATE users SET is_premium = 0, premium_until = NULL WHERE telegram_id = ?`
+    `UPDATE users SET is_premium = 0, premium_until = NULL WHERE telegram_id = ?`,
   ).run(telegramId);
 };
 
 export const extendPremium = (telegramId: string, days: number): void => {
   const until = Math.floor(Date.now() / 1000) + days * 86400;
   db.prepare(
-    `UPDATE users SET is_premium = 1, premium_until = ? WHERE telegram_id = ?`
+    `UPDATE users SET is_premium = 1, premium_until = ? WHERE telegram_id = ?`,
   ).run(until, telegramId);
 };
 
+export const getPremiumDaysLeft = (telegramId: string): number => {
+  const row = db
+    .prepare('SELECT premium_until FROM users WHERE telegram_id = ?')
+    .get(telegramId) as UserRow | undefined;
+  if (!row?.premium_until) return 0;
+  const now = Math.floor(Date.now() / 1000);
+  if (row.premium_until < now) return 0;
+  return Math.ceil((row.premium_until - now) / 86400);
+};
