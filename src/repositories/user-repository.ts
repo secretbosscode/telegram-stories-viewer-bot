@@ -12,6 +12,7 @@ export interface UserModel {
   premium_until?: number | null;
   free_trial_used?: 0 | 1;
   pinned_message_id?: number | null;
+  pinned_message_updated_at?: number | null;
   created_at: string;
 }
 
@@ -99,5 +100,33 @@ export const setPinnedMessageId = (
     );
   } catch (error) {
     console.error(`[DB] Error setting pinned message id for ${telegramId}:`, error);
+  }
+};
+
+export const getPinnedMessageUpdatedAt = (
+  telegramId: string,
+): number | undefined => {
+  try {
+    const row = db
+      .prepare('SELECT pinned_message_updated_at FROM users WHERE telegram_id = ?')
+      .get(telegramId) as { pinned_message_updated_at?: number } | undefined;
+    return row?.pinned_message_updated_at;
+  } catch (error) {
+    console.error(`[DB] Error getting pinned message updated_at for ${telegramId}:`, error);
+    return undefined;
+  }
+};
+
+export const setPinnedMessageUpdatedAt = (
+  telegramId: string,
+  timestamp: number | null,
+): void => {
+  try {
+    db.prepare('UPDATE users SET pinned_message_updated_at = ? WHERE telegram_id = ?').run(
+      timestamp,
+      telegramId,
+    );
+  } catch (error) {
+    console.error(`[DB] Error setting pinned message updated_at for ${telegramId}:`, error);
   }
 };
