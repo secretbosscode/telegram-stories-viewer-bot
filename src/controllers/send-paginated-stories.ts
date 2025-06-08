@@ -83,15 +83,30 @@ export async function sendPaginatedStories({
         );
       });
 
-      // Send all media as a group (album)
+      const isSingle = uploadableStories.length === 1;
+
       await bot.telegram.sendMediaGroup(
         task.chatId,
         uploadableStories.map((x) => ({
           media: { source: x.buffer! },
-          type: x.mediaType, // `mediaType` is already 'photo' | 'video' from MappedStoryItem
-          caption: x.caption ?? 'Active stories',
+          type: x.mediaType,
+          caption: isSingle ? undefined : x.caption ?? `Pinned story ${x.id}`,
         }))
       );
+
+      if (isSingle) {
+        const story = uploadableStories[0];
+        await sendTemporaryMessage(
+          bot,
+          task.chatId,
+          story.caption ?? `Pinned story ${story.id}`,
+        ).catch((err) => {
+          console.error(
+            `[sendPaginatedStories] Failed to send temporary caption to ${task.chatId}:`,
+            err,
+          );
+        });
+      }
     } else {
       await bot.telegram
         .sendMessage(
