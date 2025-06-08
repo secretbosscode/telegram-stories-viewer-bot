@@ -13,6 +13,9 @@ import {
   MonitorRow,
   getMonitor,
   findMonitor,
+  markStorySent,
+  listSentStoryIds,
+  cleanupExpiredSentStories,
 } from '../db';
 import { UserInfo } from 'types';
 import { BOT_ADMIN_ID } from 'config/env-config';
@@ -55,7 +58,7 @@ async function fetchActiveStories(username: string) {
   const client = await Userbot.getInstance();
   const entity = await client.getEntity(username);
   const activeResult = await client.invoke(
-    new Api.stories.GetPeerStories({ peer: entity })
+    new Api.stories.GetPeerStories({ peer: entity }),
   );
   return mapStories(activeResult.stories?.stories || []);
 }
@@ -77,14 +80,21 @@ async function checkSingleMonitor(id: number) {
     linkType: 'username',
     locale: '',
     initTime: Date.now(),
-    isPremium: isUserPremium(m.telegram_id) || m.telegram_id === BOT_ADMIN_ID.toString(),
+    isPremium:
+      isUserPremium(m.telegram_id) || m.telegram_id === BOT_ADMIN_ID.toString(),
   };
 
   const mapped = await fetchActiveStories(task.link);
-  if (mapped.length) {
-    await sendActiveStories({ stories: mapped, task });
+  cleanupExpiredSentStories();
+  const sentIds = new Set(listSentStoryIds(m.id));
+  const newStories = mapped.filter((s) => !sentIds.has(s.id));
+  if (newStories.length) {
+    await sendActiveStories({ stories: newStories, task });
+    for (const s of newStories) {
+      const expiry = Math.floor(s.date.getTime() / 1000) + 24 * 3600;
+      markStorySent(m.id, s.id, expiry);
+    }
   }
   updateMonitorChecked(m.id);
   scheduleMonitor({ ...m, last_checked: Math.floor(Date.now() / 1000) });
 }
-

@@ -62,6 +62,16 @@ db.exec(`
   );
 `);
 
+// Table storing which stories were already sent for each monitor
+db.exec(`
+  CREATE TABLE IF NOT EXISTS monitor_sent_stories (
+    monitor_id INTEGER NOT NULL,
+    story_id INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (monitor_id, story_id)
+  );
+`);
+
 // Payments table for BTC invoices
 db.exec(`
   CREATE TABLE IF NOT EXISTS payments (
@@ -358,6 +368,32 @@ export function getDueMonitors(cutoff: number): MonitorRow[] {
 
 export function updateMonitorChecked(id: number): void {
   db.prepare(`UPDATE monitors SET last_checked = strftime('%s','now') WHERE id = ?`).run(id);
+}
+
+// ----- Monitor sent stories utils -----
+export function markStorySent(
+  monitor_id: number,
+  story_id: number,
+  expires_at: number,
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO monitor_sent_stories (monitor_id, story_id, expires_at) VALUES (?, ?, ?)`,
+  ).run(monitor_id, story_id, expires_at);
+}
+
+export function listSentStoryIds(monitor_id: number): number[] {
+  const now = Math.floor(Date.now() / 1000);
+  const rows = db
+    .prepare(
+      `SELECT story_id FROM monitor_sent_stories WHERE monitor_id = ? AND expires_at > ?`,
+    )
+    .all(monitor_id, now) as { story_id: number }[];
+  return rows.map((r) => r.story_id);
+}
+
+export function cleanupExpiredSentStories(): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(`DELETE FROM monitor_sent_stories WHERE expires_at <= ?`).run(now);
 }
 
 // ----- Payment utils -----
