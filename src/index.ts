@@ -50,6 +50,7 @@ import {
   verifyPaymentByTxid,
 } from './services/btc-payment';
 import { handleUpgrade } from 'controllers/upgrade';
+import { handlePremium } from 'controllers/premium';
 import { UserInfo } from 'types';
 import { sendTemporaryMessage } from 'lib';
 
@@ -103,6 +104,11 @@ bot.use(async (ctx, next) => {
   try {
     const id = ctx.from?.id;
     if (!id) return;
+    const text =
+      ctx.updateType === 'message' && ctx.message && 'text' in ctx.message
+        ? ctx.message.text
+        : '';
+    if (text.startsWith('/premium')) return;
     if (isUserPremium(String(id))) {
       const days = getPremiumDaysLeft(String(id));
       const daysText = days === Infinity ? 'unlimited' : days.toString();
@@ -182,30 +188,7 @@ bot.command('help', async (ctx) => {
   await ctx.reply(finalHelpText, { parse_mode: 'Markdown' });
 });
 
-bot.command('premium', async (ctx) => {
-  const userId = String(ctx.from.id);
-  if (isUserPremium(userId)) {
-    const days = getPremiumDaysLeft(userId);
-    const daysText =
-      days === Infinity ? 'never expires' : `${days} day${days === 1 ? '' : 's'}`;
-    await ctx.reply(
-      `✅ You already have Premium access. Your plan ${
-        days === Infinity ? 'never expires.' : 'expires in ' + daysText + '.'
-      }`
-    );
-    return;
-  }
-  await ctx.reply(
-    '🌟 *Premium Access*\n\n' +
-      'Premium users get:\n' +
-      '✅ Unlimited story downloads\n' +
-      `✅ Monitor up to ${MAX_MONITORS_PER_USER} users' active stories\n` +
-      '✅ No cooldowns or waiting in queues\n\n' +
-      'Run `/upgrade` to unlock Premium features.\n' +
-      'You will receive a unique payment address. Invoices expire after one hour.',
-    { parse_mode: 'Markdown' }
-  );
-});
+bot.command('premium', handlePremium);
 
 bot.command('upgrade', async (ctx) => {
   await handleUpgrade(ctx);
