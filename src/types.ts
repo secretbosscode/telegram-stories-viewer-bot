@@ -76,3 +76,8 @@ export interface NotifyAdminParams {
   task?: UserInfo;
   errorInfo?: { cause: any; message?: string };
 }
+
+export interface BlockedUserRow {
+  telegram_id: string;
+  blocked_at: number;
+}
