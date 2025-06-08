@@ -168,6 +168,9 @@ bot.command('help', async (ctx) => {
       '`/listpremium` - List all premium users\n' +
       '`/users` - List all users\n' +
       '`/history` - Recent user activity\n' +
+      '`/block <ID or @username>` - Block a user\n' +
+      '`/unblock <ID or @username>` - Unblock a user\n' +
+      '`/blocklist` - List blocked users\n' +
       '`/restart` - Shows the restart confirmation button\n';
   }
   // Using 'Markdown' as it's more forgiving than 'MarkdownV2' for simple text.
