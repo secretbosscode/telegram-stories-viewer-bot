@@ -26,13 +26,33 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     // `stories` here is expected to be `MappedStoryItem[]` from SendStoriesArgs
     let mapped: StoriesModel = stories; // Explicitly typed mapped to StoriesModel (MappedStoryItem[])
 
+    const isAdmin = task.chatId === BOT_ADMIN_ID.toString();
+
     // =========================================================================
     // CORE BUSINESS LOGIC: User Limits and Premium Upsell
     // This block enforces the story limit for non-privileged users.
     // =========================================================================
-    const isPrivileged = task.isPremium || task.chatId === BOT_ADMIN_ID.toString();
+    const isPrivileged = task.isPremium || isAdmin;
     const STORY_LIMIT_FOR_FREE_USERS = 5;
     let wasLimited = false;
+
+    // Pagination setup for premium users (non-admin) if too many stories
+    const PER_PAGE = 5;
+    let hasMorePages = false;
+    const nextStories: Record<string, number[]> = {};
+
+    if (task.isPremium && !isAdmin && mapped.length > PER_PAGE) {
+      hasMorePages = true;
+      const currentStories: MappedStoryItem[] = mapped.slice(0, PER_PAGE);
+      for (let i = PER_PAGE; i < mapped.length; i += PER_PAGE) {
+        const from = i + 1;
+        const to = Math.min(i + PER_PAGE, mapped.length);
+        nextStories[`${from}-${to}`] = mapped
+          .slice(i, i + PER_PAGE)
+          .map((x: MappedStoryItem) => x.id);
+      }
+      mapped = currentStories;
+    }
 
     if (!isPrivileged && mapped.length > STORY_LIMIT_FOR_FREE_USERS) {
       console.log(`[SendPinnedStories] Limiting non-premium user ${task.chatId} to ${STORY_LIMIT_FOR_FREE_USERS} stories.`);
@@ -108,6 +128,33 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
             throw sendError;
         }
         await timeout(500);
+      }
+
+      if (hasMorePages) {
+        const btns = Object.entries(nextStories).map(
+          ([pages, nextStoriesIds]: [string, number[]]) => ({
+            text: `📥 ${pages} 📥`,
+            callback_data: `${task.link}&${JSON.stringify(nextStoriesIds)}`,
+          })
+        );
+        const keyboard = btns.reduce(
+          (
+            acc: InlineKeyboardButton[][],
+            curr: InlineKeyboardButton,
+            index: number
+          ) => {
+            const chunkIndex = Math.floor(index / 3);
+            if (!acc[chunkIndex]) acc[chunkIndex] = [];
+            acc[chunkIndex].push(curr);
+            return acc;
+          },
+          [] as InlineKeyboardButton[][]
+        );
+        await bot.telegram.sendMessage(
+          task.chatId,
+          `Uploaded ${PER_PAGE}/${stories.length} pinned stories ✅`,
+          Markup.inlineKeyboard(keyboard)
+        );
       }
     } else {
       await bot.telegram.sendMessage(
