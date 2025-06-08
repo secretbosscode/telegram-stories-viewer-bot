@@ -55,4 +55,31 @@ describe('callback query handler', () => {
     expect(handleNewTask).toHaveBeenCalled();
     expect(ctx.editMessageReplyMarkup).toHaveBeenCalled();
   });
+
+  test('only removes pressed button from keyboard', async () => {
+    const ctx = {
+      callbackQuery: {
+        data: 'user&[2]',
+        message: {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '1', callback_data: 'user&[1]' },
+                { text: '2', callback_data: 'user&[2]' },
+              ],
+            ],
+          },
+        },
+      },
+      from: { id: 1, language_code: 'en' },
+      editMessageReplyMarkup: jest.fn(),
+      answerCbQuery: jest.fn(),
+    } as any;
+
+    await handleCallbackQuery(ctx);
+
+    expect(ctx.editMessageReplyMarkup).toHaveBeenCalledWith({
+      inline_keyboard: [[{ text: '1', callback_data: 'user&[1]' }]],
+    });
+  });
 });
