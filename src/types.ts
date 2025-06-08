@@ -81,4 +81,5 @@ export interface NotifyAdminParams {
 export interface BlockedUserRow {
   telegram_id: string;
   blocked_at: number;
+  is_bot: number;
 }
