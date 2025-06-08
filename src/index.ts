@@ -77,7 +77,7 @@ bot.command('help', async (ctx) => {
     finalHelpText +=
       '\n*Premium Commands:*\n' +
       `\`/monitor\` - Monitor a profile for new stories (${limitDesc})\n` +
-      '               (use @username or +phone like +19875551234, no hyphens)\n' +
+      '               (use @username or a phone number like +19875551234, no hyphens)\n' +
       '`/unmonitor` - Stop monitoring a profile\n';
   }
 
