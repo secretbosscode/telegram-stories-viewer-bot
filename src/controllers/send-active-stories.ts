@@ -61,7 +61,14 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
 
   try {
     // --- User notification: downloading ---
-    await bot.telegram.sendMessage(task.chatId, '⏳ Downloading Active stories...').catch(() => null);
+    await bot.telegram
+      .sendMessage(task.chatId, '⏳ Downloading Active stories...')
+      .catch((err) => {
+        console.error(
+          `[sendActiveStories] Failed to send 'Downloading Active stories' message to ${task.chatId}:`,
+          err
+        );
+      });
 
     // --- Download stories to buffer ---
     await downloadStories(mapped, 'active');
@@ -73,10 +80,17 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
 
     // --- Notify user about upload ---
     if (uploadableStories.length > 0) {
-      await bot.telegram.sendMessage(
-        task.chatId,
-        `📥 ${uploadableStories.length} Active stories downloaded successfully!\n⏳ Uploading stories to Telegram...`
-      ).catch(() => null);
+      await bot.telegram
+        .sendMessage(
+          task.chatId,
+          `📥 ${uploadableStories.length} Active stories downloaded successfully!\n⏳ Uploading stories to Telegram...`
+        )
+        .catch((err) => {
+          console.error(
+            `[sendActiveStories] Failed to send 'Uploading' message to ${task.chatId}:`,
+            err
+          );
+        });
 
       // --- Send in chunks (albums) ---
       const chunkedList = chunkMediafiles(uploadableStories);
@@ -135,7 +149,17 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     } as NotifyAdminParams);
     console.error('[sendActiveStories] Error sending ACTIVE stories:', error);
     try {
-      await bot.telegram.sendMessage(task.chatId, 'An error occurred while sending stories. The admin has been notified.').catch(() => null);
+      await bot.telegram
+        .sendMessage(
+          task.chatId,
+          'An error occurred while sending stories. The admin has been notified.'
+        )
+        .catch((err) => {
+          console.error(
+            `[sendActiveStories] Failed to notify ${task.chatId} about general error:`,
+            err
+          );
+        });
     } catch (_) {/* ignore */}
     throw error;
   }
