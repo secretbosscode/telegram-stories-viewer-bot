@@ -56,6 +56,7 @@ import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
 import { UserInfo } from 'types';
 import { sendTemporaryMessage } from 'lib';
+import { recordProfileRequestFx, wasProfileRequestedRecentlyFx } from './db/effects';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
 setBotInstance(bot);
@@ -305,6 +306,24 @@ bot.command('profile', async (ctx) => {
     return ctx.reply('Usage: /profile <@username|+phone>');
   }
   const input = args[0];
+  const userId = String(ctx.from.id);
+  const isAdmin = ctx.from.id === BOT_ADMIN_ID;
+  const isPremium = isUserPremium(userId);
+  const cooldown = isAdmin ? 0 : isPremium ? 2 : 12;
+
+  if (
+    await wasProfileRequestedRecentlyFx({
+      telegram_id: userId,
+      target_username: input,
+      hours: cooldown,
+    })
+  ) {
+    return ctx.reply(
+      `⏳ You can request profile media for "${input}" once every ${cooldown} hours.`,
+    );
+  }
+
+  await recordProfileRequestFx({ telegram_id: userId, target_username: input });
   await sendProfileMedia(ctx.chat!.id, input);
 });
 

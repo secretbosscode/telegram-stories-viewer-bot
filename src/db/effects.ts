@@ -55,3 +55,13 @@ export const getQueueStatsFx = createEffect((jobId: number) => db.getQueueStats(
 
 // Fetch recent history of downloads for admin reporting
 export const getRecentHistoryFx = createEffect((limit: number) => db.getRecentHistory(limit));
+
+export const recordProfileRequestFx = createEffect(
+  (params: { telegram_id: string; target_username: string }) =>
+    db.recordProfileRequest(params.telegram_id, params.target_username),
+);
+
+export const wasProfileRequestedRecentlyFx = createEffect(
+  (params: { telegram_id: string; target_username: string; hours: number }) =>
+    db.wasProfileRequestedRecently(params.telegram_id, params.target_username, params.hours),
+);

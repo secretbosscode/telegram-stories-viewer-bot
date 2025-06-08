@@ -116,6 +116,15 @@ db.exec(`
   );
 `);
 
+// Store recent profile media requests for anti-spam checks
+db.exec(`
+  CREATE TABLE IF NOT EXISTS profile_requests (
+    telegram_id TEXT NOT NULL,
+    target_username TEXT NOT NULL,
+    requested_at INTEGER NOT NULL
+  );
+`);
+
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
@@ -228,6 +237,27 @@ export function wasRecentlyDownloaded(telegram_id: string, target_username: stri
     WHERE telegram_id = ? AND target_username = ? AND status = 'done' AND processed_ts > ?
     LIMIT 1
   `).get(telegram_id, target_username, cutoff);
+  return !!row;
+}
+
+export function recordProfileRequest(telegram_id: string, target_username: string): void {
+  db.prepare(
+    `INSERT INTO profile_requests (telegram_id, target_username, requested_at) VALUES (?, ?, strftime('%s','now'))`,
+  ).run(telegram_id, target_username);
+}
+
+export function wasProfileRequestedRecently(
+  telegram_id: string,
+  target_username: string,
+  hours: number,
+): boolean {
+  if (hours <= 0) return false;
+  const cutoff = Math.floor(Date.now() / 1000) - hours * 3600;
+  const row = db
+    .prepare(
+      `SELECT 1 FROM profile_requests WHERE telegram_id = ? AND target_username = ? AND requested_at > ? LIMIT 1`,
+    )
+    .get(telegram_id, target_username, cutoff);
   return !!row;
 }
 
