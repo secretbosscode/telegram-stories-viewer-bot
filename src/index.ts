@@ -16,7 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import { db, resetStuckJobs, updateFromAddress } from './db';
 import { getRecentHistoryFx } from './db/effects';
-import { processQueue, handleNewTask } from './services/queue-manager';
+import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
 import {
   isUserPremium,
@@ -168,6 +168,12 @@ bot.command('premium', async (ctx) => {
 
 bot.command('upgrade', async (ctx) => {
   await handleUpgrade(ctx);
+});
+
+bot.command('queue', async (ctx) => {
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  const msg = await getQueueStatusForUser(String(ctx.from.id));
+  await sendTemporaryMessage(bot, ctx.chat!.id, msg);
 });
 
 bot.command('monitor', async (ctx) => {
@@ -467,6 +473,7 @@ async function startApp() {
     { command: 'help', description: 'Show help message' },
     { command: 'premium', description: 'Info about premium features' },
     { command: 'upgrade', description: 'Upgrade to premium' },
+    { command: 'queue', description: 'Show your queue status' },
     { command: 'monitor', description: 'Monitor a profile for new stories' },
     { command: 'unmonitor', description: 'Stop monitoring a profile' },
   ]);

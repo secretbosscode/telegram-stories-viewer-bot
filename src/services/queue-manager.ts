@@ -9,7 +9,9 @@ import {
   cleanupQueueFx,
   wasRecentlyDownloadedFx,
   isDuplicatePendingFx,
-} from 'db/effects'; 
+  getQueueStatsFx,
+  findPendingJobFx,
+} from 'db/effects';
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
 import { sendTemporaryMessage } from 'lib';
@@ -18,6 +20,21 @@ import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 
 const COOLDOWN_HOURS = { free: 12, premium: 2, admin: 0 };
+
+function formatEta(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}m ${s}s`;
+}
+
+export async function getQueueStatusForUser(telegram_id: string): Promise<string> {
+  const jobId = await findPendingJobFx(telegram_id);
+  if (!jobId) {
+    return '✅ You have no items in the queue.';
+  }
+  const { position, eta } = await getQueueStatsFx(jobId);
+  return `⏳ Queue position: ${position}. Estimated wait ${formatEta(eta)}.`;
+}
 
 function getCooldownHours({ isPremium, isAdmin }: { isPremium?: boolean; isAdmin?: boolean }) {
   if (isAdmin) return COOLDOWN_HOURS.admin;
@@ -48,11 +65,12 @@ export async function handleNewTask(user: UserInfo) {
       }
     }
 
-    await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
+    const jobId = await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
+    const { position, eta } = await getQueueStatsFx(jobId);
     await sendTemporaryMessage(
       bot,
       telegram_id,
-      `✅ Your request for ${target_username} has been queued!`
+      `✅ Your request for ${target_username} has been queued!\nPosition: ${position} | ETA: ${formatEta(eta)}`,
     );
     
     setImmediate(processQueue);

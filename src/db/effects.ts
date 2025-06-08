@@ -10,9 +10,11 @@ import { DownloadQueueItem, UserInfo } from 'types';
 // ensuring no data is lost when a task is queued.
 // =========================================================================
 export const enqueueDownloadFx = createEffect(
-  async (params: { telegram_id: string; target_username: string; task_details: UserInfo }): Promise<void> => {
-    await db.enqueueDownload(params.telegram_id, params.target_username, params.task_details);
-  }
+  async (
+    params: { telegram_id: string; target_username: string; task_details: UserInfo },
+  ): Promise<number> => {
+    return db.enqueueDownload(params.telegram_id, params.target_username, params.task_details);
+  },
 );
 
 export const getNextQueueItemFx = createEffect<void, DownloadQueueItem | null>(() => db.getNextQueueItem());
@@ -40,6 +42,10 @@ export const isDuplicatePendingFx = createEffect(
     return db.isDuplicatePending(params.telegram_id, params.target_username);
   }
 );
+
+export const findPendingJobFx = createEffect((telegram_id: string) => db.findPendingJobId(telegram_id));
+
+export const getQueueStatsFx = createEffect((jobId: number) => db.getQueueStats(jobId));
 
 // Fetch recent history of downloads for admin reporting
 export const getRecentHistoryFx = createEffect((limit: number) => db.getRecentHistory(limit));
