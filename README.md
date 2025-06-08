@@ -145,9 +145,9 @@ bot.telegram.sendMediaGroup(
 <h2>🛠 Setup</h2>
 <p>To run this project locally, follow these steps:</p>
 
-- Install all dependencies
+- Install all dependencies (or run <code>./setup.sh</code>)
 ```shell
-yarn
+yarn install
 ```
 
 - Configure Credentials:
@@ -175,3 +175,26 @@ Just send a message to the bot with the desired Telegram username, phone number,
 ### Monitoring Profiles
 
 Free users cannot monitor profiles. Premium users can monitor up to **5** profiles for new stories, while admins have no limit. Each monitored account is checked every **6 hours** on its own schedule. Use `/monitor <@username|+19875551234>` to add a profile by username or phone number (digits only, no hyphens), and `/unmonitor <@username>` to remove one. Send `/monitor` or `/unmonitor` without arguments to see your current list.
+
+
+## Development
+
+Before running any build or lint commands, install dependencies:
+
+```shell
+yarn install
+# or
+./setup.sh
+```
+
+### Build
+
+```shell
+yarn build
+```
+
+### Lint
+
+```shell
+yarn lint
+```
