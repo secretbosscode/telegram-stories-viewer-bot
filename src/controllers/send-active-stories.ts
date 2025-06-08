@@ -129,7 +129,8 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
         acc[chunkIndex].push(curr);
         return acc;
       }, []);
-      await bot.telegram.sendMessage(
+      await sendTemporaryMessage(
+        bot,
         task.chatId,
         `Uploaded ${PER_PAGE}/${stories.length} active stories from ${task.link} ✅`,
         Markup.inlineKeyboard(keyboard)
