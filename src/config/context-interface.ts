@@ -7,6 +7,13 @@ export interface UserSession extends User {
 
 interface SceneSession extends Scenes.SceneSession {
   usersList: UserSession[] | undefined;
+  upgrade?: {
+    invoice: { address: string; amountBtc: number };
+    awaitingAddressUntil: number;
+    fromAddress?: string;
+    checkStart?: number;
+    timerId?: any;
+  };
 }
 
 export interface IContextBot extends Context {
