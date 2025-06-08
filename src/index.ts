@@ -13,7 +13,7 @@ import { db, resetStuckJobs } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
-import { isUserPremium, addPremiumUser, removePremiumUser } from './services/premium-service';
+import { isUserPremium, addPremiumUser, removePremiumUser, extendPremium } from './services/premium-service';
 import {
   addProfileMonitor,
   removeProfileMonitor,
@@ -23,6 +23,7 @@ import {
   CHECK_INTERVAL_HOURS,
   MAX_MONITORS_PER_USER,
 } from './services/monitor-service';
+import { getBtcPriceUsd, createInvoice, checkPayment } from "./services/payment-service";
 import { UserInfo } from 'types';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
@@ -108,6 +109,24 @@ bot.command('premium', async (ctx) => {
         'Invoices expire after one hour.',
         { parse_mode: 'Markdown' }
     );
+});
+
+bot.command('upgrade', async (ctx) => {
+  try {
+    const invoice = await createInvoice(ctx.from.id, 5);
+    ctx.session.upgrade = {
+      invoice,
+      awaitingAddressUntil: Date.now() + 60 * 60 * 1000,
+    };
+    await ctx.reply(
+      `Send *${invoice.amountBtc} BTC* (~$5) to the following address:\n\`${invoice.address}\`\n` +
+        'Reply with the address you will pay from within one hour.',
+      { parse_mode: 'Markdown' }
+    );
+  } catch (e) {
+    console.error('upgrade cmd error', e);
+    await ctx.reply('Failed to create invoice. Please try again later.');
+  }
 });
 
 bot.command('monitor', async (ctx) => {
@@ -339,6 +358,20 @@ bot.on('text', async (ctx) => {
     });
   }
 
+  const upgradeState = ctx.session.upgrade;
+  if (upgradeState && !upgradeState.fromAddress) {
+    if (Date.now() > upgradeState.awaitingAddressUntil) {
+      ctx.session.upgrade = undefined;
+      await ctx.reply('❌ Invoice expired.');
+      return;
+    }
+    upgradeState.fromAddress = text.trim();
+    upgradeState.checkStart = Date.now();
+    await ctx.reply('Address received. Monitoring for payment...');
+    schedulePaymentCheck(ctx);
+    return;
+  }
+
   const isStoryLink = text.startsWith('https') || text.startsWith('t.me/');
   const isUsername = text.startsWith('@') || text.startsWith('+');
 
@@ -361,6 +394,40 @@ bot.on('text', async (ctx) => {
   await ctx.reply('🚫 Invalid input. Send `@username`, `+19875551234` or a story link. Type /help for more info.');
 });
 
+function schedulePaymentCheck(ctx: IContextBot) {
+  const state = ctx.session.upgrade;
+  if (!state) return;
+  const check = async () => {
+    const st = ctx.session.upgrade;
+    if (!st) return;
+    if (!st.fromAddress) return;
+    if (Date.now() - (st.checkStart ?? 0) > 24 * 60 * 60 * 1000) {
+      await ctx.reply('❌ Invoice expired.');
+      ctx.session.upgrade = undefined;
+      return;
+    }
+    const paid = await checkPayment(st.invoice.address);
+    if (paid >= st.invoice.amountBtc) {
+      extendPremium(String(ctx.from!.id), 30);
+      await ctx.reply('✅ Payment received! Premium extended by 30 days.');
+      ctx.session.upgrade = undefined;
+      return;
+    } else if (paid > 0) {
+      const remaining = +(st.invoice.amountBtc - paid).toFixed(8);
+      const newInvoice = await createInvoice(ctx.from!.id, remaining * (await getBtcPriceUsd()));
+      st.invoice = newInvoice;
+      await ctx.reply(
+        `Received ${paid} BTC. Please send remaining ${remaining} BTC to address:\n\`${newInvoice.address}\``,
+        { parse_mode: 'Markdown' }
+      );
+    }
+    const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
+    st.timerId = setTimeout(check, delay);
+  };
+  const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
+  state.timerId = setTimeout(check, delay);
+}
+
 
 // =============================
 // BOT LAUNCH & QUEUE STARTUP
@@ -378,6 +445,7 @@ async function startApp() {
     { command: 'start', description: 'Show usage instructions' },
     { command: 'help', description: 'Show help message' },
     { command: 'premium', description: 'Info about premium features' },
+    { command: 'upgrade', description: 'Upgrade to premium' },
     { command: 'monitor', description: 'Monitor a profile for new stories' },
     { command: 'unmonitor', description: 'Stop monitoring a profile' },
   ]);
