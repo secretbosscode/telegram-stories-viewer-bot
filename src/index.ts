@@ -554,7 +554,7 @@ async function startApp() {
   processQueue();
   startMonitorLoop();
   resumePendingChecks();
-  await bot.telegram.setMyCommands([
+  const commonCommands = [
     { command: 'start', description: 'Show usage instructions' },
     { command: 'help', description: 'Show help message' },
     { command: 'premium', description: 'Info about premium features' },
@@ -562,7 +562,12 @@ async function startApp() {
     { command: 'queue', description: 'Show your queue status' },
     { command: 'monitor', description: 'Monitor a profile for new stories' },
     { command: 'unmonitor', description: 'Stop monitoring a profile' },
-  ]);
+  ];
+  await bot.telegram.setMyCommands(commonCommands);
+  await bot.telegram.setMyCommands(
+    [...commonCommands, { command: 'restart', description: 'Restart the bot (admin)' }],
+    { scope: { type: 'chat', chat_id: BOT_ADMIN_ID } }
+  );
   bot.launch({ dropPendingUpdates: true }).then(() => {
     console.log('✅ Telegram bot started successfully and is ready for commands.');
   });
