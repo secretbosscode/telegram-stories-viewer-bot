@@ -35,7 +35,7 @@ export async function downloadStories(
 ): Promise<number> {
   if (!stories || stories.length === 0) {
     console.log(`[DownloadStories] No ${storiesType} stories to download.`);
-    return;
+    return 0;
   }
 
   const client = await Userbot.getInstance();
