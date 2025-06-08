@@ -4,6 +4,8 @@ import {
   updatePaidAmount,
   getInvoice,
   updateFromAddress,
+  recordTxid,
+  isTxidUsed,
   PaymentRow,
   upsertPaymentCheck,
   deletePaymentCheck,
@@ -283,6 +285,7 @@ export async function checkPayment(
   const balance = await queryAddressBalance(invoice.user_address);
   let receivedFromUser = 0;
   const unexpected = new Set<string>();
+  const usedTxids: string[] = [];
 
   if (invoice.from_address) {
     const txs = await fetchTransactions(invoice.user_address);
@@ -313,12 +316,16 @@ export async function checkPayment(
           i.addresses?.[0],
         )
         .filter(Boolean);
-      if (fromAddrs.includes(invoice.from_address)) {
+      const txid = tx.txid ?? tx.hash ?? tx.id;
+      if (fromAddrs.includes(invoice.from_address) && txid && !isTxidUsed(txid)) {
         const val =
           toUs.value ??
           toUs.prevout?.value ??
           toUs.output_value;
-        if (typeof val === 'number') receivedFromUser += val / 1e8;
+        if (typeof val === 'number') {
+          receivedFromUser += val / 1e8;
+          usedTxids.push(txid);
+        }
       } else {
         fromAddrs.forEach((a: string) => unexpected.add(a));
       }
@@ -334,6 +341,7 @@ export async function checkPayment(
 
   if (receivedFromUser >= threshold) {
     markInvoicePaid(invoice.id);
+    usedTxids.forEach((tx) => recordTxid(invoice.id, tx));
     return { invoice: getInvoice(invoice.id) || null };
   }
 
@@ -352,6 +360,7 @@ export async function verifyPaymentByTxid(
   invoiceId: number,
   txid: string,
 ): Promise<PaymentRow | null> {
+  if (isTxidUsed(txid)) return null;
   const invoice = getInvoice(invoiceId);
   if (!invoice) return null;
   const tx = await fetchTransactionById(txid);
@@ -370,6 +379,9 @@ export async function verifyPaymentByTxid(
       i.prevout?.scriptpubkey_address || i.prev_out?.addr || i.addresses?.[0],
     )
     .filter(Boolean);
+  if (invoice.from_address && !fromAddrs.includes(invoice.from_address)) {
+    return null;
+  }
   const val =
     toUs.value ?? toUs.prevout?.value ?? toUs.output_value ?? toUs.value_sat;
   const amount = typeof val === 'number' ? val / 1e8 : Number(val) / 1e8;
@@ -382,6 +394,7 @@ export async function verifyPaymentByTxid(
       updateFromAddress(invoice.id, fromAddrs[0]);
     }
     markInvoicePaid(invoice.id);
+    recordTxid(invoice.id, txid);
     return getInvoice(invoice.id) || null;
   }
   return null;
