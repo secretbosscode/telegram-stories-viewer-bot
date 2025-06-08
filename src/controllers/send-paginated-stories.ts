@@ -35,8 +35,22 @@ export async function sendPaginatedStories({
       }
     );
 
-    // Actually download the stories (media files to buffer)
-    await downloadStories(mapped, 'pinned'); // 'pinned' is a string literal, ok.
+    // Actually download the stories (media files to buffer) with a timeout
+    try {
+      const download = downloadStories(mapped, 'pinned');
+      const timeout = new Promise((_, rej) =>
+        setTimeout(() => rej(new Error('Download timed out')), 300000)
+      );
+      await Promise.race([download, timeout]);
+    } catch (err) {
+      // notify user about timeout specifically
+      await sendTemporaryMessage(
+        bot,
+        task.chatId,
+        '❌ Download timed out. Please try again later.'
+      ).catch(() => {/* ignore */});
+      throw err;
+    }
 
     // Filter only those stories which have a buffer (media) and are not too large
     const uploadableStories: MappedStoryItem[] = mapped.filter( // <--- Explicitly typed uploadableStories
