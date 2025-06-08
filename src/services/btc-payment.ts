@@ -3,11 +3,36 @@ import {
   markInvoicePaid,
   updatePaidAmount,
   getInvoice,
+  updateFromAddress,
   PaymentRow,
 } from '../db';
 import { IContextBot } from 'config/context-interface';
 import { BTC_WALLET_ADDRESS } from 'config/env-config';
 import { extendPremium } from './premium-service';
+
+export interface PaymentCheckResult {
+  invoice: PaymentRow | null;
+  unexpectedSenders?: string[];
+}
+
+async function fetchTransactions(address: string): Promise<any[]> {
+  const urls = [
+    `https://blockstream.info/api/address/${address}/txs`,
+    `https://mempool.space/api/address/${address}/txs`,
+    `https://api.blockcypher.com/v1/btc/main/addrs/${address}/full?limit=50`,
+  ];
+  const results = await Promise.allSettled(
+    urls.map((u) => fetch(u).then((r) => r.json())),
+  );
+  for (const res of results) {
+    if (res.status === 'fulfilled') {
+      const val = res.value;
+      if (Array.isArray(val)) return val;
+      if (Array.isArray(val?.txs)) return val.txs;
+    }
+  }
+  return [];
+}
 
 /** Fetch BTC/USD prices from multiple sources and return the average */
 export async function getBtcPriceUsd(): Promise<number> {
@@ -94,25 +119,60 @@ async function queryAddressBalance(address: string): Promise<number> {
 
 export async function checkPayment(
   invoice: PaymentRow,
-): Promise<PaymentRow | null> {
+): Promise<PaymentCheckResult> {
   const balance = await queryAddressBalance(invoice.user_address);
-  if (balance > invoice.paid_amount) {
-    updatePaidAmount(invoice.id, balance - invoice.paid_amount);
+  let receivedFromUser = 0;
+  const unexpected = new Set<string>();
+
+  if (invoice.from_address) {
+    const txs = await fetchTransactions(invoice.user_address);
+    for (const tx of txs) {
+      const outs = tx.vout ?? tx.outputs;
+      const ins = tx.vin ?? tx.inputs;
+      const toUs = outs?.find(
+        (o: any) =>
+          o.scriptpubkey_address === invoice.user_address ||
+          o.addr === invoice.user_address ||
+          o.addresses?.includes?.(invoice.user_address),
+      );
+      if (!toUs) continue;
+      const fromAddrs = (ins || [])
+        .map((i: any) =>
+          i.prevout?.scriptpubkey_address ||
+          i.prev_out?.addr ||
+          i.addresses?.[0],
+        )
+        .filter(Boolean);
+      if (fromAddrs.includes(invoice.from_address)) {
+        const val =
+          toUs.value ??
+          toUs.prevout?.value ??
+          toUs.output_value;
+        if (typeof val === 'number') receivedFromUser += val / 1e8;
+      } else {
+        fromAddrs.forEach((a: string) => unexpected.add(a));
+      }
+    }
   }
 
-  if (balance >= invoice.invoice_amount) {
+  if (receivedFromUser > invoice.paid_amount) {
+    updatePaidAmount(invoice.id, receivedFromUser - invoice.paid_amount);
+  }
+
+  if (receivedFromUser >= invoice.invoice_amount) {
     markInvoicePaid(invoice.id);
-    return getInvoice(invoice.id) || null;
+    return { invoice: getInvoice(invoice.id) || null };
   }
 
-  const remaining = invoice.invoice_amount - balance;
+  const remaining = invoice.invoice_amount - receivedFromUser;
   if (remaining > 0) {
     const usdRate = await getBtcPriceUsd();
     const remainingUsd = remaining * usdRate;
-    return createInvoice(invoice.user_id, remainingUsd);
+    const newInvoice = await createInvoice(invoice.user_id, remainingUsd);
+    return { invoice: newInvoice, unexpectedSenders: Array.from(unexpected) };
   }
 
-  return null;
+  return { invoice: null, unexpectedSenders: Array.from(unexpected) };
 }
 
 export function schedulePaymentCheck(ctx: IContextBot): void {
@@ -131,15 +191,23 @@ export function schedulePaymentCheck(ctx: IContextBot): void {
 
     const result = await checkPayment(st.invoice);
 
-    if (result && result.paid_at) {
+    if (result.unexpectedSenders && result.unexpectedSenders.length) {
+      await ctx.reply(
+        `⚠️ Payment from unexpected address(es): ${result.unexpectedSenders.join(', ')}. Please pay from ${st.fromAddress}.`,
+      );
+    }
+
+    const inv = result.invoice;
+
+    if (inv && inv.paid_at) {
       extendPremium(String(ctx.from!.id), 30);
       await ctx.reply('✅ Payment received! Premium extended by 30 days.');
       ctx.session.upgrade = undefined;
       return;
-    } else if (result && result.id !== st.invoice.id) {
-      st.invoice = result;
+    } else if (inv && inv.id !== st.invoice.id) {
+      st.invoice = inv;
       await ctx.reply(
-        `Partial payment detected. Please send remaining ${result.invoice_amount.toFixed(8)} BTC to address:\n\`${result.user_address}\``,
+        `Partial payment detected. Please send remaining ${inv.invoice_amount.toFixed(8)} BTC to address:\n\`${inv.user_address}\``,
         { parse_mode: 'Markdown' },
       );
     }
