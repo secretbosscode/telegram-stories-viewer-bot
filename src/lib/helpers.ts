@@ -2,6 +2,7 @@
 
 // CORRECTED: Import StoriesModel and MappedStoryItem from your central types.ts file
 import { StoriesModel, MappedStoryItem } from 'types'; // <--- This import is now correct and centralized
+import { getPinnedMessageId, setPinnedMessageId } from 'repositories/user-repository';
 
 const MAX_STORIES_SIZE = 45;
 
@@ -64,4 +65,36 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
     result.push(arr.slice(i, i + size));
   }
   return result;
+}
+
+// Update or create a pinned message showing remaining Premium time
+
+export async function updatePremiumPinnedMessage(
+  bot: import('telegraf').Telegraf<any>,
+  chatId: number | string,
+  telegramId: string,
+  daysLeft: number,
+): Promise<void> {
+  const daysText = daysLeft === Infinity ? 'unlimited' : daysLeft.toString();
+  const text = `🌟 Premium: ${daysText} day${daysLeft === 1 ? '' : 's'} remaining`;
+  const pinnedId = getPinnedMessageId(telegramId);
+  if (pinnedId) {
+    try {
+      await bot.telegram.editMessageText(chatId, pinnedId, undefined, text);
+      return;
+    } catch (err) {
+      // message might have been deleted or can't be edited
+    }
+  }
+
+  try {
+    await bot.telegram.unpinChatMessage(chatId).catch(() => {});
+    const msg = await bot.telegram.sendMessage(chatId, text);
+    await bot.telegram.pinChatMessage(chatId, msg.message_id, {
+      disable_notification: true,
+    });
+    setPinnedMessageId(telegramId, msg.message_id);
+  } catch (err) {
+    console.error('Failed to update premium pinned message', err);
+  }
 }

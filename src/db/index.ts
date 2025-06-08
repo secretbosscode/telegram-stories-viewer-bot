@@ -35,6 +35,9 @@ if (!userColumns.some((c) => c.name === 'premium_until')) {
 if (!userColumns.some((c) => c.name === 'free_trial_used')) {
   db.exec("ALTER TABLE users ADD COLUMN free_trial_used INTEGER DEFAULT 0");
 }
+if (!userColumns.some((c) => c.name === 'pinned_message_id')) {
+  db.exec('ALTER TABLE users ADD COLUMN pinned_message_id INTEGER');
+}
 
 // Download Queue Table
 // CHANGE 1: Added the `task_details` column to store the full UserInfo object as JSON text.

@@ -11,6 +11,7 @@ export interface UserModel {
   is_premium: 0 | 1; // SQLite stores booleans as 0 or 1
   premium_until?: number | null;
   free_trial_used?: 0 | 1;
+  pinned_message_id?: number | null;
   created_at: string;
 }
 
@@ -72,5 +73,31 @@ export const findUserById = (telegram_id: string): UserModel | undefined => {
   } catch (error) {
     console.error(`[DB] Error finding user ${telegram_id}:`, error);
     return undefined;
+  }
+};
+
+export const getPinnedMessageId = (telegramId: string): number | undefined => {
+  try {
+    const row = db
+      .prepare('SELECT pinned_message_id FROM users WHERE telegram_id = ?')
+      .get(telegramId) as { pinned_message_id?: number } | undefined;
+    return row?.pinned_message_id;
+  } catch (error) {
+    console.error(`[DB] Error getting pinned message id for ${telegramId}:`, error);
+    return undefined;
+  }
+};
+
+export const setPinnedMessageId = (
+  telegramId: string,
+  messageId: number | null,
+): void => {
+  try {
+    db.prepare('UPDATE users SET pinned_message_id = ? WHERE telegram_id = ?').run(
+      messageId,
+      telegramId,
+    );
+  } catch (error) {
+    console.error(`[DB] Error setting pinned message id for ${telegramId}:`, error);
   }
 };
