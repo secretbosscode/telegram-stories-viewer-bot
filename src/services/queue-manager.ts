@@ -21,7 +21,7 @@ import { sendStoriesFx } from 'controllers/send-stories';
 
 // How long we allow a job to run before considering it failed
 export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for regular jobs
-export const PAGINATED_PROCESSING_TIMEOUT_MS = 20 * 60 * 1000; // longer for paginated requests
+export const PAGINATED_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000; // half the time for paginated requests
 
 const COOLDOWN_HOURS = { free: 12, premium: 2, admin: 0 };
 
