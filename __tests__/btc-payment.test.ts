@@ -18,17 +18,32 @@ jest.mock('../src/db', () => {
   `);
   return {
     db,
-    insertInvoice: (user_id: string, invoice_amount: number, user_address: string, expires_at: number, from_address?: string | null) => {
+    insertInvoice: (
+      user_id: string,
+      invoice_amount: number,
+      user_address: string,
+      expires_at: number,
+      from_address?: string | null,
+    ) => {
       const result = db
-        .prepare(`INSERT INTO payments (user_id, invoice_amount, user_address, from_address, expires_at) VALUES (?, ?, ?, ?, ?)`)
-        .run(user_id, invoice_amount, user_address, from_address ?? null, expires_at);
+        .prepare(
+          `INSERT INTO payments (user_id, invoice_amount, user_address, from_address, expires_at) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          user_id,
+          invoice_amount,
+          user_address,
+          from_address ?? null,
+          expires_at,
+        );
       const id = Number(result.lastInsertRowid);
       return db.prepare('SELECT * FROM payments WHERE id = ?').get(id);
     },
     markInvoicePaid: jest.fn(),
     updatePaidAmount: jest.fn(),
     updateFromAddress: jest.fn(),
-    getInvoice: (id: number) => db.prepare('SELECT * FROM payments WHERE id = ?').get(id),
+    getInvoice: (id: number) =>
+      db.prepare('SELECT * FROM payments WHERE id = ?').get(id),
   };
 });
 
@@ -54,20 +69,34 @@ describe('createInvoice rounding', () => {
     const price = 12345.6789;
     const originalFetch = global.fetch;
     global.fetch = (jest.fn() as any)
-      .mockResolvedValueOnce({ json: async () => ({ bitcoin: { usd: price } }) })
-      .mockResolvedValueOnce({ json: async () => ({ data: { amount: price } }) })
+      .mockResolvedValueOnce({
+        json: async () => ({ bitcoin: { usd: price } }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({ data: { amount: price } }),
+      })
       .mockResolvedValueOnce({ json: async () => ({ price }) })
       .mockResolvedValueOnce({ json: async () => ({ last: price }) })
-      .mockResolvedValueOnce({ json: async () => ({ result: { XXBTZUSD: { c: [price] } } }) })
-      .mockResolvedValueOnce({ json: async () => ({ data: [{ last: price }] }) })
+      .mockResolvedValueOnce({
+        json: async () => ({ result: { XXBTZUSD: { c: [price] } } }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({ data: [{ last: price }] }),
+      })
       .mockResolvedValueOnce({ json: async () => ({ USD: price }) })
-      .mockResolvedValueOnce({ json: async () => ({ quotes: { USD: { price } } }) })
-      .mockResolvedValueOnce({ json: async () => ({ data: { priceUsd: price } }) });
+      .mockResolvedValueOnce({
+        json: async () => ({ quotes: { USD: { price } } }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({ data: { priceUsd: price } }),
+      });
 
     const invoice = await btc.createInvoice('u1', 5);
     const expected = Math.round((5 / price) * 1e8) / 1e8;
     expect(invoice.invoice_amount).toBeCloseTo(expected, 8);
-    const row = db.prepare('SELECT invoice_amount FROM payments WHERE id = ?').get(invoice.id) as any;
+    const row = db
+      .prepare('SELECT invoice_amount FROM payments WHERE id = ?')
+      .get(invoice.id) as any;
     expect(row.invoice_amount).toBeCloseTo(expected, 8);
     global.fetch = originalFetch as any;
   });
@@ -89,7 +118,9 @@ describe('checkPayment tolerance', () => {
     };
 
     const originalFetch = global.fetch;
-    global.fetch = (jest.fn() as any).mockResolvedValue({ json: async () => [tx] });
+    global.fetch = (jest.fn() as any).mockResolvedValue({
+      json: async () => [tx],
+    });
 
     await btc.checkPayment(invoice as any);
 
@@ -115,7 +146,9 @@ describe('verifyPaymentByTxid sender check', () => {
       vin: [{ prevout: { scriptpubkey_address: 'other' } }],
     };
     const originalFetch = global.fetch;
-    global.fetch = (jest.fn() as any).mockResolvedValue({ json: async () => tx });
+    global.fetch = (jest.fn() as any).mockResolvedValue({
+      json: async () => tx,
+    });
 
     const result = await btc.verifyPaymentByTxid(invoice as any, 'txid');
 
@@ -133,7 +166,9 @@ describe('verifyPaymentByTxid sender check', () => {
       vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
     };
     const originalFetch = global.fetch;
-    global.fetch = (jest.fn() as any).mockResolvedValue({ json: async () => tx });
+    global.fetch = (jest.fn() as any).mockResolvedValue({
+      json: async () => tx,
+    });
 
     await btc.verifyPaymentByTxid(invoice as any, 'txid');
 
