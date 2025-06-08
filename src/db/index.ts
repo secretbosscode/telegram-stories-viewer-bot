@@ -71,6 +71,18 @@ db.exec(`
   );
 `);
 
+// Pending payment checks
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payment_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    invoice_id INTEGER NOT NULL,
+    from_address TEXT NOT NULL,
+    next_check INTEGER NOT NULL,
+    check_start INTEGER NOT NULL
+  );
+`);
+
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
@@ -304,4 +316,47 @@ export function markInvoicePaid(id: number): void {
 
 export function getInvoice(id: number): PaymentRow | undefined {
   return db.prepare(`SELECT * FROM payments WHERE id = ?`).get(id) as PaymentRow | undefined;
+}
+
+// ----- Payment check utils -----
+export interface PaymentCheckRow {
+  id: number;
+  user_id: string;
+  invoice_id: number;
+  from_address: string;
+  next_check: number;
+  check_start: number;
+}
+
+export function addPaymentCheck(
+  user_id: string,
+  invoice_id: number,
+  from_address: string,
+  next_check: number,
+  check_start: number,
+): PaymentCheckRow {
+  const res = db
+    .prepare(
+      `INSERT INTO payment_checks (user_id, invoice_id, from_address, next_check, check_start)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(user_id, invoice_id, from_address, next_check, check_start);
+  const id = Number(res.lastInsertRowid);
+  return { id, user_id, invoice_id, from_address, next_check, check_start };
+}
+
+export function updatePaymentCheckNext(id: number, next_check: number): void {
+  db.prepare(`UPDATE payment_checks SET next_check = ? WHERE id = ?`).run(next_check, id);
+}
+
+export function updatePaymentCheckInvoice(id: number, invoice_id: number): void {
+  db.prepare(`UPDATE payment_checks SET invoice_id = ? WHERE id = ?`).run(invoice_id, id);
+}
+
+export function removePaymentCheck(id: number): void {
+  db.prepare(`DELETE FROM payment_checks WHERE id = ?`).run(id);
+}
+
+export function listPaymentChecks(): PaymentCheckRow[] {
+  return db.prepare(`SELECT * FROM payment_checks`).all() as PaymentCheckRow[];
 }

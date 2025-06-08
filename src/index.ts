@@ -29,7 +29,7 @@ import {
   CHECK_INTERVAL_HOURS,
   MAX_MONITORS_PER_USER,
 } from './services/monitor-service';
-import { createInvoice, schedulePaymentCheck } from './services/btc-payment';
+import { createInvoice, schedulePaymentCheck, restorePaymentChecks } from './services/btc-payment';
 import { UserInfo } from 'types';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
@@ -389,6 +389,7 @@ bot.on('text', async (ctx) => {
     upgradeState.checkStart = Date.now();
     await ctx.reply('Address received. Monitoring for payment...');
     schedulePaymentCheck(ctx);
+    ctx.session.upgrade = undefined;
     return;
   }
 
@@ -428,6 +429,7 @@ async function startApp() {
   console.log('[App] Kicking off initial queue processing...');
   processQueue();
   startMonitorLoop();
+  restorePaymentChecks();
   await bot.telegram.setMyCommands([
     { command: 'start', description: 'Show usage instructions' },
     { command: 'help', description: 'Show help message' },

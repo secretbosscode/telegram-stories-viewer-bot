@@ -43,3 +43,26 @@ export const isDuplicatePendingFx = createEffect(
 
 // Fetch recent history of downloads for admin reporting
 export const getRecentHistoryFx = createEffect((limit: number) => db.getRecentHistory(limit));
+
+// Payment check effects
+export const addPaymentCheckFx = createEffect(
+  async (params: {
+    user_id: string;
+    invoice_id: number;
+    from_address: string;
+    next_check: number;
+    check_start: number;
+  }) => db.addPaymentCheck(params.user_id, params.invoice_id, params.from_address, params.next_check, params.check_start),
+);
+
+export const updatePaymentCheckNextFx = createEffect((params: { id: number; next_check: number }) =>
+  db.updatePaymentCheckNext(params.id, params.next_check),
+);
+
+export const updatePaymentCheckInvoiceFx = createEffect((params: { id: number; invoice_id: number }) =>
+  db.updatePaymentCheckInvoice(params.id, params.invoice_id),
+);
+
+export const removePaymentCheckFx = createEffect((id: number) => db.removePaymentCheck(id));
+
+export const listPaymentChecksFx = createEffect(() => db.listPaymentChecks());
