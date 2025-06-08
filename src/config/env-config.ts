@@ -1,4 +1,5 @@
 import { config } from 'dotenv';
+import path from 'path';
 
 const { parsed } = config();
 
@@ -34,3 +35,6 @@ export const USERBOT_PHONE_CODE = process.env.USERBOT_PHONE_CODE || parsed?.USER
 
 // payments
 export const BTC_WALLET_ADDRESS = getEnvVar('BTC_WALLET_ADDRESS');
+
+// error log file path
+export const LOG_FILE = process.env.LOG_FILE || parsed?.LOG_FILE || path.join(__dirname, '../../data/error.log');

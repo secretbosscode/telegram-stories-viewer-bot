@@ -160,6 +160,7 @@ bot.telegram.sendMediaGroup(
    - Optional: <code>USERBOT_PASSWORD</code> if that account has two‑factor authentication enabled.
    - Leave <code>USERBOT_PHONE_CODE</code> empty for the first run.
    - Fill in <code>BOT_ADMIN_ID</code>, <code>BTC_WALLET_ADDRESS</code>, etc.
+   - Optional: <code>LOG_FILE</code> to change where runtime errors are logged (defaults to <code>./data/error.log</code>).
 2. Build and start the container:
 
 ```shell
@@ -171,6 +172,11 @@ Telegram will send a login code to the phone number specified in <code>USERBOT_P
 Add this code to your <code>.env</code> as <code>USERBOT_PHONE_CODE</code> and run the command again.
 Once authentication completes the session file is saved, so you can remove the
 <code>USERBOT_PHONE_CODE</code> line from the environment file.
+
+### Viewing Logs
+
+Use <code>docker logs ghost-stories-bot</code> to see recent output from the running container.
+Runtime errors are also written to the file specified by <code>LOG_FILE</code> (default <code>./data/error.log</code>).
 
 <h2>🚀 Usage</h2>
 Just send a message to the bot with the desired Telegram username, phone number, or the direct link to story. Wait for the bot to retrieve and deliver the stories back to you
