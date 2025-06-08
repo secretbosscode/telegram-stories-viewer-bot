@@ -50,7 +50,7 @@ describe('queue-manager duplicate handling', () => {
 
     await handleNewTask(user);
 
-    expect(isDuplicatePendingFx).toHaveBeenCalledWith({ telegram_id: '1', target_username: 'target' });
+    expect(isDuplicatePendingFx).toHaveBeenCalledWith({ telegram_id: '1', target_username: 'target', nextStoriesIds: [123] });
     expect(sendTemporaryMessage).toHaveBeenCalledWith(bot, '1', '⚠️ This download is already in the queue.');
     expect(enqueueDownloadFx).not.toHaveBeenCalled();
   });

@@ -38,9 +38,15 @@ export const wasRecentlyDownloadedFx = createEffect(
 );
 
 export const isDuplicatePendingFx = createEffect(
-  async (params: { telegram_id: string; target_username: string }): Promise<boolean> => {
-    return db.isDuplicatePending(params.telegram_id, params.target_username);
-  }
+  async (
+    params: { telegram_id: string; target_username: string; nextStoriesIds?: number[] },
+  ): Promise<boolean> => {
+    return db.isDuplicatePending(
+      params.telegram_id,
+      params.target_username,
+      params.nextStoriesIds,
+    );
+  },
 );
 
 export const findPendingJobFx = createEffect((telegram_id: string) => db.findPendingJobId(telegram_id));

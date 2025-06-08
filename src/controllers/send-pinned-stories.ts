@@ -162,8 +162,7 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
           },
           [] as InlineKeyboardButton[][]
         );
-        await sendTemporaryMessage(
-          bot,
+        await bot.telegram.sendMessage(
           task.chatId!,
           `Uploaded ${PER_PAGE}/${stories.length} pinned stories ✅`,
           Markup.inlineKeyboard(keyboard)

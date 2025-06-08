@@ -217,12 +217,32 @@ export function wasRecentlyDownloaded(telegram_id: string, target_username: stri
   return !!row;
 }
 
-export function isDuplicatePending(telegram_id: string, target_username: string): boolean {
-  const row = db.prepare(`
-    SELECT id FROM download_queue
-    WHERE telegram_id = ? AND target_username = ? AND (status = 'pending' OR status = 'processing')
-    LIMIT 1
-  `).get(telegram_id, target_username);
+export function isDuplicatePending(
+  telegram_id: string,
+  target_username: string,
+  nextStoriesIds?: number[],
+): boolean {
+  if (nextStoriesIds && nextStoriesIds.length > 0) {
+    const row = db
+      .prepare(
+        `SELECT id FROM download_queue
+         WHERE telegram_id = ?
+           AND target_username = ?
+           AND json_extract(task_details, '$.nextStoriesIds') = json(?)
+           AND (status = 'pending' OR status = 'processing')
+         LIMIT 1`,
+      )
+      .get(telegram_id, target_username, JSON.stringify(nextStoriesIds));
+    return !!row;
+  }
+
+  const row = db
+    .prepare(
+      `SELECT id FROM download_queue
+       WHERE telegram_id = ? AND target_username = ? AND (status = 'pending' OR status = 'processing')
+       LIMIT 1`,
+    )
+    .get(telegram_id, target_username);
   return !!row;
 }
 
