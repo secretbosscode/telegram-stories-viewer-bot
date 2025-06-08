@@ -68,7 +68,7 @@ db.exec(`
     from_address TEXT,
     paid_amount REAL DEFAULT 0,
     expires_at INTEGER,
-    paid_at INTEGER
+  paid_at INTEGER
   );
 `);
 
@@ -76,6 +76,14 @@ const paymentColumns = db.prepare("PRAGMA table_info(payments)").all() as any[];
 if (!paymentColumns.some((c) => c.name === 'from_address')) {
   db.exec('ALTER TABLE payments ADD COLUMN from_address TEXT');
 }
+
+// Table to store used transaction ids
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payment_txids (
+    invoice_id INTEGER NOT NULL,
+    txid TEXT NOT NULL UNIQUE
+  );
+`);
 
 // Payment checks table to persist pending invoice checks across restarts
 db.exec(`
@@ -372,6 +380,17 @@ export function markInvoicePaid(id: number): void {
 
 export function getInvoice(id: number): PaymentRow | undefined {
   return db.prepare(`SELECT * FROM payments WHERE id = ?`).get(id) as PaymentRow | undefined;
+}
+
+// ----- Payment txid utils -----
+export function recordTxid(invoice_id: number, txid: string): void {
+  db.prepare(`INSERT OR IGNORE INTO payment_txids (invoice_id, txid) VALUES (?, ?)`)
+    .run(invoice_id, txid);
+}
+
+export function isTxidUsed(txid: string): boolean {
+  const row = db.prepare(`SELECT 1 FROM payment_txids WHERE txid = ?`).get(txid);
+  return !!row;
 }
 
 // ----- Payment check persistence -----

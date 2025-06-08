@@ -15,7 +15,12 @@ jest.mock('../src/db', () => {
       expires_at INTEGER,
       paid_at INTEGER
     );
+    CREATE TABLE payment_txids (
+      invoice_id INTEGER,
+      txid TEXT UNIQUE
+    );
   `);
+  const used = new Set<string>();
   return {
     db,
     insertInvoice: (user_id: string, invoice_amount: number, user_address: string, expires_at: number, from_address?: string | null) => {
@@ -27,6 +32,9 @@ jest.mock('../src/db', () => {
     },
     markInvoicePaid: jest.fn(),
     updatePaidAmount: jest.fn(),
+    updateFromAddress: jest.fn(),
+    recordTxid: jest.fn((invoice_id: number, txid: string) => { used.add(txid); }),
+    isTxidUsed: jest.fn((txid: string) => used.has(txid)),
     getInvoice: (id: number) => db.prepare('SELECT * FROM payments WHERE id = ?').get(id),
   };
 });
@@ -35,7 +43,7 @@ jest.mock('../src/db', () => {
 jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr' }));
 
 // Import after mocks
-import { db, markInvoicePaid, updatePaidAmount, insertInvoice } from '../src/db';
+import { db, markInvoicePaid, updatePaidAmount, updateFromAddress, recordTxid, isTxidUsed, insertInvoice } from '../src/db';
 import * as btc from '../src/services/btc-payment';
 
 describe('createInvoice rounding', () => {
@@ -71,12 +79,15 @@ describe('checkPayment tolerance', () => {
     db.prepare('DELETE FROM payments').run();
     (markInvoicePaid as jest.Mock).mockClear();
     (updatePaidAmount as jest.Mock).mockClear();
+    (updateFromAddress as jest.Mock).mockClear();
+    (recordTxid as jest.Mock).mockClear();
   });
 
   test('invoice marked paid when 90% received', async () => {
     const invoice = insertInvoice('u1', 1, 'dest', 0, 'sender');
 
     const tx = {
+      txid: 't1',
       vout: [{ scriptpubkey_address: 'dest', value: 0.91 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
     };
@@ -96,6 +107,7 @@ describe('checkPayment tolerance', () => {
     const invoice = insertInvoice('u1', 1, 'dest', 0, 'sender');
 
     const tx = {
+      txid: 't2',
       vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
       status: { block_time: 1000 },
@@ -119,6 +131,8 @@ describe('verifyPaymentByTxid', () => {
     db.prepare('DELETE FROM payments').run();
     (markInvoicePaid as jest.Mock).mockClear();
     (updatePaidAmount as jest.Mock).mockClear();
+    (updateFromAddress as jest.Mock).mockClear();
+    (recordTxid as jest.Mock).mockClear();
   });
 
   test('invoice marked paid for provided txid', async () => {
@@ -138,7 +152,51 @@ describe('verifyPaymentByTxid', () => {
 
     expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 1);
     expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
+    expect(updateFromAddress).toHaveBeenCalledWith(invoice.id, 'sender');
+    expect(recordTxid).toHaveBeenCalledWith(invoice.id, 'abc');
     expect(res?.paid_at).toBeDefined();
+    global.fetch = originalFetch as any;
+  });
+
+  test('returns null when sender does not match', async () => {
+    const invoice = insertInvoice('u1', 1, 'dest', 0, 'expected');
+    const tx = {
+      vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
+      vin: [{ prevout: { scriptpubkey_address: 'other' } }],
+    };
+    const originalFetch = global.fetch;
+    global.fetch = (jest.fn() as any)
+      .mockResolvedValue({ json: async () => tx })
+      .mockResolvedValue({ json: async () => tx })
+      .mockResolvedValue({ json: async () => tx })
+      .mockResolvedValue({ json: async () => ({ data: tx }) });
+
+    const res = await btc.verifyPaymentByTxid(invoice.id, 'def');
+
+    expect(res).toBeNull();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+    global.fetch = originalFetch as any;
+  });
+
+  test('reused txid is rejected', async () => {
+    const invoice1 = insertInvoice('u1', 1, 'dest', 0);
+    const invoice2 = insertInvoice('u2', 1, 'dest', 0);
+    const tx = {
+      vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
+      vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
+    };
+    const originalFetch = global.fetch;
+    global.fetch = (jest.fn() as any)
+      .mockResolvedValue({ json: async () => tx })
+      .mockResolvedValue({ json: async () => tx })
+      .mockResolvedValue({ json: async () => tx })
+      .mockResolvedValue({ json: async () => ({ data: tx }) });
+
+    await btc.verifyPaymentByTxid(invoice1.id, 'xyz');
+    const res = await btc.verifyPaymentByTxid(invoice2.id, 'xyz');
+
+    expect(res).toBeNull();
+    expect(markInvoicePaid).toHaveBeenCalledTimes(1);
     global.fetch = originalFetch as any;
   });
 });
