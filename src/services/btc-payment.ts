@@ -1,5 +1,7 @@
 import { randomBytes } from 'crypto';
 import { insertInvoice, markInvoicePaid, updatePaidAmount, getInvoice, PaymentRow } from '../db';
+import { IContextBot } from 'config/context-interface';
+import { extendPremium } from './premium-service';
 
 /** Fetch BTC/USD prices from multiple sources and return the average */
 export async function getBtcPriceUsd(): Promise<number> {
@@ -99,4 +101,41 @@ export async function checkPayment(invoice: PaymentRow): Promise<PaymentRow | nu
   }
 
   return null;
+}
+
+export function schedulePaymentCheck(ctx: IContextBot): void {
+  const state = ctx.session.upgrade;
+  if (!state) return;
+
+  const doCheck = async () => {
+    const st = ctx.session.upgrade;
+    if (!st) return;
+    if (!st.fromAddress) return;
+    if (Date.now() - (st.checkStart ?? 0) > 24 * 60 * 60 * 1000) {
+      await ctx.reply('❌ Invoice expired.');
+      ctx.session.upgrade = undefined;
+      return;
+    }
+
+    const result = await checkPayment(st.invoice);
+
+    if (result && result.paid_at) {
+      extendPremium(String(ctx.from!.id), 30);
+      await ctx.reply('✅ Payment received! Premium extended by 30 days.');
+      ctx.session.upgrade = undefined;
+      return;
+    } else if (result && result.id !== st.invoice.id) {
+      st.invoice = result;
+      await ctx.reply(
+        `Partial payment detected. Please send remaining ${result.invoice_amount.toFixed(8)} BTC to address:\n\`${result.user_address}\``,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
+    st.timerId = setTimeout(doCheck, delay);
+  };
+
+  const delay = 15 * 60 * 1000 + Math.floor(Math.random() * 15 * 60 * 1000);
+  state.timerId = setTimeout(doCheck, delay);
 }
