@@ -35,15 +35,28 @@ export async function sendPaginatedStories({
       }
     );
 
-    // Actually download the stories (media files to buffer) with a timeout
+    // Download with activity timeout to avoid backlog
     try {
-      const download = downloadStories(mapped, 'pinned');
-      const timeout = new Promise((_, rej) =>
-        setTimeout(() => rej(new Error('Download timed out')), 300000)
-      );
-      await Promise.race([download, timeout]);
+      const controller = new AbortController();
+      let lastProgress = Date.now();
+      const onProgress = () => { lastProgress = Date.now(); };
+
+      const globalTimeout = setTimeout(() => controller.abort(), 300000); // 5 min
+      const activityInterval = setInterval(() => {
+        if (Date.now() - lastProgress > 30000) {
+          controller.abort();
+        }
+      }, 5000);
+
+      await downloadStories(mapped, 'pinned', onProgress, controller.signal);
+
+      clearTimeout(globalTimeout);
+      clearInterval(activityInterval);
+
+      if (controller.signal.aborted) {
+        throw new Error('Download timed out');
+      }
     } catch (err) {
-      // notify user about timeout specifically
       await sendTemporaryMessage(
         bot,
         task.chatId,

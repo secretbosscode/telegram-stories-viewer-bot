@@ -86,6 +86,14 @@ db.exec(`
   );
 `);
 
+// Blocked users table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS blocked_users (
+    telegram_id TEXT PRIMARY KEY,
+    blocked_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+`);
+
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
@@ -393,4 +401,33 @@ export function listPaymentChecks(): PaymentCheckRow[] {
   return db
     .prepare(`SELECT invoice_id, next_check, check_start FROM payment_checks`)
     .all() as PaymentCheckRow[];
+}
+
+// ----- Blocked users utils -----
+export interface BlockedUserRow {
+  telegram_id: string;
+  blocked_at: number;
+}
+
+export function blockUser(telegram_id: string): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO blocked_users (telegram_id, blocked_at) VALUES (?, strftime('%s','now'))`
+  ).run(telegram_id);
+}
+
+export function unblockUser(telegram_id: string): void {
+  db.prepare(`DELETE FROM blocked_users WHERE telegram_id = ?`).run(telegram_id);
+}
+
+export function isUserBlocked(telegram_id: string): boolean {
+  const row = db
+    .prepare(`SELECT 1 FROM blocked_users WHERE telegram_id = ?`)
+    .get(telegram_id);
+  return !!row;
+}
+
+export function listBlockedUsers(): BlockedUserRow[] {
+  return db
+    .prepare(`SELECT telegram_id, blocked_at FROM blocked_users`)
+    .all() as BlockedUserRow[];
 }

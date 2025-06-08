@@ -29,18 +29,21 @@ import { MappedStoryItem, StoriesModel } from 'types'; // <--- This import is co
  */
 export async function downloadStories(
   stories: StoriesModel, // Already MappedStoryItem[]
-  storiesType: 'active' | 'pinned'
-): Promise<void> {
+  storiesType: 'active' | 'pinned',
+  onProgress?: (story: MappedStoryItem) => void,
+  signal?: AbortSignal,
+): Promise<number> {
   if (!stories || stories.length === 0) {
     console.log(`[DownloadStories] No ${storiesType} stories to download.`);
-    return;
+    return 0;
   }
 
   const client = await Userbot.getInstance();
   console.log(`[DownloadStories] Starting download of ${stories.length} ${storiesType} stories. Concurrency: ${DOWNLOAD_CONCURRENCY_LIMIT}.`);
 
-  const downloadPromises = stories.map((storyItem: MappedStoryItem) => // Explicitly type storyItem
+  const downloadPromises = stories.map((storyItem: MappedStoryItem) =>
     limit(async () => {
+      if (signal?.aborted) return;
       const mediaExists = !!storyItem.media;
       const isNoforwards = !!storyItem.noforwards;
 
@@ -64,6 +67,7 @@ export async function downloadStories(
           storyItem.buffer = buffer;
           storyItem.bufferSize = parseFloat((buffer.byteLength / (1024 * 1024)).toFixed(2));
           console.log(`[DownloadStories] Downloaded story ID ${storyItem.id} (${storiesType}), Type: ${storyItem.mediaType}, Size: ${storyItem.bufferSize} MB.`);
+          onProgress?.(storyItem);
         } else {
           console.log(`[DownloadStories] Story ID ${storyItem.id} (${storiesType}): Empty or invalid buffer.`);
         }
@@ -89,6 +93,7 @@ export async function downloadStories(
   });
 
   console.log(`[DownloadStories] Finished all download attempts for ${stories.length} ${storiesType} stories. Success: ${successfulDownloads}, Failed: ${failedDownloads}.`);
+  return successfulDownloads;
 }
 
 // ===============================

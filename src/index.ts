@@ -14,7 +14,15 @@ import { initUserbot } from 'config/userbot';
 import { session, Telegraf } from 'telegraf';
 import fs from 'fs';
 import path from 'path';
-import { db, resetStuckJobs, updateFromAddress } from './db';
+import {
+  db,
+  resetStuckJobs,
+  updateFromAddress,
+  blockUser,
+  unblockUser,
+  isUserBlocked,
+  listBlockedUsers,
+} from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
 import { saveUser } from './repositories/user-repository';
@@ -55,6 +63,18 @@ if (!fs.existsSync(logDir)) {
 }
 
 bot.use(session());
+bot.use(async (ctx, next) => {
+  if (ctx.from?.is_bot) {
+    if (ctx.from.id) {
+      blockUser(String(ctx.from.id));
+    }
+    return;
+  }
+  if (ctx.from && isUserBlocked(String(ctx.from.id))) {
+    return;
+  }
+  await next();
+});
 bot.use(async (ctx, next) => {
   const text = 'message' in ctx && ctx.message && 'text' in ctx.message ? ctx.message.text : '';
   console.log(`[Update] from ${ctx.from?.id} type=${ctx.updateType} text=${text}`);
@@ -336,6 +356,56 @@ bot.command('listpremium', async (ctx) => {
     rows.forEach((u, i) => { msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id}\n`; });
     await ctx.reply(msg);
   } catch (e) { console.error("Error in /listpremium:", e); await ctx.reply("An error occurred."); }
+});
+
+bot.command('block', async (ctx) => {
+  if (ctx.from.id != BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  try {
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args.length) return ctx.reply('Usage: /block <telegram_id | @username>');
+    let telegramId: string | undefined;
+    if (args[0].startsWith('@')) {
+      const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(args[0].replace('@','')) as { telegram_id?: string };
+      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      telegramId = row.telegram_id;
+    } else if (/^\d+$/.test(args[0])) {
+      telegramId = args[0];
+    } else { return ctx.reply('Invalid argument.'); }
+    blockUser(telegramId!);
+    await ctx.reply(`🚫 User ${telegramId} blocked.`);
+  } catch (e) { console.error('Error in /block:', e); await ctx.reply('An error occurred.'); }
+});
+
+bot.command('unblock', async (ctx) => {
+  if (ctx.from.id != BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  try {
+    const args = ctx.message.text.split(' ').slice(1);
+    if (!args.length) return ctx.reply('Usage: /unblock <telegram_id | @username>');
+    let telegramId: string | undefined;
+    if (args[0].startsWith('@')) {
+      const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(args[0].replace('@','')) as { telegram_id?: string };
+      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      telegramId = row.telegram_id;
+    } else if (/^\d+$/.test(args[0])) {
+      telegramId = args[0];
+    } else { return ctx.reply('Invalid argument.'); }
+    unblockUser(telegramId!);
+    await ctx.reply(`✅ User ${telegramId} unblocked.`);
+  } catch (e) { console.error('Error in /unblock:', e); await ctx.reply('An error occurred.'); }
+});
+
+bot.command('blocklist', async (ctx) => {
+  if (ctx.from.id != BOT_ADMIN_ID) return;
+  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  try {
+    const rows = listBlockedUsers();
+    if (!rows.length) return ctx.reply('No blocked users.');
+    let msg = `🚫 Blocked users (${rows.length}):\n`;
+    rows.forEach((u, i) => { msg += `${i + 1}. ${u.telegram_id} at ${new Date(u.blocked_at * 1000).toLocaleDateString()}\n`; });
+    await ctx.reply(msg);
+  } catch (e) { console.error('Error in /blocklist:', e); await ctx.reply('An error occurred.'); }
 });
 
 bot.command('users', async (ctx) => {
