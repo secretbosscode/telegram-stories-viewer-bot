@@ -53,6 +53,7 @@ describe('sendProfileMedia', () => {
     const total = (bot.telegram.sendMediaGroup as jest.Mock).mock.calls
       .reduce((sum: number, c: any[]) => sum + c[1].length, 0);
     expect(total).toBe(11);
+    expect(sendTemporaryMessage).toHaveBeenCalledTimes(1);
     expect(sendTemporaryMessage).toHaveBeenCalledWith(
       bot,
       1,

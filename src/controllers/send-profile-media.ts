@@ -15,7 +15,6 @@ export async function sendProfileMedia(
   limit?: number,
 ) {
   try {
-    await sendTemporaryMessage(bot, chatId, `⏳ Fetching profile media for ${input}...`);
 
     const client = await Userbot.getInstance();
     const entity = await client.getEntity(input);
