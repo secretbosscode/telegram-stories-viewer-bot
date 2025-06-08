@@ -66,3 +66,15 @@ export const extendPremium = (telegramId: string, days: number): void => {
   ).run(until, telegramId);
 };
 
+export const getPremiumDaysLeft = (telegramId: string): number => {
+  const row = db
+    .prepare('SELECT premium_until FROM users WHERE telegram_id = ?')
+    .get(telegramId) as UserRow | undefined;
+
+  if (!row || !row.premium_until) return Infinity;
+
+  const secondsLeft = row.premium_until - Math.floor(Date.now() / 1000);
+  if (secondsLeft <= 0) return 0;
+  return Math.ceil(secondsLeft / 86400);
+};
+
