@@ -20,6 +20,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     telegram_id TEXT PRIMARY KEY NOT NULL,
     username TEXT,
+    is_bot INTEGER DEFAULT 0,
     is_premium INTEGER DEFAULT 0,
     free_trial_used INTEGER DEFAULT 0,
     premium_until INTEGER,
@@ -40,6 +41,9 @@ if (!userColumns.some((c) => c.name === 'pinned_message_id')) {
 }
 if (!userColumns.some((c) => c.name === 'pinned_message_updated_at')) {
   db.exec('ALTER TABLE users ADD COLUMN pinned_message_updated_at INTEGER');
+}
+if (!userColumns.some((c) => c.name === 'is_bot')) {
+  db.exec('ALTER TABLE users ADD COLUMN is_bot INTEGER DEFAULT 0');
 }
 
 // Download Queue Table
@@ -118,9 +122,14 @@ db.exec(`
 db.exec(`
   CREATE TABLE IF NOT EXISTS blocked_users (
     telegram_id TEXT PRIMARY KEY,
-    blocked_at INTEGER DEFAULT (strftime('%s','now'))
+    blocked_at INTEGER DEFAULT (strftime('%s','now')),
+    is_bot INTEGER DEFAULT 0
   );
 `);
+const blockedColumns = db.prepare("PRAGMA table_info(blocked_users)").all() as any[];
+if (!blockedColumns.some((c) => c.name === 'is_bot')) {
+  db.exec('ALTER TABLE blocked_users ADD COLUMN is_bot INTEGER DEFAULT 0');
+}
 
 // Store recent profile media requests for anti-spam checks
 db.exec(`
@@ -225,7 +234,7 @@ export function cleanupQueue(): void {
 export function getRecentHistory(limit: number): any[] {
   return db
     .prepare(
-      `SELECT q.telegram_id, u.username, q.target_username, q.status, q.enqueued_ts, q.processed_ts
+      `SELECT q.telegram_id, u.username, u.is_bot, q.target_username, q.status, q.enqueued_ts, q.processed_ts
        FROM download_queue q
        LEFT JOIN users u ON u.telegram_id = q.telegram_id
        WHERE q.enqueued_ts > (strftime('%s','now') - 2592000)
@@ -562,12 +571,13 @@ export function listPaymentChecks(): PaymentCheckRow[] {
 export interface BlockedUserRow {
   telegram_id: string;
   blocked_at: number;
+  is_bot: number;
 }
 
-export function blockUser(telegram_id: string): void {
+export function blockUser(telegram_id: string, is_bot = false): void {
   db.prepare(
-    `INSERT OR REPLACE INTO blocked_users (telegram_id, blocked_at) VALUES (?, strftime('%s','now'))`
-  ).run(telegram_id);
+    `INSERT OR REPLACE INTO blocked_users (telegram_id, blocked_at, is_bot) VALUES (?, strftime('%s','now'), ?)`
+  ).run(telegram_id, is_bot ? 1 : 0);
 }
 
 export function unblockUser(telegram_id: string): void {
@@ -583,6 +593,6 @@ export function isUserBlocked(telegram_id: string): boolean {
 
 export function listBlockedUsers(): BlockedUserRow[] {
   return db
-    .prepare(`SELECT telegram_id, blocked_at FROM blocked_users`)
+    .prepare(`SELECT telegram_id, blocked_at, is_bot FROM blocked_users`)
     .all() as BlockedUserRow[];
 }

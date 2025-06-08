@@ -3,6 +3,7 @@ import { db } from '../db';
 export interface UserRow {
   telegram_id?: string;
   username?: string;
+  is_bot?: number;
   is_premium?: number;
   premium_until?: number | null;
   free_trial_used?: number;

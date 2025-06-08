@@ -126,7 +126,7 @@ bot.use(session());
 bot.use(async (ctx, next) => {
   if (ctx.from?.is_bot) {
     if (ctx.from.id) {
-      blockUser(String(ctx.from.id));
+      blockUser(String(ctx.from.id), true);
     }
     return;
   }
@@ -489,13 +489,13 @@ bot.command('listpremium', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
   try {
-    const rows = db.prepare('SELECT telegram_id, username FROM users WHERE is_premium = 1').all() as any[];
+    const rows = db.prepare('SELECT telegram_id, username, is_bot FROM users WHERE is_premium = 1').all() as any[];
     if (!rows.length) return ctx.reply('No premium users found.');
     let msg = `🌟 Premium users (${rows.length}):\n`;
     rows.forEach((u, i) => {
       const days = getPremiumDaysLeft(String(u.telegram_id));
       const daysText = days === Infinity ? 'never expires' : `${days}d`;
-      msg += `${i + 1}. ${u.username ? '@' + u.username : u.telegram_id} - ${daysText}\n`;
+      msg += `${i + 1}. ${u.username ? '@' + u.username : u.telegram_id} [${u.is_bot ? 'BOT' : 'USER'}] - ${daysText}\n`;
     });
     await ctx.reply(msg);
   } catch (e) { console.error("Error in /listpremium:", e); await ctx.reply("An error occurred."); }
@@ -515,7 +515,8 @@ bot.command('block', async (ctx) => {
     } else if (/^\d+$/.test(args[0])) {
       telegramId = args[0];
     } else { return ctx.reply('Invalid argument.'); }
-    blockUser(telegramId!);
+    const row = db.prepare('SELECT is_bot FROM users WHERE telegram_id = ?').get(telegramId!) as { is_bot?: number } | undefined;
+    blockUser(telegramId!, row?.is_bot === 1);
     await ctx.reply(`🚫 User ${telegramId} blocked.`);
   } catch (e) { console.error('Error in /block:', e); await ctx.reply('An error occurred.'); }
 });
@@ -546,7 +547,9 @@ bot.command('blocklist', async (ctx) => {
     const rows = listBlockedUsers();
     if (!rows.length) return ctx.reply('No blocked users.');
     let msg = `🚫 Blocked users (${rows.length}):\n`;
-    rows.forEach((u, i) => { msg += `${i + 1}. ${u.telegram_id} at ${new Date(u.blocked_at * 1000).toLocaleDateString()}\n`; });
+    rows.forEach((u, i) => {
+      msg += `${i + 1}. ${u.telegram_id} [${u.is_bot ? 'BOT' : 'USER'}] at ${new Date(u.blocked_at * 1000).toLocaleDateString()}\n`;
+    });
     await ctx.reply(msg);
   } catch (e) { console.error('Error in /blocklist:', e); await ctx.reply('An error occurred.'); }
 });
@@ -555,10 +558,12 @@ bot.command('users', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
   if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
   try {
-    const rows = db.prepare('SELECT telegram_id, username, is_premium FROM users').all() as any[];
+    const rows = db.prepare('SELECT telegram_id, username, is_premium, is_bot FROM users').all() as any[];
     if (!rows.length) return ctx.reply('No users found in the database.');
     let msg = `👥 Users (${rows.length}):\n`;
-    rows.forEach((u, i) => { msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${u.is_premium ? 'PREMIUM' : 'FREE'}]\n`; });
+    rows.forEach((u, i) => {
+      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${u.is_premium ? 'PREMIUM' : 'FREE'}${u.is_bot ? ', BOT' : ''}]\n`;
+    });
     await ctx.reply(msg);
   } catch (e) { console.error("Error in /users:", e); await ctx.reply("An error occurred."); }
 });
@@ -573,7 +578,7 @@ bot.command('history', async (ctx) => {
     rows.forEach((r: any, i: number) => {
       const date = new Date(r.enqueued_ts * 1000).toLocaleDateString();
       const user = r.username ? `@${r.username}` : r.telegram_id;
-      msg += `${i + 1}. ${user} -> ${r.target_username} [${r.status}] ${date}\n`;
+      msg += `${i + 1}. ${user} [${r.is_bot ? 'BOT' : 'USER'}] -> ${r.target_username} [${r.status}] ${date}\n`;
     });
     await ctx.reply(msg);
   } catch (e) {

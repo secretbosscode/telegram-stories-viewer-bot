@@ -8,6 +8,7 @@ import { User } from 'telegraf/typings/core/types/typegram';
 export interface UserModel {
   telegram_id: string;
   username?: string;
+  is_bot?: number;
   is_premium: 0 | 1; // SQLite stores booleans as 0 or 1
   premium_until?: number | null;
   free_trial_used?: 0 | 1;
@@ -22,16 +23,17 @@ export interface UserModel {
  * Only called when a user sends /start for the first time.
  */
 export const saveUser = (user: User) => {
-  try {
-    const telegramId = user.id.toString();
-    const username = user.username || null;
+  try {
+    const telegramId = user.id.toString();
+    const username = user.username || null;
+    const isBot = user.is_bot ? 1 : 0;
 
     const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(telegramId);
 
     if (!exists) {
-      db.prepare(
-        'INSERT INTO users (telegram_id, username) VALUES (?, ?)'
-      ).run(telegramId, username);
+      db.prepare(
+        'INSERT INTO users (telegram_id, username, is_bot) VALUES (?, ?, ?)'
+      ).run(telegramId, username, isBot);
 
       notifyAdmin({
         status: 'info',
