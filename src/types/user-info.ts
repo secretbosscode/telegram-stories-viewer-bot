@@ -9,4 +9,6 @@ export interface UserInfo {
   initTime: number;
   isPremium?: boolean;
   instanceId?: string;
+  storyRequestType?: 'active' | 'pinned' | 'particular' | 'paginated';
+  isPaginated?: boolean;
 }

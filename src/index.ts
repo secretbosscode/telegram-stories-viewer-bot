@@ -481,6 +481,8 @@ bot.on('callback_query', async (ctx) => {
       user: user,
       initTime: Date.now(),
       isPremium: isPremium,
+      storyRequestType: 'paginated',
+      isPaginated: true,
     };
     handleNewTask(task);
     await ctx.answerCbQuery();
