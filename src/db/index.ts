@@ -58,6 +58,19 @@ db.exec(`
   );
 `);
 
+// Payments table for BTC invoices
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    invoice_amount REAL NOT NULL,
+    user_address TEXT NOT NULL,
+    paid_amount REAL DEFAULT 0,
+    expires_at INTEGER,
+    paid_at INTEGER
+  );
+`);
+
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
@@ -251,4 +264,44 @@ export function getDueMonitors(cutoff: number): MonitorRow[] {
 
 export function updateMonitorChecked(id: number): void {
   db.prepare(`UPDATE monitors SET last_checked = strftime('%s','now') WHERE id = ?`).run(id);
+}
+
+// ----- Payment utils -----
+export interface PaymentRow {
+  id: number;
+  user_id: string;
+  invoice_amount: number;
+  user_address: string;
+  paid_amount: number;
+  expires_at?: number;
+  paid_at?: number | null;
+}
+
+export function insertInvoice(
+  user_id: string,
+  invoice_amount: number,
+  user_address: string,
+  expires_at: number
+): PaymentRow {
+  const result = db
+    .prepare(
+      `INSERT INTO payments (user_id, invoice_amount, user_address, expires_at)
+       VALUES (?, ?, ?, ?)`
+    )
+    .run(user_id, invoice_amount, user_address, expires_at);
+
+  const id = Number(result.lastInsertRowid);
+  return getInvoice(id)!;
+}
+
+export function updatePaidAmount(id: number, amount: number): void {
+  db.prepare(`UPDATE payments SET paid_amount = paid_amount + ? WHERE id = ?`).run(amount, id);
+}
+
+export function markInvoicePaid(id: number): void {
+  db.prepare(`UPDATE payments SET paid_at = strftime('%s','now') WHERE id = ?`).run(id);
+}
+
+export function getInvoice(id: number): PaymentRow | undefined {
+  return db.prepare(`SELECT * FROM payments WHERE id = ?`).get(id) as PaymentRow | undefined;
 }
