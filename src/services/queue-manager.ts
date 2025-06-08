@@ -20,6 +20,7 @@ import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 
 const COOLDOWN_HOURS = { free: 12, premium: 2, admin: 0 };
+export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 function formatEta(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -96,8 +97,22 @@ export async function processQueue() {
 
   isProcessing = true;
   await markProcessingFx(job.id);
-  
+
   const currentTask: UserInfo = { ...job.task, chatId: job.chatId, instanceId: job.id };
+
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  timeoutHandle = setTimeout(async () => {
+    timedOut = true;
+    await markErrorFx({ jobId: job.id, message: 'Processing timeout' });
+    await sendTemporaryMessage(
+      bot,
+      job.chatId,
+      `❌ Your download for ${currentTask.link} failed. Reason: Processing timeout`,
+    );
+    isProcessing = false;
+    setImmediate(processQueue);
+  }, PROCESSING_TIMEOUT_MS);
 
   try {
     console.log(`[QueueManager] Starting processing for ${currentTask.link} (Job ID: ${job.id})`);
@@ -117,12 +132,19 @@ export async function processQueue() {
     console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
 
   } catch (err: any) {
-    console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
-    await markErrorFx({ jobId: job.id, message: err?.message || 'Unknown processing error' });
-    await bot.telegram.sendMessage(job.chatId, `❌ Your download for ${currentTask.link} failed. Reason: ${err?.message || 'Unknown error'}`);
+    if (!timedOut) {
+      console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
+      await markErrorFx({ jobId: job.id, message: err?.message || 'Unknown processing error' });
+      await bot.telegram.sendMessage(job.chatId, `❌ Your download for ${currentTask.link} failed. Reason: ${err?.message || 'Unknown error'}`);
+    }
   } finally {
-    isProcessing = false;
-    await cleanupQueueFx();
-    setImmediate(processQueue);
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    if (!timedOut) {
+      isProcessing = false;
+      await cleanupQueueFx();
+      setImmediate(processQueue);
+    }
   }
 }
