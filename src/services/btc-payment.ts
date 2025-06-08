@@ -64,7 +64,7 @@ function scheduleInvoiceCheck(
       return;
     }
 
-    const result = await checkPayment(inv);
+    const result = await checkPayment(inv, checkStart);
 
     if (result.unexpectedSenders && result.unexpectedSenders.length) {
       if (botInstance)
@@ -278,6 +278,7 @@ async function queryAddressBalance(address: string): Promise<number> {
 
 export async function checkPayment(
   invoice: PaymentRow,
+  checkStart = 0,
 ): Promise<PaymentCheckResult> {
   const balance = await queryAddressBalance(invoice.user_address);
   let receivedFromUser = 0;
@@ -286,6 +287,16 @@ export async function checkPayment(
   if (invoice.from_address) {
     const txs = await fetchTransactions(invoice.user_address);
     for (const tx of txs) {
+      const tsRaw =
+        tx.status?.block_time ??
+        tx.block_time ??
+        tx.time ??
+        tx.timestamp ??
+        (tx.received ? Date.parse(tx.received) / 1000 : undefined) ??
+        (tx.confirmed ? Date.parse(tx.confirmed) / 1000 : undefined) ??
+        0;
+      const txTimestamp = Math.floor(Number(tsRaw) || 0);
+      if (txTimestamp && txTimestamp < checkStart) continue;
       const outs = tx.vout ?? tx.outputs;
       const ins = tx.vin ?? tx.inputs;
       const toUs = outs?.find(

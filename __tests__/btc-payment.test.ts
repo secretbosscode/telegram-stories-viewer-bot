@@ -84,11 +84,32 @@ describe('checkPayment tolerance', () => {
     const originalFetch = global.fetch;
     global.fetch = (jest.fn() as any).mockResolvedValue({ json: async () => [tx] });
 
-    await btc.checkPayment(invoice as any);
+    await btc.checkPayment(invoice as any, 0);
 
     expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 0.91);
     expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
 
+    global.fetch = originalFetch as any;
+  });
+
+  test('older transactions are ignored', async () => {
+    const invoice = insertInvoice('u1', 1, 'dest', 0, 'sender');
+
+    const tx = {
+      vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
+      vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
+      status: { block_time: 1000 },
+    };
+
+    const originalFetch = global.fetch;
+    global.fetch = (jest.fn() as any).mockResolvedValue({
+      json: async () => ({ txs: [tx], bitcoin: { usd: 10000 } }),
+    });
+
+    await btc.checkPayment(invoice as any, 2000);
+
+    expect(updatePaidAmount).not.toHaveBeenCalled();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
     global.fetch = originalFetch as any;
   });
 });
