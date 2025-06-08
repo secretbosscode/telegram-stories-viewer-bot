@@ -32,9 +32,5 @@ export const USERBOT_PHONE_NUMBER = getEnvVar('USERBOT_PHONE_NUMBER');
 export const USERBOT_PASSWORD = process.env.USERBOT_PASSWORD || parsed?.USERBOT_PASSWORD || '';
 export const USERBOT_PHONE_CODE = process.env.USERBOT_PHONE_CODE || parsed?.USERBOT_PHONE_CODE || '';
 
-// supabase
-export const SUPABASE_PROJECT_URL = getEnvVar('SUPABASE_PROJECT_URL');
-export const SUPABASE_API_KEY = getEnvVar('SUPABASE_API_KEY');
-
 // payments
 export const BTC_WALLET_ADDRESS = getEnvVar('BTC_WALLET_ADDRESS');

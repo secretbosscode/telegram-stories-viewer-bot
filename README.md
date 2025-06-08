@@ -159,7 +159,7 @@ bot.telegram.sendMediaGroup(
    - <code>USERBOT_PHONE_NUMBER</code> – the phone number of the account that will act as the userbot.
    - Optional: <code>USERBOT_PASSWORD</code> if that account has two‑factor authentication enabled.
    - Leave <code>USERBOT_PHONE_CODE</code> empty for the first run.
-   - Fill in <code>BOT_ADMIN_ID</code>, <code>SUPABASE_PROJECT_URL</code>, <code>SUPABASE_API_KEY</code>, <code>BTC_WALLET_ADDRESS</code>, etc.
+   - Fill in <code>BOT_ADMIN_ID</code>, <code>BTC_WALLET_ADDRESS</code>, etc.
 2. Build and start the container:
 
 ```shell
