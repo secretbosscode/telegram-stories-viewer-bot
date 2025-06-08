@@ -25,7 +25,14 @@ export async function sendParticularStory({
 
   try {
     // Notify user that download is starting
-    await bot.telegram.sendMessage(task.chatId, '⏳ Downloading...').catch(() => null);
+    await bot.telegram
+      .sendMessage(task.chatId, '⏳ Downloading...')
+      .catch((err) => {
+        console.error(
+          `[sendParticularStory] Failed to send 'Downloading' message to ${task.chatId}:`,
+          err
+        );
+      });
 
     // Actually download the story (media file to buffer)
     await downloadStories(mapped, 'active'); // 'active' is a string literal, ok.
@@ -34,7 +41,14 @@ export async function sendParticularStory({
 
     if (singleStory && singleStory.buffer) { // <--- Added check for singleStory existence
       // Notify user that upload is starting
-      await bot.telegram.sendMessage(task.chatId, '⏳ Uploading to Telegram...').catch(() => null);
+      await bot.telegram
+        .sendMessage(task.chatId, '⏳ Uploading to Telegram...')
+        .catch((err) => {
+          console.error(
+            `[sendParticularStory] Failed to send 'Uploading' message to ${task.chatId}:`,
+            err
+          );
+        });
 
       // Send the media group (single file as an array)
       await bot.telegram.sendMediaGroup(task.chatId, [
@@ -48,7 +62,14 @@ export async function sendParticularStory({
       ]);
     } else {
       // Notify user if download failed
-      await bot.telegram.sendMessage(task.chatId, '❌ Could not retrieve the requested story.').catch(() => null);
+      await bot.telegram
+        .sendMessage(task.chatId, '❌ Could not retrieve the requested story.')
+        .catch((err) => {
+          console.error(
+            `[sendParticularStory] Failed to notify ${task.chatId} about retrieval error:`,
+            err
+          );
+        });
     }
 
     // Notify admin for monitoring
@@ -65,7 +86,17 @@ export async function sendParticularStory({
     } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
     console.error('[sendParticularStory] Error occurred while sending story:', error);
     try {
-      await bot.telegram.sendMessage(task.chatId, 'An error occurred while sending this story. The admin has been notified.').catch(() => null);
+      await bot.telegram
+        .sendMessage(
+          task.chatId,
+          'An error occurred while sending this story. The admin has been notified.'
+        )
+        .catch((err) => {
+          console.error(
+            `[sendParticularStory] Failed to notify ${task.chatId} about general error:`,
+            err
+          );
+        });
     } catch (_) {/* ignore */}
     throw error; // Essential for Effector's .fail to trigger
   }

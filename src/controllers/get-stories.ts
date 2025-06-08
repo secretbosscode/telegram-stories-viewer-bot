@@ -52,9 +52,15 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
       let fetchedCountInLoop = 0;
       while (lastPinnedStoryId !== null) {
         await timeout(1000);
-        const olderPinnedResult = await client.invoke(
-          new Api.stories.GetPinnedStories({ peer: entity, offsetId: lastPinnedStoryId })
-        ).catch(() => null);
+        const olderPinnedResult = await client
+          .invoke(new Api.stories.GetPinnedStories({ peer: entity, offsetId: lastPinnedStoryId }))
+          .catch((err) => {
+            console.error(
+              `[getStories] Error fetching older pinned stories for ${task.link} (${task.chatId}):`,
+              err
+            );
+            return null;
+          });
 
         if (olderPinnedResult && olderPinnedResult.stories.length > 0) {
           const newPinnedStories = olderPinnedResult.stories.filter(

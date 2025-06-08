@@ -25,7 +25,14 @@ export async function sendPaginatedStories({
 
   try {
     // Notify user that download is starting
-    await bot.telegram.sendMessage(task.chatId, '⏳ Downloading...').catch(() => null);
+    await bot.telegram
+      .sendMessage(task.chatId, '⏳ Downloading...')
+      .catch((err) => {
+        console.error(
+          `[sendPaginatedStories] Failed to send 'Downloading' message to ${task.chatId}:`,
+          err
+        );
+      });
 
     // Actually download the stories (media files to buffer)
     await downloadStories(mapped, 'pinned'); // 'pinned' is a string literal, ok.
@@ -37,7 +44,14 @@ export async function sendPaginatedStories({
 
     if (uploadableStories.length > 0) {
       // Notify user that upload is starting
-      await bot.telegram.sendMessage(task.chatId, '⏳ Uploading to Telegram...').catch(() => null);
+      await bot.telegram
+        .sendMessage(task.chatId, '⏳ Uploading to Telegram...')
+        .catch((err) => {
+          console.error(
+            `[sendPaginatedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
+            err
+          );
+        });
 
       // Send all media as a group (album)
       await bot.telegram.sendMediaGroup(
@@ -49,10 +63,17 @@ export async function sendPaginatedStories({
         }))
       );
     } else {
-      await bot.telegram.sendMessage(
-        task.chatId,
-        '❌ No paginated stories could be sent. They might be too large or none were found.'
-      ).catch(() => null);
+      await bot.telegram
+        .sendMessage(
+          task.chatId,
+          '❌ No paginated stories could be sent. They might be too large or none were found.'
+        )
+        .catch((err) => {
+          console.error(
+            `[sendPaginatedStories] Failed to notify ${task.chatId} about no stories:`,
+            err
+          );
+        });
     }
 
     // Notify admin for logging and monitoring
@@ -69,7 +90,17 @@ export async function sendPaginatedStories({
     } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
     console.error('[sendPaginatedStories] Error occurred while sending paginated stories:', error);
     try {
-      await bot.telegram.sendMessage(task.chatId, 'An error occurred while sending these stories. The admin has been notified.').catch(() => null);
+      await bot.telegram
+        .sendMessage(
+          task.chatId,
+          'An error occurred while sending these stories. The admin has been notified.'
+        )
+        .catch((err) => {
+          console.error(
+            `[sendPaginatedStories] Failed to notify ${task.chatId} about general error:`,
+            err
+          );
+        });
     } catch (_) {/* ignore */}
     throw error; // Essential for Effector's .fail to trigger
   }
