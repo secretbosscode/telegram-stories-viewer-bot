@@ -61,6 +61,54 @@ setBotInstance(bot);
 const RESTART_COMMAND = 'restart';
 const extraOptions: any = { link_preview_options: { is_disabled: true } };
 
+// =============================
+// Command definitions
+// =============================
+const BASE_COMMANDS = [
+  { command: 'start', description: 'Show usage instructions' },
+  { command: 'help', description: 'Show help message' },
+  { command: 'premium', description: 'Info about premium features' },
+  { command: 'upgrade', description: 'Upgrade to premium' },
+  { command: 'freetrial', description: 'Free 7-day premium trial' },
+  { command: 'verify', description: 'Manually verify a payment' },
+  { command: 'queue', description: 'Show your queue status' },
+];
+
+const PREMIUM_COMMANDS = [
+  { command: 'monitor', description: 'Monitor a profile for new stories' },
+  { command: 'unmonitor', description: 'Stop monitoring a profile' },
+];
+
+const ADMIN_COMMANDS = [
+  { command: 'setpremium', description: 'Mark user as premium' },
+  { command: 'unsetpremium', description: 'Remove premium status' },
+  { command: 'ispremium', description: 'Check premium status' },
+  { command: 'listpremium', description: 'List all premium users' },
+  { command: 'users', description: 'List all users' },
+  { command: 'history', description: 'Recent user activity' },
+  { command: 'block', description: 'Block a user' },
+  { command: 'unblock', description: 'Unblock a user' },
+  { command: 'blocklist', description: 'List blocked users' },
+  { command: 'restart', description: 'Restart the bot' },
+];
+
+async function updateUserCommands(
+  ctx: IContextBot,
+  isAdmin: boolean,
+  isPremium: boolean,
+) {
+  const commands = [...BASE_COMMANDS];
+  if (isPremium || isAdmin) {
+    commands.push(...PREMIUM_COMMANDS);
+  }
+  if (isAdmin) {
+    commands.push(...ADMIN_COMMANDS);
+  }
+  await ctx.telegram.setMyCommands(commands, {
+    scope: { type: 'chat', chat_id: ctx.chat!.id },
+  });
+}
+
 const logPath = LOG_FILE;
 const logDir = path.dirname(logPath);
 if (!fs.existsSync(logDir)) {
@@ -141,6 +189,8 @@ function isActivated(userId: number): boolean {
 
 bot.start(async (ctx) => {
   await saveUser(ctx.from);
+  const isAdmin = ctx.from.id === BOT_ADMIN_ID;
+  const isPremium = isUserPremium(String(ctx.from.id));
   let msg =
     "🔗 Please send one of the following:\n\n" +
     "*Username with '@' symbol:*\n`@durov`\n\n" +
@@ -152,6 +202,7 @@ bot.start(async (ctx) => {
       msg;
   }
   await ctx.reply(msg, { ...extraOptions, parse_mode: 'Markdown' });
+  await updateUserCommands(ctx, isAdmin, isPremium);
 });
 
 bot.command('help', async (ctx) => {
@@ -193,6 +244,7 @@ bot.command('help', async (ctx) => {
     '\nTo find the transaction ID (txid), check the details of your payment in your wallet.';
   // Using 'Markdown' as it's more forgiving than 'MarkdownV2' for simple text.
   await ctx.reply(finalHelpText, { parse_mode: 'Markdown' });
+  await updateUserCommands(ctx, isAdmin, isPremium);
 });
 
 bot.command('premium', handlePremium);
@@ -618,20 +670,9 @@ async function startApp() {
   processQueue();
   startMonitorLoop();
   resumePendingChecks();
-  const commonCommands = [
-    { command: 'start', description: 'Show usage instructions' },
-    { command: 'help', description: 'Show help message' },
-    { command: 'premium', description: 'Info about premium features' },
-    { command: 'upgrade', description: 'Upgrade to premium' },
-    { command: 'freetrial', description: 'Free 7-day premium trial' },
-    { command: 'verify', description: 'Manually verify a payment' },
-    { command: 'queue', description: 'Show your queue status' },
-    { command: 'monitor', description: 'Monitor a profile for new stories' },
-    { command: 'unmonitor', description: 'Stop monitoring a profile' },
-  ];
-  await bot.telegram.setMyCommands(commonCommands);
+  await bot.telegram.setMyCommands(BASE_COMMANDS);
   await bot.telegram.setMyCommands(
-    [...commonCommands, { command: 'restart', description: 'Restart the bot (admin)' }],
+    [...BASE_COMMANDS, ...PREMIUM_COMMANDS, ...ADMIN_COMMANDS],
     { scope: { type: 'chat', chat_id: BOT_ADMIN_ID } }
   );
   bot.launch({ dropPendingUpdates: true }).then(() => {
