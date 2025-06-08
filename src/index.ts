@@ -46,6 +46,7 @@ import {
   schedulePaymentCheck,
   resumePendingChecks,
   setBotInstance,
+  verifyPaymentByTxid,
 } from './services/btc-payment';
 import { handleUpgrade } from 'controllers/upgrade';
 import { UserInfo } from 'types';
@@ -147,7 +148,8 @@ bot.command('help', async (ctx) => {
     '`/start` - Show usage instructions\n' +
     '`/help` - Show this help message\n' +
     '`/premium` - Info about premium features\n' +
-    '`/queue` - View your place in the download queue\n';
+    '`/queue` - View your place in the download queue\n' +
+    '`/verify <txid> <invoice>` - Manually verify a payment\n';
 
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
@@ -204,6 +206,22 @@ bot.command('premium', async (ctx) => {
 
 bot.command('upgrade', async (ctx) => {
   await handleUpgrade(ctx);
+});
+
+bot.command('verify', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length < 2) {
+    return ctx.reply('Usage: /verify <txid> <invoice_id>');
+  }
+  const [txid, invoiceIdStr] = args;
+  const invoiceId = parseInt(invoiceIdStr, 10);
+  if (!txid || !invoiceId) return ctx.reply('Invalid arguments.');
+  const invoice = await verifyPaymentByTxid(invoiceId, txid);
+  if (invoice && invoice.paid_at) {
+    extendPremium(String(ctx.from.id), 30);
+    return ctx.reply('✅ Payment verified! Premium extended by 30 days.');
+  }
+  await ctx.reply('❌ Unable to verify this transaction.');
 });
 
 bot.command('queue', async (ctx) => {
