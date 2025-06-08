@@ -25,18 +25,22 @@ function getCooldownHours({ isPremium, isAdmin }: { isPremium?: boolean; isAdmin
 }
 
 export async function handleNewTask(user: UserInfo) {
-  const { chatId: telegram_id, link: target_username } = user;
+  const { chatId: telegram_id, link: target_username, nextStoriesIds } = user;
   const is_admin = telegram_id === BOT_ADMIN_ID.toString();
   const cooldown = getCooldownHours({ isPremium: user.isPremium, isAdmin: is_admin });
 
   try {
-    if (await wasRecentlyDownloadedFx({ telegram_id, target_username, hours: cooldown })) {
-      await bot.telegram.sendMessage(telegram_id, `⏳ You can request stories for "${target_username}" once every ${cooldown} hours.`);
-      return;
-    }
-    if (await isDuplicatePendingFx({ telegram_id, target_username })) {
-      await bot.telegram.sendMessage(telegram_id, `⚠️ This download is already in the queue.`);
-      return;
+    const isPaginatedRequest = Array.isArray(nextStoriesIds) && nextStoriesIds.length > 0;
+
+    if (!isPaginatedRequest) {
+      if (await wasRecentlyDownloadedFx({ telegram_id, target_username, hours: cooldown })) {
+        await bot.telegram.sendMessage(telegram_id, `⏳ You can request stories for "${target_username}" once every ${cooldown} hours.`);
+        return;
+      }
+      if (await isDuplicatePendingFx({ telegram_id, target_username })) {
+        await bot.telegram.sendMessage(telegram_id, `⚠️ This download is already in the queue.`);
+        return;
+      }
     }
 
     await enqueueDownloadFx({ telegram_id, target_username, task_details: user });
