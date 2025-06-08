@@ -19,13 +19,13 @@ export async function handleUpgrade(ctx: IContextBot): Promise<void> {
       '```',
       `${invoice.invoice_amount.toFixed(8)} BTC`,
       '```',
-      '\(~$5\) to the following address:',
+      '(~$5) to the following address:',
       '```',
       invoice.user_address,
       '```',
-      'Reply with the address you will pay from within one hour\.',
+      'Reply with the address you will pay from within one hour.',
     ].join('\n');
-    await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
   } catch (e) {
     console.error('upgrade cmd error', e);
     await ctx.reply('Failed to create invoice. Please try again later.');
