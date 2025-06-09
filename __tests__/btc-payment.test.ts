@@ -52,7 +52,7 @@ jest.mock('../src/db', () => {
 });
 
 // Mock env-config to supply wallet address
-jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr', BTC_XPUB: '', BTC_ZPUB: '' }));
+jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr', BTC_XPUB: '', BTC_YPUB: '', BTC_ZPUB: '' }));
 
 // Import after mocks
 import { db, markInvoicePaid, updatePaidAmount, updateFromAddress, recordTxid, isTxidUsed, insertInvoice } from '../src/db';
