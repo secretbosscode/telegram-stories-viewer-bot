@@ -27,6 +27,8 @@
   "msg.startFirst": "请先输入 /start。",
   "msg.botStart": "👋 请输入 /start 开始使用。",
   "msg.invalidInput": "🚫 无效输入，请发送 `@username`，`+19875551234` 或者链接。使用 /help 了解更多。",
+  "invalidLink.warning": "🚫 Invalid story link. {{count}} warning(s) left.",
+  "invalidLink.suspended": "🚫 Too many invalid links. You are suspended for 1 hour.",
   "premium.already": "✅ 您已经是 Premium 用户。",
   "premium.freeTrialUsed": "❌ 您已使用过免费试用期。",
   "premium.freeTrialActivated": "🎉 已启用试用，7天 Premium。",

@@ -27,6 +27,8 @@
   "msg.startFirst": "Por favor escribe /start primero.",
   "msg.botStart": "👋 Escribe /start para comenzar a usar el bot.",
   "msg.invalidInput": "🚫 Entrada inválida. Envía `@username`, `+19875551234` o un enlace de historia. Usa /help para más info.",
+  "invalidLink.warning": "🚫 Invalid story link. {{count}} warning(s) left.",
+  "invalidLink.suspended": "🚫 Too many invalid links. You are suspended for 1 hour.",
   "premium.already": "✅ Ya tienes acceso Premium.",
   "premium.freeTrialUsed": "❌ Ya has utilizado tu prueba gratuita.",
   "premium.freeTrialActivated": "🎉 ¡Prueba activada! Tienes Premium por 7 días.",
