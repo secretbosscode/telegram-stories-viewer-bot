@@ -79,3 +79,24 @@ export const getProfileRequestCooldownRemainingFx = createEffect(
       params.hours,
     ),
 );
+
+export const recordUserRequestFx = createEffect((telegram_id: string) =>
+  db.recordUserRequest(telegram_id),
+);
+
+export const countRecentUserRequestsFx = createEffect(
+  (params: { telegram_id: string; window: number }) =>
+    db.countRecentUserRequests(params.telegram_id, params.window),
+);
+
+export const countPendingJobsFx = createEffect((telegram_id: string) =>
+  db.countPendingJobs(telegram_id),
+);
+
+export const getLastVerifyAttemptFx = createEffect((telegram_id: string) =>
+  db.getLastVerifyAttempt(telegram_id),
+);
+
+export const updateVerifyAttemptFx = createEffect((telegram_id: string) =>
+  db.updateVerifyAttempt(telegram_id),
+);

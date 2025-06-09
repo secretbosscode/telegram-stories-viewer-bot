@@ -163,6 +163,22 @@ db.exec(`
   );
 `);
 
+// Log of all download requests for global rate limiting
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_request_log (
+    telegram_id TEXT NOT NULL,
+    requested_at INTEGER NOT NULL
+  );
+`);
+
+// Track last /verify command per user
+db.exec(`
+  CREATE TABLE IF NOT EXISTS verify_attempts (
+    telegram_id TEXT PRIMARY KEY,
+    last_attempt INTEGER NOT NULL
+  );
+`);
+
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
@@ -637,4 +653,47 @@ export function listBlockedUsers(): BlockedUserRow[] {
   return db
     .prepare(`SELECT telegram_id, blocked_at, is_bot FROM blocked_users`)
     .all() as BlockedUserRow[];
+}
+
+// ----- Rate limiting utils -----
+export function recordUserRequest(telegram_id: string): void {
+  db.prepare(
+    `INSERT INTO user_request_log (telegram_id, requested_at) VALUES (?, strftime('%s','now'))`,
+  ).run(telegram_id);
+}
+
+export function countRecentUserRequests(
+  telegram_id: string,
+  windowSeconds: number,
+): number {
+  const cutoff = Math.floor(Date.now() / 1000) - windowSeconds;
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM user_request_log WHERE telegram_id = ? AND requested_at > ?`,
+    )
+    .get(telegram_id, cutoff) as { c: number };
+  return row.c || 0;
+}
+
+export function countPendingJobs(telegram_id: string): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM download_queue WHERE telegram_id = ? AND status IN ('pending','processing')`,
+    )
+    .get(telegram_id) as { c: number };
+  return row.c || 0;
+}
+
+export function getLastVerifyAttempt(telegram_id: string): number | undefined {
+  const row = db
+    .prepare(`SELECT last_attempt FROM verify_attempts WHERE telegram_id = ?`)
+    .get(telegram_id) as { last_attempt: number } | undefined;
+  return row?.last_attempt;
+}
+
+export function updateVerifyAttempt(telegram_id: string): void {
+  db.prepare(
+    `INSERT INTO verify_attempts (telegram_id, last_attempt) VALUES (?, strftime('%s','now'))
+     ON CONFLICT(telegram_id) DO UPDATE SET last_attempt = excluded.last_attempt`,
+  ).run(telegram_id);
 }
