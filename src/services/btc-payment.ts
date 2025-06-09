@@ -13,6 +13,9 @@ import {
   listPaymentChecks,
   PaymentCheckRow,
   reserveAddressIndex,
+  getInviterForUser,
+  wasReferralPaidRewarded,
+  markReferralPaidRewarded,
 } from '../db';
 import { IContextBot } from 'config/context-interface';
 import { BTC_WALLET_ADDRESS, BTC_XPUB, BTC_YPUB, BTC_ZPUB } from 'config/env-config';
@@ -102,6 +105,17 @@ function scheduleInvoiceCheck(
 
     if (newInv && newInv.paid_at) {
       extendPremium(userId, 30);
+      const inviter = getInviterForUser(userId);
+      if (inviter && !wasReferralPaidRewarded(userId)) {
+        extendPremium(inviter, 30);
+        markReferralPaidRewarded(userId);
+        if (botInstance) {
+          await botInstance.telegram.sendMessage(
+            inviter,
+            '🎉 Your referral made a payment! Premium extended by 30 days.',
+          );
+        }
+      }
       if (botInstance) {
         await botInstance.telegram.sendMessage(
           userId,

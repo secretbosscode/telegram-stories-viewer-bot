@@ -22,6 +22,13 @@ import {
   unblockUser,
   isUserBlocked,
   listBlockedUsers,
+  getOrCreateInviteCode,
+  findInviterByCode,
+  recordReferral,
+  countReferrals,
+  getInviterForUser,
+  markReferralPaidRewarded,
+  wasReferralPaidRewarded,
 } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
@@ -79,6 +86,7 @@ const BASE_COMMANDS = [
   { command: 'freetrial', description: 'Free 7-day premium trial' },
   { command: 'verify', description: 'Manually verify a payment' },
   { command: 'queue', description: 'Show your queue status' },
+  { command: 'invite', description: 'Show your referral link' },
   { command: 'profile', description: 'Get profile media for a user' },
 ];
 
@@ -192,6 +200,24 @@ function isActivated(userId: number): boolean {
 
 bot.start(async (ctx) => {
   await saveUser(ctx.from);
+  const payload = ctx.startPayload;
+  if (payload) {
+    const inviter = findInviterByCode(payload);
+    if (inviter && inviter !== String(ctx.from.id)) {
+      recordReferral(inviter, String(ctx.from.id));
+      const total = countReferrals(inviter);
+      if (total % 5 === 0) {
+        extendPremium(inviter, 7);
+        try {
+          await ctx.telegram.sendMessage(
+            inviter,
+            '🎉 You referred 5 users! Premium extended by 7 days.',
+          );
+        } catch {}
+      }
+    }
+  }
+  const inviteCode = getOrCreateInviteCode(String(ctx.from.id));
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
   let msg =
@@ -204,6 +230,9 @@ bot.start(async (ctx) => {
       '🎁 New here? Use /freetrial to get 7 days of Premium access for free!\n\n' +
       msg;
   }
+  const botUser = bot.botInfo?.username || 'this_bot';
+  msg += `\n\nShare your invite link: https://t.me/${botUser}?start=${inviteCode}`;
+  msg += '\nEarn 1 week free for every 5 sign ups and 30 days if a referral pays.';
   await ctx.reply(msg, { ...extraOptions, parse_mode: 'Markdown' });
   await updateUserCommands(ctx, isAdmin, isPremium);
 });
@@ -217,6 +246,7 @@ bot.command('help', async (ctx) => {
     '`/premium` - Info about premium features\n' +
     '`/freetrial` - Get 7 days of Premium access\n' +
     '`/queue` - View your place in the download queue\n' +
+    '`/invite` - Show your referral link\n' +
     '`/profile` - Get profile media\n' +
     '`/verify <txid>` - Manually verify a payment if it is not detected\n';
 
@@ -292,6 +322,17 @@ bot.command('verify', async (ctx) => {
   const invoice = await verifyPaymentByTxid(txid);
   if (invoice && invoice.paid_at) {
     extendPremium(String(ctx.from.id), 30);
+    const inviter = getInviterForUser(String(ctx.from.id));
+    if (inviter && !wasReferralPaidRewarded(String(ctx.from.id))) {
+      extendPremium(inviter, 30);
+      markReferralPaidRewarded(String(ctx.from.id));
+      try {
+        await ctx.telegram.sendMessage(
+          inviter,
+          '🎉 Your referral made a payment! Premium extended by 30 days.',
+        );
+      } catch {}
+    }
     if (ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
       ctx.session.upgrade = undefined;
     }
@@ -312,6 +353,16 @@ bot.command('queue', async (ctx) => {
   if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
   const msg = await getQueueStatusForUser(String(ctx.from.id));
   await sendTemporaryMessage(bot, ctx.chat!.id, msg);
+});
+
+bot.command('invite', async (ctx) => {
+  const code = getOrCreateInviteCode(String(ctx.from.id));
+  const botUser = bot.botInfo?.username || 'this_bot';
+  const link = `https://t.me/${botUser}?start=${code}`;
+  await ctx.reply(
+    `Share this link with friends:\n${link}\n` +
+      'Earn 1 week free for every 5 sign ups and 30 days if a referral pays.',
+  );
 });
 
 bot.command('profile', async (ctx) => {
