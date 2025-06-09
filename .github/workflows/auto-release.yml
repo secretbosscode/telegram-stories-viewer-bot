@@ -1,0 +1,30 @@
+name: Bump Version & Auto-Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  bump-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed to push tags
+
+      - name: Bump version and push tag
+        id: bump
+        uses: phips28/gh-action-bump-version@v10.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag-prefix: 'v'
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.bump.outputs.newTag }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
