@@ -159,7 +159,11 @@ bot.use(async (ctx, next) => {
   if (ctx.from && isUserBlocked(String(ctx.from.id))) {
     return;
   }
-  if (ctx.from && isUserTemporarilySuspended(String(ctx.from.id))) {
+  if (
+    ctx.from &&
+    ctx.from.id !== BOT_ADMIN_ID &&
+    isUserTemporarilySuspended(String(ctx.from.id))
+  ) {
     const remaining = getSuspensionRemaining(String(ctx.from.id));
     const m = Math.ceil(remaining / 60);
     try {
@@ -832,7 +836,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  if (looksLikeLink) {
+  if (looksLikeLink && userId !== BOT_ADMIN_ID) {
     const count = recordInvalidLink(String(userId));
     if (count >= 5) {
       suspendUserTemp(String(userId), 3600);
