@@ -69,16 +69,21 @@ function formatUptime(): string {
   return `${h}h ${m}m`;
 }
 
-export async function sendStartupStatus(bot: Telegraf<any>) {
-  startTimestamp = Math.floor(Date.now() / 1000);
-  const prev = readSavedStatusId();
+export function getStatusText(): string {
   const stats = getDailyStats();
-  const text =
+  return (
     `🕒 Uptime: ${formatUptime()}\n` +
     `New users: ${stats.newUsers}\n` +
     `Payments: ${stats.paidInvoices}\n` +
     `Invites redeemed: ${stats.invitesRedeemed}\n` +
-    `Errors last 24h: ${stats.errors}`;
+    `Errors last 24h: ${stats.errors}`
+  );
+}
+
+export async function sendStartupStatus(bot: Telegraf<any>) {
+  startTimestamp = Math.floor(Date.now() / 1000);
+  const prev = readSavedStatusId();
+  const text = getStatusText();
   const msg = await bot.telegram.sendMessage(BOT_ADMIN_ID, text);
   if (bot.botInfo?.id) {
     unblockUser(String(bot.botInfo.id));
@@ -100,13 +105,7 @@ export async function updateAdminStatus(bot: Telegraf<any>) {
     statusMessageId = readSavedStatusId();
   }
   if (!statusMessageId) return;
-  const stats = getDailyStats();
-  const text =
-    `🕒 Uptime: ${formatUptime()}\n` +
-    `New users: ${stats.newUsers}\n` +
-    `Payments: ${stats.paidInvoices}\n` +
-    `Invites redeemed: ${stats.invitesRedeemed}\n` +
-    `Errors last 24h: ${stats.errors}`;
+  const text = getStatusText();
   try {
     await bot.telegram.editMessageText(
       BOT_ADMIN_ID,

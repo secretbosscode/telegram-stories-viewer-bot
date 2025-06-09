@@ -62,7 +62,7 @@ import {
   setBotInstance,
   verifyPaymentByTxid,
 } from './services/btc-payment';
-import { startAdminStatusUpdates } from './services/admin-stats';
+import { getStatusText } from './services/admin-stats';
 import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
@@ -121,6 +121,7 @@ function getAdminCommands(locale: string) {
     { command: 'block', description: t(locale, 'cmd.block') },
     { command: 'unblock', description: t(locale, 'cmd.unblock') },
     { command: 'blocklist', description: t(locale, 'cmd.blocklist') },
+    { command: 'status', description: t(locale, 'cmd.status') },
     { command: 'restart', description: t(locale, 'cmd.restart') },
   ];
 }
@@ -509,6 +510,12 @@ bot.command('unmonitor', async (ctx) => {
 
 // --- Admin Commands ---
 
+bot.command('status', async (ctx) => {
+  if (ctx.from.id != BOT_ADMIN_ID) return;
+  const text = getStatusText();
+  await ctx.reply(text);
+});
+
 bot.command('restart', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
   const locale = ctx.from.language_code || 'en';
@@ -877,7 +884,6 @@ async function startApp() {
   );
   bot.launch({ dropPendingUpdates: true }).then(() => {
     console.log('✅ Telegram bot started successfully and is ready for commands.');
-    startAdminStatusUpdates(bot);
   });
 }
 

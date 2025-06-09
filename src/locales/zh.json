@@ -23,6 +23,7 @@
   "cmd.block": "封锁用户",
   "cmd.unblock": "解除封锁",
   "cmd.blocklist": "列出已封用户",
+  "cmd.status": "显示机器人状态",
   "cmd.restart": "重启机器人",
   "msg.startFirst": "请先输入 /start。",
   "msg.botStart": "👋 请输入 /start 开始使用。",
@@ -92,6 +93,6 @@
   "help.header": "*幽灵故事机器人帮助*",
   "help.general": "*常用命令：*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*高级命令：*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*管理员命令：*\n`/setpremium <ID 或 @username> [天]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 或 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 或 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 或 @username>` - {{cmdBlock}}\n`/unblock <ID 或 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
+  "help.admin": "*管理员命令：*\n`/setpremium <ID 或 @username> [天]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 或 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 或 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 或 @username>` - {{cmdBlock}}\n`/unblock <ID 或 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
   "error.unexpected": "抱歉，发生意外错误。请稍后再试。"
 }

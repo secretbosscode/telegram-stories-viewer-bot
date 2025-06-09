@@ -23,6 +23,7 @@
   "cmd.block": "Block a user",
   "cmd.unblock": "Unblock a user",
   "cmd.blocklist": "List blocked users",
+  "cmd.status": "Show bot status",
   "cmd.restart": "Restart the bot",
   "msg.startFirst": "Please type /start first.",
   "msg.botStart": "👋 Please type /start to begin using the bot.",
@@ -92,6 +93,6 @@
   "help.header": "*Bantuan Bot Ghost Stories*",
   "help.general": "*Arahan umum:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*Arahan premium:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*Arahan pentadbir:*\n`/setpremium <ID atau @username> [hari]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID atau @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID atau @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID atau @username>` - {{cmdBlock}}\n`/unblock <ID atau @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
+  "help.admin": "*Arahan pentadbir:*\n`/setpremium <ID atau @username> [hari]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID atau @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID atau @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID atau @username>` - {{cmdBlock}}\n`/unblock <ID atau @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
   "error.unexpected": "Maaf, ralat tidak dijangka berlaku. Sila cuba lagi nanti."
 }

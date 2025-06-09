@@ -23,6 +23,7 @@
   "cmd.block": "Block a user",
   "cmd.unblock": "Unblock a user",
   "cmd.blocklist": "List blocked users",
+  "cmd.status": "Show bot status",
   "cmd.restart": "Restart the bot",
   "msg.startFirst": "Please type /start first.",
   "msg.botStart": "👋 Please type /start to begin using the bot.",
@@ -92,6 +93,6 @@
   "help.header": "*Ghost Stories Bot Hulp*",
   "help.general": "*Algemene commando's:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*Premiumcommando's:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*Beheercommando's:*\n`/setpremium <ID of @username> [dagen]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID of @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID of @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID of @username>` - {{cmdBlock}}\n`/unblock <ID of @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
+  "help.admin": "*Beheercommando's:*\n`/setpremium <ID of @username> [dagen]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID of @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID of @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID of @username>` - {{cmdBlock}}\n`/unblock <ID of @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
   "error.unexpected": "Er is een onverwachte fout opgetreden. Probeer het later opnieuw."
 }
