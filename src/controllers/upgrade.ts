@@ -64,9 +64,9 @@ export async function handleUpgrade(ctx: IContextBot): Promise<void> {
       '```',
       invoice.user_address,
       '```',
-      'Reply with the address you will pay from within one hour.',
-      'Once paid, confirm by running `/verify <txid>`.',
-      'The txid is found in your wallet\'s transaction details.',
+      'Once paid, run `/verify <txid>` within one hour to confirm.',
+      "The txid (transaction hash) is shown in your wallet's transaction details.",
+      'Example: `2d339983a78206050b4d70c15c5e14a3553438b25caedebdf2bb2f7162e33d59`',
     ].join('\n');
     await sendTemporaryMessage(
       bot,
