@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Telegraf } from 'telegraf';
 import { BOT_ADMIN_ID, LOG_FILE } from '../config/env-config';
-import { db } from '../db';
+import { db, unblockUser } from '../db';
 
 let startTimestamp = Math.floor(Date.now() / 1000);
 let statusMessageId: number | null = null;
@@ -80,6 +80,9 @@ export async function sendStartupStatus(bot: Telegraf<any>) {
     `Invites redeemed: ${stats.invitesRedeemed}\n` +
     `Errors last 24h: ${stats.errors}`;
   const msg = await bot.telegram.sendMessage(BOT_ADMIN_ID, text);
+  if (bot.botInfo?.id) {
+    unblockUser(String(bot.botInfo.id));
+  }
   try {
     if (prev) {
       await bot.telegram.unpinChatMessage(BOT_ADMIN_ID, prev).catch(() => {});
