@@ -15,6 +15,7 @@ const config: Config = {
     '^repositories/(.*)$': '<rootDir>/src/repositories/$1',
     '^types$': '<rootDir>/src/types.ts',
     '^index$': '<rootDir>/src/index.ts',
+    'p-limit': '<rootDir>/__mocks__/p-limit.js',
   },
 };
 
