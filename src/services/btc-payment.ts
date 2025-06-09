@@ -15,7 +15,7 @@ import {
   reserveAddressIndex,
 } from '../db';
 import { IContextBot } from 'config/context-interface';
-import { BTC_WALLET_ADDRESS, BTC_XPUB } from 'config/env-config';
+import { BTC_WALLET_ADDRESS, BTC_XPUB, BTC_ZPUB } from 'config/env-config';
 import * as bitcoin from 'bitcoinjs-lib';
 import { BIP32Factory } from 'bip32';
 import bs58check from 'bs58check';
@@ -262,9 +262,10 @@ export async function createInvoice(
   const expires = Math.floor(Date.now() / 1000) + 15 * 60;
   let address = BTC_WALLET_ADDRESS;
   let idx: number | null = null;
-  if (BTC_XPUB) {
+  const extPub = BTC_XPUB || BTC_ZPUB;
+  if (extPub) {
     idx = reserveAddressIndex();
-    const node = bip32.fromBase58(normalizeXpub(BTC_XPUB), bitcoin.networks.bitcoin);
+    const node = bip32.fromBase58(normalizeXpub(extPub), bitcoin.networks.bitcoin);
     const child = node.derive(0).derive(idx);
     address = bitcoin.payments.p2wpkh({ pubkey: Buffer.from(child.publicKey), network: bitcoin.networks.bitcoin }).address!;
   }

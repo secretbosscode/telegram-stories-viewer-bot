@@ -159,8 +159,8 @@ bot.telegram.sendMediaGroup(
    - <code>USERBOT_PHONE_NUMBER</code> – the phone number of the account that will act as the userbot.
    - Optional: <code>USERBOT_PASSWORD</code> if that account has two‑factor authentication enabled.
    - Leave <code>USERBOT_PHONE_CODE</code> empty for the first run.
-  - Fill in <code>BOT_ADMIN_ID</code>, and either <code>BTC_WALLET_ADDRESS</code> or <code>BTC_XPUB</code>.
-    If both are provided, <code>BTC_XPUB</code> takes precedence and new invoices
+  - Fill in <code>BOT_ADMIN_ID</code>, and either <code>BTC_WALLET_ADDRESS</code>, <code>BTC_XPUB</code>, or <code>BTC_ZPUB</code>.
+    If an extended public key is provided via <code>BTC_XPUB</code> or <code>BTC_ZPUB</code>, it takes precedence and new invoices
     will derive unique addresses from it.
   - Optional: <code>LOG_FILE</code> to change where runtime errors are logged (defaults to <code>./data/error.log</code>).
   - Optional: <code>DEBUG_LOG_FILE</code> to also store verbose debug logs on disk. Leave empty to disable file logging.
