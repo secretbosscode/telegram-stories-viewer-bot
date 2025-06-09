@@ -93,6 +93,5 @@
   "help.general": "*Commandes générales:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*Commandes premium:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
   "help.admin": "*Commandes admin:*\n`/setpremium <ID ou @username> [jours]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID ou @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID ou @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID ou @username>` - {{cmdBlock}}\n`/unblock <ID ou @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
-  "help.txidInfo": "Pour trouver l'identifiant de transaction (txid), vérifiez les détails du paiement dans votre portefeuille.",
   "error.unexpected": "Désolé, une erreur inattendue est survenue. Veuillez réessayer plus tard."
 }

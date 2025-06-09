@@ -302,7 +302,6 @@ bot.command('help', async (ctx) => {
         neverExpires: t(locale, 'premium.neverExpires'),
       });
   }
-  finalHelpText += '\n' + t(locale, 'help.txidInfo');
   await ctx.reply(finalHelpText, { parse_mode: 'Markdown' });
   await updateUserCommands(ctx, isAdmin, isPremium);
 });
