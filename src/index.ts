@@ -59,6 +59,8 @@ import {
   recordProfileRequestFx,
   wasProfileRequestedRecentlyFx,
   getProfileRequestCooldownRemainingFx,
+  getLastVerifyAttemptFx,
+  updateVerifyAttemptFx,
 } from './db/effects';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
@@ -278,6 +280,15 @@ bot.command('verify', async (ctx) => {
   }
   const [txid] = args;
   if (!txid) return ctx.reply('Invalid arguments.');
+  const isAdmin = ctx.from.id === BOT_ADMIN_ID;
+  if (!isAdmin) {
+    const last = await getLastVerifyAttemptFx(String(ctx.from.id));
+    if (last && Math.floor(Date.now() / 1000) - last < 60) {
+      const wait = 60 - (Math.floor(Date.now() / 1000) - last);
+      return ctx.reply(`⏳ Please wait ${wait}s before verifying again.`);
+    }
+    await updateVerifyAttemptFx(String(ctx.from.id));
+  }
   const invoice = await verifyPaymentByTxid(txid);
   if (invoice && invoice.paid_at) {
     extendPremium(String(ctx.from.id), 30);

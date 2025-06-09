@@ -12,6 +12,9 @@ import {
   isDuplicatePendingFx,
   getQueueStatsFx,
   findPendingJobFx,
+  recordUserRequestFx,
+  countRecentUserRequestsFx,
+  countPendingJobsFx,
 } from 'db/effects';
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
@@ -53,6 +56,30 @@ export async function handleNewTask(user: UserInfo) {
   const cooldown = getCooldownHours({ isPremium: user.isPremium, isAdmin: is_admin });
 
   try {
+    if (!is_admin) {
+      const recent = await countRecentUserRequestsFx({ telegram_id, window: 60 });
+      if (recent >= 5) {
+        await sendTemporaryMessage(
+          bot,
+          telegram_id,
+          '🚫 Too many requests, please slow down.',
+        );
+        return;
+      }
+
+      const pending = await countPendingJobsFx(telegram_id);
+      if (pending >= 3) {
+        await sendTemporaryMessage(
+          bot,
+          telegram_id,
+          '🚫 You already have too many pending requests.',
+        );
+        return;
+      }
+
+      await recordUserRequestFx(telegram_id);
+    }
+
     const isPaginatedRequest = Array.isArray(nextStoriesIds) && nextStoriesIds.length > 0;
 
     if (!isPaginatedRequest) {
