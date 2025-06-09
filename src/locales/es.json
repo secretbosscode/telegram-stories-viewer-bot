@@ -53,6 +53,7 @@
   "admin.restarting": "⏳ Reiniciando servidor...",
   "invoice.expired": "❌ Factura vencida.",
   "invoice.addressReceived": "Dirección recibida. Monitoreando el pago... Ejecuta `/verify <txid>` tras pagar.",
+"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "Esta función requiere Premium.",
   "user.notFound": "Usuario no encontrado en la base de datos.",
   "argument.invalid": "Argumento inválido.",

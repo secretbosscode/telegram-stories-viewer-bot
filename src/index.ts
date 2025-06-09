@@ -62,7 +62,7 @@ import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
 import { UserInfo } from 'types';
-import { sendTemporaryMessage, updatePremiumPinnedMessage } from 'lib';
+import { sendTemporaryMessage, updatePremiumPinnedMessage, isValidBitcoinAddress } from 'lib';
 import {
   recordProfileRequestFx,
   wasProfileRequestedRecentlyFx,
@@ -772,10 +772,15 @@ bot.on('text', async (ctx) => {
   if (upgradeState && !upgradeState.fromAddress) {
     if (Date.now() > upgradeState.awaitingAddressUntil) {
       ctx.session.upgrade = undefined;
-        await ctx.reply(t(locale, 'invoice.expired'));
+      await ctx.reply(t(locale, 'invoice.expired'));
       return;
     }
-    upgradeState.fromAddress = text.trim();
+    const addr = text.trim();
+    if (!isValidBitcoinAddress(addr)) {
+      await ctx.reply(t(locale, 'argument.invalid'));
+      return;
+    }
+    upgradeState.fromAddress = addr;
     upgradeState.checkStart = Date.now();
     updateFromAddress(upgradeState.invoice.id, upgradeState.fromAddress);
     const remainingMs = upgradeState.awaitingAddressUntil - Date.now();
