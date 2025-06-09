@@ -35,11 +35,14 @@ export const USERBOT_PHONE_CODE = process.env.USERBOT_PHONE_CODE || parsed?.USER
 
 // payments
 export const BTC_XPUB = process.env.BTC_XPUB || parsed?.BTC_XPUB || '';
+export const BTC_YPUB = process.env.BTC_YPUB || parsed?.BTC_YPUB || '';
 export const BTC_ZPUB = process.env.BTC_ZPUB || parsed?.BTC_ZPUB || '';
 export const BTC_WALLET_ADDRESS =
   process.env.BTC_WALLET_ADDRESS || parsed?.BTC_WALLET_ADDRESS || '';
-if (!BTC_WALLET_ADDRESS && !BTC_XPUB && !BTC_ZPUB) {
-  throw new Error('Either BTC_WALLET_ADDRESS, BTC_XPUB or BTC_ZPUB is required');
+if (!BTC_WALLET_ADDRESS && !BTC_XPUB && !BTC_YPUB && !BTC_ZPUB) {
+  throw new Error(
+    'Either BTC_WALLET_ADDRESS, BTC_XPUB, BTC_YPUB or BTC_ZPUB is required',
+  );
 }
 
 // error log file path

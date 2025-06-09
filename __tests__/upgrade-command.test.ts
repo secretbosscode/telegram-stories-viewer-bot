@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 // Mock env-config to avoid requiring actual environment variables
-jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr', BTC_XPUB: '', BTC_ZPUB: '' }));
+jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr', BTC_XPUB: '', BTC_YPUB: '', BTC_ZPUB: '' }));
 
 import { handleUpgrade } from '../src/controllers/upgrade';
 import { IContextBot } from '../src/config/context-interface';
