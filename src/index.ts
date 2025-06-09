@@ -562,7 +562,10 @@ bot.command('users', async (ctx) => {
     if (!rows.length) return ctx.reply('No users found in the database.');
     let msg = `👥 Users (${rows.length}):\n`;
     rows.forEach((u, i) => {
-      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${u.is_premium ? 'PREMIUM' : 'FREE'}${u.is_bot ? ', BOT' : ''}]\n`;
+      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [`;
+      msg += u.is_premium ? 'PREMIUM' : 'FREE';
+      msg += `, ${u.is_bot ? 'BOT' : 'USER'}]`;
+      msg += '\n';
     });
     await ctx.reply(msg);
   } catch (e) { console.error("Error in /users:", e); await ctx.reply("An error occurred."); }
