@@ -186,8 +186,9 @@ export function enqueueDownload(
   telegram_id: string,
   target_username: string,
   task_details: UserInfo,
+  delaySeconds = 0,
 ): number {
-  const now = Math.floor(Date.now() / 1000);
+  const now = Math.floor(Date.now() / 1000) + delaySeconds;
   const detailsJson = JSON.stringify(task_details); // Convert object to JSON string for storage.
 
   const stmt = db.prepare(`

@@ -56,7 +56,9 @@ export async function handleNewTask(user: UserInfo) {
   const cooldown = getCooldownHours({ isPremium: user.isPremium, isAdmin: is_admin });
 
   try {
-    if (!is_admin) {
+    const isPaginatedRequest = Array.isArray(nextStoriesIds) && nextStoriesIds.length > 0;
+
+    if (!is_admin && !isPaginatedRequest) {
       const recent = await countRecentUserRequestsFx({ telegram_id, window: 60 });
       if (recent >= 5) {
         await sendTemporaryMessage(
@@ -79,8 +81,6 @@ export async function handleNewTask(user: UserInfo) {
 
       await recordUserRequestFx(telegram_id);
     }
-
-    const isPaginatedRequest = Array.isArray(nextStoriesIds) && nextStoriesIds.length > 0;
 
     if (!isPaginatedRequest) {
       if (await wasRecentlyDownloadedFx({ telegram_id, target_username, hours: cooldown })) {
@@ -113,7 +113,14 @@ export async function handleNewTask(user: UserInfo) {
       isPaginated: Array.isArray(nextStoriesIds) && nextStoriesIds.length > 0,
     };
 
-    const jobId = await enqueueDownloadFx({ telegram_id, target_username, task_details: jobDetails });
+    const delaySeconds = isPaginatedRequest ? 60 : 0;
+
+    const jobId = await enqueueDownloadFx({
+      telegram_id,
+      target_username,
+      task_details: jobDetails,
+      delaySeconds,
+    });
     const { position, eta } = await getQueueStatsFx(jobId);
     await sendTemporaryMessage(
       bot,

@@ -108,6 +108,35 @@ describe('queue-manager duplicate handling', () => {
     expect(enqueueDownloadFx).not.toHaveBeenCalled();
   });
 
+  test('paginated request bypasses rate limit checks', async () => {
+    countRecentUserRequestsFx.mockResolvedValue(5);
+    countPendingJobsFx.mockResolvedValue(3);
+    isDuplicatePendingFx.mockResolvedValue(false);
+    enqueueDownloadFx.mockResolvedValue(1);
+    getNextQueueItemFx.mockResolvedValue(null);
+
+    const user: UserInfo = {
+      chatId: '2',
+      link: 'target',
+      linkType: 'username',
+      nextStoriesIds: [1, 2, 3],
+      locale: 'en',
+      initTime: Date.now(),
+    };
+
+    await handleNewTask(user);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(sendTemporaryMessage).not.toHaveBeenCalledWith(
+      bot,
+      '2',
+      '🚫 Too many requests, please slow down.',
+    );
+    expect(recordUserRequestFx).not.toHaveBeenCalled();
+    expect(countPendingJobsFx).not.toHaveBeenCalled();
+    expect(enqueueDownloadFx).toHaveBeenCalled();
+  });
+
   test('admin bypasses rate and pending limits', async () => {
     countRecentUserRequestsFx.mockResolvedValue(10);
     countPendingJobsFx.mockResolvedValue(5);

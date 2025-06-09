@@ -11,9 +11,19 @@ import { DownloadQueueItem, UserInfo } from 'types';
 // =========================================================================
 export const enqueueDownloadFx = createEffect(
   async (
-    params: { telegram_id: string; target_username: string; task_details: UserInfo },
+    params: {
+      telegram_id: string;
+      target_username: string;
+      task_details: UserInfo;
+      delaySeconds?: number;
+    },
   ): Promise<number> => {
-    return db.enqueueDownload(params.telegram_id, params.target_username, params.task_details);
+    return db.enqueueDownload(
+      params.telegram_id,
+      params.target_username,
+      params.task_details,
+      params.delaySeconds ?? 0,
+    );
   },
 );
 
