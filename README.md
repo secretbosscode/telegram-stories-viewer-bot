@@ -191,7 +191,8 @@ Free users cannot monitor profiles. Premium users can monitor up to **5** profil
 
 ### Manual Payment Verification
 
-If your upgrade payment is not confirmed within an hour, you can verify it manually. Obtain the transaction hash (TXID) from your wallet and run:
+After sending your upgrade payment, you can speed up confirmation by verifying it manually.
+Obtain the transaction hash (TXID) from your wallet and run:
 
 ```
 /verify <txid>
