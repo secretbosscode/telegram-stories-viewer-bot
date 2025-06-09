@@ -93,6 +93,5 @@
   "help.general": "*Allgemeine Befehle:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*Premium-Befehle:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
   "help.admin": "*Admin-Befehle:*\n`/setpremium <ID oder @username> [Tage]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID oder @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID oder @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID oder @username>` - {{cmdBlock}}\n`/unblock <ID oder @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
-  "help.txidInfo": "Um die Transaktions-ID (txid) zu finden, überprüfe die Zahlungsdetails in deiner Wallet.",
   "error.unexpected": "Entschuldigung, ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut."
 }

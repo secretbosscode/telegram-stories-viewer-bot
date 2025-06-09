@@ -93,6 +93,5 @@
   "help.general": "*الأوامر العامة:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*أوامر البريميوم:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
   "help.admin": "*أوامر المشرف:*\n`/setpremium <ID أو @username> [أيام]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID أو @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID أو @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID أو @username>` - {{cmdBlock}}\n`/unblock <ID أو @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
-  "help.txidInfo": "للعثور على معرف المعاملة (txid)، تحقق من تفاصيل الدفع في محفظتك.",
   "error.unexpected": "عذرًا، حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."
 }

@@ -93,6 +93,5 @@
   "help.general": "*常用命令：*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*高级命令：*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
   "help.admin": "*管理员命令：*\n`/setpremium <ID 或 @username> [天]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 或 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 或 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 或 @username>` - {{cmdBlock}}\n`/unblock <ID 或 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
-  "help.txidInfo": "要查找交易 ID (txid)，请在钱包中查看付款详情。",
   "error.unexpected": "抱歉，发生意外错误。请稍后再试。"
 }

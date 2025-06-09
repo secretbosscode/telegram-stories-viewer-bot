@@ -93,6 +93,5 @@
   "help.general": "*Algemene commando's:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*Premiumcommando's:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
   "help.admin": "*Beheercommando's:*\n`/setpremium <ID of @username> [dagen]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID of @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID of @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID of @username>` - {{cmdBlock}}\n`/unblock <ID of @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
-  "help.txidInfo": "Om de transactie-ID (txid) te vinden, bekijk de details van je betaling in je wallet.",
   "error.unexpected": "Er is een onverwachte fout opgetreden. Probeer het later opnieuw."
 }
