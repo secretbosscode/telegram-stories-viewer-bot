@@ -560,6 +560,15 @@ export function getPendingInvoiceByAddress(address: string): PaymentRow | undefi
     .get(address) as PaymentRow | undefined;
 }
 
+export function getActiveInvoiceForUser(user_id: string): PaymentRow | undefined {
+  const now = Math.floor(Date.now() / 1000);
+  return db
+    .prepare(
+      `SELECT * FROM payments WHERE user_id = ? AND paid_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1`,
+    )
+    .get(user_id, now) as PaymentRow | undefined;
+}
+
 // ----- Payment txid utils -----
 export function recordTxid(invoice_id: number, txid: string): void {
   db.prepare(`INSERT OR IGNORE INTO payment_txids (invoice_id, txid) VALUES (?, ?)`)

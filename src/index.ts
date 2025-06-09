@@ -281,6 +281,9 @@ bot.command('verify', async (ctx) => {
   const invoice = await verifyPaymentByTxid(txid);
   if (invoice && invoice.paid_at) {
     extendPremium(String(ctx.from.id), 30);
+    if (ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
+      ctx.session.upgrade = undefined;
+    }
     return ctx.reply('✅ Payment verified! Premium extended by 30 days.');
   }
   await ctx.reply('❌ Unable to verify this transaction.');
@@ -670,7 +673,14 @@ bot.on('text', async (ctx) => {
     upgradeState.fromAddress = text.trim();
     upgradeState.checkStart = Date.now();
     updateFromAddress(upgradeState.invoice.id, upgradeState.fromAddress);
-    await ctx.reply('Address received. Monitoring for payment...');
+    const remainingMs = upgradeState.awaitingAddressUntil - Date.now();
+    await sendTemporaryMessage(
+      bot,
+      ctx.chat!.id,
+      'Address received. Monitoring for payment... Run `/verify <txid>` once paid.',
+      { parse_mode: 'Markdown' },
+      remainingMs,
+    );
     schedulePaymentCheck(ctx);
     return;
   }
