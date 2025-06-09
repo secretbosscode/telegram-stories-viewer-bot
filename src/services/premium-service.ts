@@ -62,7 +62,12 @@ export const removePremiumUser = (telegramId: string): void => {
 };
 
 export const extendPremium = (telegramId: string, days: number): void => {
-  const until = Math.floor(Date.now() / 1000) + days * 86400;
+  const row = db
+    .prepare('SELECT premium_until FROM users WHERE telegram_id = ?')
+    .get(telegramId) as UserRow | undefined;
+  const current = row?.premium_until || 0;
+  const base = current > Math.floor(Date.now() / 1000) ? current : Math.floor(Date.now() / 1000);
+  const until = base + days * 86400;
   db.prepare(
     `UPDATE users SET is_premium = 1, premium_until = ? WHERE telegram_id = ?`
   ).run(until, telegramId);
