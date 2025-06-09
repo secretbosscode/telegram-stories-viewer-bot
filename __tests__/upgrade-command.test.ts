@@ -69,6 +69,7 @@ describe('upgrade command', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     expect(sendTemporaryMessage).toHaveBeenCalledTimes(2);
     expect(sendTemporaryMessage.mock.calls[1][2]).toContain('already generated');
+    expect(sendTemporaryMessage.mock.calls[1][2]).toContain('/verify <txid>');
     spy.mockRestore();
   });
 });
