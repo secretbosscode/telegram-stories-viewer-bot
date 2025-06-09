@@ -23,6 +23,7 @@
   "cmd.block": "Заблокировать пользователя",
   "cmd.unblock": "Разблокировать пользователя",
   "cmd.blocklist": "Список заблокированных",
+  "cmd.status": "Показать статус бота",
   "cmd.restart": "Перезапустить бота",
   "msg.startFirst": "Пожалуйста, начните с /start.",
   "msg.botStart": "👋 Наберите /start, чтобы начать.",
@@ -92,6 +93,6 @@
   "help.header": "*Помощь бота Ghost Stories*",
   "help.general": "*Общие команды:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*Премиум-команды:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*Команды администратора:*\n`/setpremium <ID или @username> [дней]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID или @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID или @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID или @username>` - {{cmdBlock}}\n`/unblock <ID или @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
+  "help.admin": "*Команды администратора:*\n`/setpremium <ID или @username> [дней]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID или @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID или @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID или @username>` - {{cmdBlock}}\n`/unblock <ID или @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
   "error.unexpected": "Извините, произошла непредвиденная ошибка. Пожалуйста, попробуйте позже."
 }

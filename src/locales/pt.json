@@ -23,6 +23,7 @@
   "cmd.block": "Bloquear usuário",
   "cmd.unblock": "Desbloquear usuário",
   "cmd.blocklist": "Lista de bloqueados",
+  "cmd.status": "Mostrar status do bot",
   "cmd.restart": "Reiniciar bot",
   "msg.startFirst": "Por favor, digite /start primeiro.",
   "msg.botStart": "👋 Digite /start para começar a usar o bot.",
@@ -92,6 +93,6 @@
   "help.header": "*Ajuda do Ghost Stories Bot*",
   "help.general": "*Comandos gerais:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
   "help.premium": "*Comandos premium:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*Comandos de admin:*\n`/setpremium <ID ou @username> [dias]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID ou @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID ou @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID ou @username>` - {{cmdBlock}}\n`/unblock <ID ou @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/restart` - {{cmdRestart}}",
+  "help.admin": "*Comandos de admin:*\n`/setpremium <ID ou @username> [dias]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID ou @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID ou @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID ou @username>` - {{cmdBlock}}\n`/unblock <ID ou @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
   "error.unexpected": "Desculpe, ocorreu um erro inesperado. Tente novamente mais tarde."
 }
