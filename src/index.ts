@@ -717,6 +717,10 @@ export async function handleCallbackQuery(ctx: IContextBot) {
   if (data === RESTART_COMMAND && ctx.from?.id == BOT_ADMIN_ID) {
     const locale = ctx.from?.language_code || 'en';
     await ctx.answerCbQuery(t(locale, 'admin.restarting'));
+    try {
+      await ctx.deleteMessage();
+    } catch {}
+    await ctx.telegram.sendMessage(BOT_ADMIN_ID, t(locale, 'admin.restarting'));
     process.exit();
   }
 
