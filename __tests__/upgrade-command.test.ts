@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 // Mock env-config to avoid requiring actual environment variables
-jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr' }));
+jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr', BTC_XPUB: '' }));
 
 import { handleUpgrade } from '../src/controllers/upgrade';
 import { IContextBot } from '../src/config/context-interface';
@@ -12,6 +12,7 @@ const fakeInvoice = {
   user_id: '123',
   invoice_amount: 0.0001,
   user_address: 'addr',
+  address_index: null,
   paid_amount: 0,
   expires_at: 0,
 } as PaymentRow;
@@ -31,7 +32,7 @@ describe('upgrade command', () => {
     expect(spy).toHaveBeenCalledWith('123', 5);
     expect(ctx.session.upgrade?.invoice).toBe(fakeInvoice);
     expect(replies.length).toBe(1);
-    expect(replies[0][0]).toContain('Invoice #1');
+    expect(replies[0][0]).not.toContain('Invoice #1');
     expect(replies[0][0]).toContain('```');
     expect(replies[0][0]).toContain('addr');
     spy.mockRestore();

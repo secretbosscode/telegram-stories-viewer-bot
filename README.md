@@ -159,7 +159,9 @@ bot.telegram.sendMediaGroup(
    - <code>USERBOT_PHONE_NUMBER</code> – the phone number of the account that will act as the userbot.
    - Optional: <code>USERBOT_PASSWORD</code> if that account has two‑factor authentication enabled.
    - Leave <code>USERBOT_PHONE_CODE</code> empty for the first run.
-   - Fill in <code>BOT_ADMIN_ID</code>, <code>BTC_WALLET_ADDRESS</code>, etc.
+  - Fill in <code>BOT_ADMIN_ID</code>, and either <code>BTC_WALLET_ADDRESS</code> or <code>BTC_XPUB</code>.
+    If both are provided, <code>BTC_XPUB</code> takes precedence and new invoices
+    will derive unique addresses from it.
   - Optional: <code>LOG_FILE</code> to change where runtime errors are logged (defaults to <code>./data/error.log</code>).
   - Optional: <code>DEBUG_LOG_FILE</code> to also store verbose debug logs on disk. Leave empty to disable file logging.
 2. Build and start the container:
@@ -189,10 +191,10 @@ Free users cannot monitor profiles. Premium users can monitor up to **5** profil
 
 ### Manual Payment Verification
 
-If your upgrade payment is not confirmed within an hour, you can verify it manually. Locate the invoice number in the upgrade reply (for example `Invoice #42`) and obtain the transaction hash (TXID) from your wallet. Then run:
+If your upgrade payment is not confirmed within an hour, you can verify it manually. Obtain the transaction hash (TXID) from your wallet and run:
 
 ```
-/verify <txid> <invoice_id>
+/verify <txid>
 ```
 
 The bot will check the blockchain immediately and credit Premium time if the amount matches.

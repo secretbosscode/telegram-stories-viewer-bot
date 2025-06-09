@@ -22,7 +22,6 @@ import {
   unblockUser,
   isUserBlocked,
   listBlockedUsers,
-  getInvoice,
 } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
@@ -217,7 +216,7 @@ bot.command('help', async (ctx) => {
     '`/freetrial` - Get 7 days of Premium access\n' +
     '`/queue` - View your place in the download queue\n' +
     '`/profile` - Get profile media\n' +
-    '`/verify <txid> <invoice>` - Manually verify a payment if it is not detected\n';
+    '`/verify <txid>` - Manually verify a payment if it is not detected\n';
 
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
@@ -271,20 +270,15 @@ bot.command('freetrial', async (ctx) => {
 
 bot.command('verify', async (ctx) => {
   const args = ctx.message.text.split(' ').slice(1);
-  if (args.length < 2) {
+  if (args.length < 1) {
     if (isUserPremium(String(ctx.from.id))) {
       return ctx.reply('✅ You already have Premium access.');
     }
-    return ctx.reply('Usage: /verify <txid> <invoice_id>');
+    return ctx.reply('Usage: /verify <txid>');
   }
-  const [txid, invoiceIdStr] = args;
-  const invoiceId = parseInt(invoiceIdStr, 10);
-  if (!txid || !invoiceId) return ctx.reply('Invalid arguments.');
-  const existing = getInvoice(invoiceId);
-  if (existing && existing.paid_at) {
-    return ctx.reply('✅ This invoice has already been verified.');
-  }
-  const invoice = await verifyPaymentByTxid(invoiceId, txid);
+  const [txid] = args;
+  if (!txid) return ctx.reply('Invalid arguments.');
+  const invoice = await verifyPaymentByTxid(txid);
   if (invoice && invoice.paid_at) {
     extendPremium(String(ctx.from.id), 30);
     return ctx.reply('✅ Payment verified! Premium extended by 30 days.');

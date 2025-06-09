@@ -89,6 +89,7 @@ db.exec(`
     user_id TEXT NOT NULL,
     invoice_amount REAL NOT NULL,
     user_address TEXT NOT NULL,
+    address_index INTEGER,
     from_address TEXT,
     paid_amount REAL DEFAULT 0,
     expires_at INTEGER,
@@ -99,6 +100,28 @@ db.exec(`
 const paymentColumns = db.prepare("PRAGMA table_info(payments)").all() as any[];
 if (!paymentColumns.some((c) => c.name === 'from_address')) {
   db.exec('ALTER TABLE payments ADD COLUMN from_address TEXT');
+}
+if (!paymentColumns.some((c) => c.name === 'address_index')) {
+  db.exec('ALTER TABLE payments ADD COLUMN address_index INTEGER');
+}
+
+// Wallet state table for HD wallet index persistence
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wallet_state (
+    id INTEGER PRIMARY KEY CHECK (id = 0),
+    next_index INTEGER DEFAULT 0
+  );
+`);
+const walletRow = db.prepare('SELECT next_index FROM wallet_state WHERE id = 0').get() as any;
+if (!walletRow) {
+  db.prepare('INSERT INTO wallet_state (id, next_index) VALUES (0, 0)').run();
+}
+
+export function reserveAddressIndex(): number {
+  const row = db.prepare('SELECT next_index FROM wallet_state WHERE id = 0').get() as any;
+  const idx = row?.next_index ?? 0;
+  db.prepare('UPDATE wallet_state SET next_index = ? WHERE id = 0').run(idx + 1);
+  return idx;
 }
 
 // Table to store used transaction ids
@@ -487,6 +510,7 @@ export interface PaymentRow {
   user_id: string;
   invoice_amount: number;
   user_address: string;
+  address_index?: number | null;
   from_address?: string | null;
   paid_amount: number;
   expires_at?: number;
@@ -497,15 +521,16 @@ export function insertInvoice(
   user_id: string,
   invoice_amount: number,
   user_address: string,
+  address_index: number | null,
   expires_at: number,
-  from_address?: string | null
+  from_address?: string | null,
 ): PaymentRow {
   const result = db
     .prepare(
-      `INSERT INTO payments (user_id, invoice_amount, user_address, from_address, expires_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO payments (user_id, invoice_amount, user_address, address_index, from_address, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(user_id, invoice_amount, user_address, from_address ?? null, expires_at);
+    .run(user_id, invoice_amount, user_address, address_index, from_address ?? null, expires_at);
 
   const id = Number(result.lastInsertRowid);
   return getInvoice(id)!;
@@ -525,6 +550,14 @@ export function markInvoicePaid(id: number): void {
 
 export function getInvoice(id: number): PaymentRow | undefined {
   return db.prepare(`SELECT * FROM payments WHERE id = ?`).get(id) as PaymentRow | undefined;
+}
+
+export function getPendingInvoiceByAddress(address: string): PaymentRow | undefined {
+  return db
+    .prepare(
+      `SELECT * FROM payments WHERE user_address = ? AND paid_at IS NULL ORDER BY id DESC LIMIT 1`,
+    )
+    .get(address) as PaymentRow | undefined;
 }
 
 // ----- Payment txid utils -----
