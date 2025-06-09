@@ -2,6 +2,15 @@ import { jest } from '@jest/globals';
 // Mock env-config to avoid requiring actual environment variables
 jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr', BTC_XPUB: '', BTC_YPUB: '', BTC_ZPUB: '' }));
 
+const sendTemporaryMessage = jest.fn();
+jest.mock('../src/lib/helpers.ts', () => ({
+  ...(jest.requireActual('../src/lib/helpers.ts') as any),
+  sendTemporaryMessage,
+}));
+
+const bot = { telegram: { sendMessage: jest.fn(), deleteMessage: jest.fn() } } as any;
+jest.mock('../src/index.ts', () => ({ bot }));
+
 import { handleUpgrade } from '../src/controllers/upgrade';
 import { IContextBot } from '../src/config/context-interface';
 import * as btc from '../src/services/btc-payment';
@@ -18,23 +27,48 @@ const fakeInvoice = {
 } as PaymentRow;
 
 describe('upgrade command', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
   test('creates invoice and stores session', async () => {
     const spy = jest.spyOn(btc, 'createInvoice').mockResolvedValue(fakeInvoice);
-    const replies: any[] = [];
     const ctx = {
       from: { id: 123 },
+      chat: { id: 1 },
       session: {} as any,
-      reply: jest.fn((...args) => { replies.push(args); }),
     } as unknown as IContextBot;
 
     await handleUpgrade(ctx);
 
     expect(spy).toHaveBeenCalledWith('123', 5);
     expect(ctx.session.upgrade?.invoice).toBe(fakeInvoice);
-    expect(replies.length).toBe(1);
-    expect(replies[0][0]).not.toContain('Invoice #1');
-    expect(replies[0][0]).toContain('```');
-    expect(replies[0][0]).toContain('addr');
+    expect(sendTemporaryMessage).toHaveBeenCalledWith(
+      bot,
+      1,
+      expect.stringContaining('Send the following amount:'),
+      { parse_mode: 'Markdown' },
+      60 * 60 * 1000,
+    );
+    spy.mockRestore();
+  });
+
+  test('reuses existing invoice when called again', async () => {
+    const spy = jest.spyOn(btc, 'createInvoice').mockResolvedValue(fakeInvoice);
+    const ctx = {
+      from: { id: 123 },
+      chat: { id: 1 },
+      session: {} as any,
+    } as unknown as IContextBot;
+
+    await handleUpgrade(ctx);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(sendTemporaryMessage).toHaveBeenCalledTimes(1);
+
+    await handleUpgrade(ctx);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(sendTemporaryMessage).toHaveBeenCalledTimes(2);
+    expect(sendTemporaryMessage.mock.calls[1][2]).toContain('already generated');
     spy.mockRestore();
   });
 });
