@@ -79,10 +79,11 @@ export async function updatePremiumPinnedMessage(
   chatId: number | string,
   telegramId: string,
   daysLeft: number,
+  force = false,
 ): Promise<void> {
   const lastUpdated = getPinnedMessageUpdatedAt(telegramId);
   const now = Math.floor(Date.now() / 1000);
-  if (lastUpdated && now - lastUpdated < 86400) {
+  if (!force && lastUpdated && now - lastUpdated < 86400) {
     return;
   }
   const daysText = daysLeft === Infinity ? 'unlimited' : daysLeft.toString();
