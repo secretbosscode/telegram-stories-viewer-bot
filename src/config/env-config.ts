@@ -34,7 +34,12 @@ export const USERBOT_PASSWORD = process.env.USERBOT_PASSWORD || parsed?.USERBOT_
 export const USERBOT_PHONE_CODE = process.env.USERBOT_PHONE_CODE || parsed?.USERBOT_PHONE_CODE || '';
 
 // payments
-export const BTC_WALLET_ADDRESS = getEnvVar('BTC_WALLET_ADDRESS');
+export const BTC_XPUB = process.env.BTC_XPUB || parsed?.BTC_XPUB || '';
+export const BTC_WALLET_ADDRESS =
+  process.env.BTC_WALLET_ADDRESS || parsed?.BTC_WALLET_ADDRESS || '';
+if (!BTC_WALLET_ADDRESS && !BTC_XPUB) {
+  throw new Error('Either BTC_WALLET_ADDRESS or BTC_XPUB is required');
+}
 
 // error log file path
 export const LOG_FILE = process.env.LOG_FILE || parsed?.LOG_FILE || path.join(__dirname, '../../data/error.log');

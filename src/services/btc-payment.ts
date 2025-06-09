@@ -3,6 +3,7 @@ import {
   markInvoicePaid,
   updatePaidAmount,
   getInvoice,
+  getPendingInvoiceByAddress,
   updateFromAddress,
   recordTxid,
   isTxidUsed,
@@ -11,11 +12,16 @@ import {
   deletePaymentCheck,
   listPaymentChecks,
   PaymentCheckRow,
+  reserveAddressIndex,
 } from '../db';
 import { IContextBot } from 'config/context-interface';
-import { BTC_WALLET_ADDRESS } from 'config/env-config';
+import { BTC_WALLET_ADDRESS, BTC_XPUB } from 'config/env-config';
+import * as bitcoin from 'bitcoinjs-lib';
+import { BIP32Factory } from 'bip32';
+import * as ecc from 'tiny-secp256k1';
 import { extendPremium } from './premium-service';
 import type { Telegraf } from 'telegraf';
+const bip32 = BIP32Factory(ecc);
 
 let botInstance: Telegraf<IContextBot> | null = null;
 export function setBotInstance(b: Telegraf<IContextBot>): void {
@@ -125,7 +131,7 @@ function scheduleInvoiceCheck(
         botInstance.telegram
           .sendMessage(
             userId,
-            `❓ Payment not detected yet. If you have already sent it, please run /verify <txid> ${invoice.id} to confirm.\n` +
+            '❓ Payment not detected yet. If you have already sent it, please run /verify <txid> to confirm.\n' +
               `You can find the transaction ID (txid) in your wallet's transaction details.`
           )
           .catch(() => {});
@@ -239,7 +245,15 @@ export async function createInvoice(
   const price = await getBtcPriceUsd();
   const invoiceAmount = Math.round((expectedUsd / price) * 1e8) / 1e8;
   const expires = Math.floor(Date.now() / 1000) + 15 * 60;
-  return insertInvoice(userId, invoiceAmount, BTC_WALLET_ADDRESS, expires);
+  let address = BTC_WALLET_ADDRESS;
+  let idx: number | null = null;
+  if (BTC_XPUB) {
+    idx = reserveAddressIndex();
+    const node = bip32.fromBase58(BTC_XPUB, bitcoin.networks.bitcoin);
+    const child = node.derive(0).derive(idx);
+    address = bitcoin.payments.p2wpkh({ pubkey: Buffer.from(child.publicKey), network: bitcoin.networks.bitcoin }).address!;
+  }
+  return insertInvoice(userId, invoiceAmount, address, idx, expires);
 }
 
 async function queryAddressBalance(address: string): Promise<number> {
@@ -360,24 +374,26 @@ export async function checkPayment(
   return { invoice: null, unexpectedSenders: Array.from(unexpected) };
 }
 
-export async function verifyPaymentByTxid(
-  invoiceId: number,
-  txid: string,
-): Promise<PaymentRow | null> {
+export async function verifyPaymentByTxid(txid: string): Promise<PaymentRow | null> {
   if (isTxidUsed(txid)) return null;
-  const invoice = getInvoice(invoiceId);
-  if (!invoice) return null;
   const tx = await fetchTransactionById(txid);
   if (!tx) return null;
   const outs = tx.vout ?? tx.outputs;
   const ins = tx.vin ?? tx.inputs;
-  const toUs = outs?.find(
-    (o: any) =>
-      o.scriptpubkey_address === invoice.user_address ||
-      o.addr === invoice.user_address ||
-      o.addresses?.includes?.(invoice.user_address),
-  );
-  if (!toUs) return null;
+  let invoice: PaymentRow | undefined;
+  let toUs: any;
+  for (const o of outs || []) {
+    const addr =
+      o.scriptpubkey_address || o.addr || o.addresses?.[0];
+    if (!addr) continue;
+    const inv = getPendingInvoiceByAddress(addr);
+    if (inv) {
+      invoice = inv;
+      toUs = o;
+      break;
+    }
+  }
+  if (!invoice || !toUs) return null;
   const fromAddrs = (ins || [])
     .map((i: any) =>
       i.prevout?.scriptpubkey_address || i.prev_out?.addr || i.addresses?.[0],

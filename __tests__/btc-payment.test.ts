@@ -10,6 +10,7 @@ jest.mock('../src/db', () => {
       user_id TEXT,
       invoice_amount REAL,
       user_address TEXT,
+      address_index INTEGER,
       from_address TEXT,
       paid_amount REAL DEFAULT 0,
       expires_at INTEGER,
@@ -21,12 +22,20 @@ jest.mock('../src/db', () => {
     );
   `);
   const used = new Set<string>();
+  let idx = 0;
   return {
     db,
-    insertInvoice: (user_id: string, invoice_amount: number, user_address: string, expires_at: number, from_address?: string | null) => {
+    insertInvoice: (
+      user_id: string,
+      invoice_amount: number,
+      user_address: string,
+      address_index: number | null,
+      expires_at: number,
+      from_address?: string | null,
+    ) => {
       const result = db
-        .prepare(`INSERT INTO payments (user_id, invoice_amount, user_address, from_address, expires_at) VALUES (?, ?, ?, ?, ?)`)
-        .run(user_id, invoice_amount, user_address, from_address ?? null, expires_at);
+        .prepare(`INSERT INTO payments (user_id, invoice_amount, user_address, address_index, from_address, expires_at) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(user_id, invoice_amount, user_address, address_index, from_address ?? null, expires_at);
       const id = Number(result.lastInsertRowid);
       return db.prepare('SELECT * FROM payments WHERE id = ?').get(id);
     },
@@ -36,11 +45,14 @@ jest.mock('../src/db', () => {
     recordTxid: jest.fn((invoice_id: number, txid: string) => { used.add(txid); }),
     isTxidUsed: jest.fn((txid: string) => used.has(txid)),
     getInvoice: (id: number) => db.prepare('SELECT * FROM payments WHERE id = ?').get(id),
+    getPendingInvoiceByAddress: (addr: string) =>
+      db.prepare('SELECT * FROM payments WHERE user_address = ? AND paid_at IS NULL ORDER BY id DESC LIMIT 1').get(addr),
+    reserveAddressIndex: () => idx++,
   };
 });
 
 // Mock env-config to supply wallet address
-jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr' }));
+jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr', BTC_XPUB: '' }));
 
 // Import after mocks
 import { db, markInvoicePaid, updatePaidAmount, updateFromAddress, recordTxid, isTxidUsed, insertInvoice } from '../src/db';
@@ -84,7 +96,7 @@ describe('checkPayment tolerance', () => {
   });
 
   test('invoice marked paid when 90% received', async () => {
-    const invoice = insertInvoice('u1', 1, 'dest', 0, 'sender');
+    const invoice = insertInvoice('u1', 1, 'dest', 0, 0, 'sender');
 
     const tx = {
       txid: 't1',
@@ -104,7 +116,7 @@ describe('checkPayment tolerance', () => {
   });
 
   test('older transactions are ignored', async () => {
-    const invoice = insertInvoice('u1', 1, 'dest', 0, 'sender');
+    const invoice = insertInvoice('u1', 1, 'dest', 0, 0, 'sender');
 
     const tx = {
       txid: 't2',
@@ -136,7 +148,7 @@ describe('verifyPaymentByTxid', () => {
   });
 
   test('invoice marked paid for provided txid', async () => {
-    const invoice = insertInvoice('u1', 1, 'dest', 0);
+    const invoice = insertInvoice('u1', 1, 'dest', 0, 0);
     const tx = {
       vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
@@ -148,7 +160,7 @@ describe('verifyPaymentByTxid', () => {
       .mockResolvedValue({ json: async () => tx })
       .mockResolvedValue({ json: async () => ({ data: tx }) });
 
-    const res = await btc.verifyPaymentByTxid(invoice.id, 'abc');
+    const res = await btc.verifyPaymentByTxid('abc');
 
     expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 1);
     expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
@@ -159,7 +171,7 @@ describe('verifyPaymentByTxid', () => {
   });
 
   test('returns null when sender does not match', async () => {
-    const invoice = insertInvoice('u1', 1, 'dest', 0, 'expected');
+    const invoice = insertInvoice('u1', 1, 'dest', 0, 0, 'expected');
     const tx = {
       vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'other' } }],
@@ -171,7 +183,7 @@ describe('verifyPaymentByTxid', () => {
       .mockResolvedValue({ json: async () => tx })
       .mockResolvedValue({ json: async () => ({ data: tx }) });
 
-    const res = await btc.verifyPaymentByTxid(invoice.id, 'def');
+    const res = await btc.verifyPaymentByTxid('def');
 
     expect(res).toBeNull();
     expect(markInvoicePaid).not.toHaveBeenCalled();
@@ -179,8 +191,8 @@ describe('verifyPaymentByTxid', () => {
   });
 
   test('reused txid is rejected', async () => {
-    const invoice1 = insertInvoice('u1', 1, 'dest', 0);
-    const invoice2 = insertInvoice('u2', 1, 'dest', 0);
+    const invoice1 = insertInvoice('u1', 1, 'dest', 0, 0);
+    const invoice2 = insertInvoice('u2', 1, 'dest', 1, 0);
     const tx = {
       vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
@@ -192,8 +204,8 @@ describe('verifyPaymentByTxid', () => {
       .mockResolvedValue({ json: async () => tx })
       .mockResolvedValue({ json: async () => ({ data: tx }) });
 
-    await btc.verifyPaymentByTxid(invoice1.id, 'xyz');
-    const res = await btc.verifyPaymentByTxid(invoice2.id, 'xyz');
+    await btc.verifyPaymentByTxid('xyz');
+    const res = await btc.verifyPaymentByTxid('xyz');
 
     expect(res).toBeNull();
     expect(markInvoicePaid).toHaveBeenCalledTimes(1);
