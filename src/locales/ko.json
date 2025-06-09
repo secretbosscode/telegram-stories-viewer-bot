@@ -1,5 +1,5 @@
 {
-  "start.instructions": "🔗 다음 중 하나를 보내세요:\n\n*'@'가 포함된 사용자 이름:*\n`@durov`\n\n*'+'가 포함된 전화번호:*\n`+19875551234`\n\n*스토리 직접 링크:*\n`https://t.me/durov/s/1`",
+  "start.instructions": "🔗 다음 중 하나를 보내세요:\n\n*'@'가 포함된 사용자 이름:*\n`@username`\n\n*'+'가 포함된 전화번호:*\n`+19875551234`\n\n*스토리 직접 링크:*\n`https://t.me/username/s/1`",
   "start.freeTrial": "🎁 처음 오셨나요? /freetrial 로 7일간 프리미엄을 무료로 이용하세요!\n\n",
   "start.invite": "요청 링크 공유: {{link}}",
   "start.inviteSuffix": "5명 요청만 하면 1주, 결제 발입 시 30일 번역.",
@@ -26,7 +26,7 @@
   "cmd.restart": "버튼 재시작",
   "msg.startFirst": "/start를 먼저 입력하세요.",
   "msg.botStart": "👋 /start를 입력하여 시작하세요.",
-  "msg.invalidInput": "🚫 잘못된 입력. `@username`, `+19875551234` 또는 스토리 링크를 보내세요. /help를 활용하세요.",
+  "msg.invalidInput": "🚫 잘못된 입력. `@username`, `+19875551234` 또는 `https://t.me/username/s/1`을 보내세요. /help를 활용하세요.",
   "invalidLink.warning": "🚫 Invalid story link. {{count}} warning(s) left.",
   "invalidLink.suspended": "🚫 Too many invalid links. You are suspended for 1 hour.",
   "premium.already": "✅ 이미 Premium을 사용 중입니다.",

@@ -1,5 +1,5 @@
 {
-  "start.instructions": "🔗 请发送以下其中一项:\n\n*含 '@' 的用户名:*\n`@durov`\n\n*含 '+' 的电话号码:*\n`+19875551234`\n\n*故事直接链接:*\n`https://t.me/durov/s/1`",
+  "start.instructions": "🔗 请发送以下其中一项:\n\n*含 '@' 的用户名:*\n`@username`\n\n*含 '+' 的电话号码:*\n`+19875551234`\n\n*故事直接链接:*\n`https://t.me/username/s/1`",
   "start.freeTrial": "🎁 新用户吗? 使用 /freetrial 免费获得1 周高级权限!\n\n",
   "start.invite": "分享你的邀请链接: {{link}}",
   "start.inviteSuffix": "每邀请5人可获得1周奖励，邀请他人付费可获得30天。",
@@ -26,7 +26,7 @@
   "cmd.restart": "重启机器人",
   "msg.startFirst": "请先输入 /start。",
   "msg.botStart": "👋 请输入 /start 开始使用。",
-  "msg.invalidInput": "🚫 无效输入，请发送 `@username`，`+19875551234` 或者链接。使用 /help 了解更多。",
+  "msg.invalidInput": "🚫 无效输入，请发送 `@username`，`+19875551234` 或 `https://t.me/username/s/1`。使用 /help 了解更多。",
   "invalidLink.warning": "🚫 Invalid story link. {{count}} warning(s) left.",
   "invalidLink.suspended": "🚫 Too many invalid links. You are suspended for 1 hour.",
   "premium.already": "✅ 您已经是 Premium 用户。",
