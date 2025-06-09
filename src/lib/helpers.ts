@@ -123,3 +123,14 @@ export function isValidBitcoinAddress(address: string): boolean {
     return false;
   }
 }
+
+// Validate if a link matches the Telegram story URL format.
+// Accepted formats:
+//   https://t.me/username/s/123
+//   http://t.me/username/s/123
+//   t.me/username/s/123
+export function isValidStoryLink(link: string): boolean {
+  return /^(?:https?:\/\/)?(?:t\.me|telegram\.me)\/[^\/]+\/s\/\d+\/?$/i.test(
+    link.trim(),
+  );
+}

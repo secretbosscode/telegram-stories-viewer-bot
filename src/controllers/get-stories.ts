@@ -3,7 +3,7 @@
 import { Userbot } from 'config/userbot';
 import { createEffect } from 'effector';
 import { bot } from 'index';
-import { timeout, sendTemporaryMessage } from 'lib';
+import { timeout, sendTemporaryMessage, isValidStoryLink } from 'lib';
 import { UserInfo, NotifyAdminParams } from 'types';
 import { Api } from 'telegram';
 import { FloodWaitError } from 'telegram/errors';
@@ -127,12 +127,17 @@ export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
     );
 
     const client = await Userbot.getInstance();
-    const linkPaths = task.link.split('/');
-    if (linkPaths.length < 4 || linkPaths[linkPaths.length - 2] !== 's') {
+
+    if (!isValidStoryLink(task.link)) {
       return '🚫 Invalid story link format. Expected format: t.me/username/s/id';
     }
-    const storyId = Number(linkPaths.at(-1));
-    const usernameOrChannelId = linkPaths.at(-3);
+
+    const match = /^(?:https?:\/\/)?t\.me\/([^\/]+)\/s\/(\d+)/i.exec(task.link.trim());
+    if (!match) {
+      return '🚫 Invalid story link. Could not parse username/channel or story ID.';
+    }
+    const usernameOrChannelId = match[1];
+    const storyId = Number(match[2]);
 
     if (!usernameOrChannelId || isNaN(storyId)) {
       return '🚫 Invalid story link. Could not parse username/channel or story ID.';

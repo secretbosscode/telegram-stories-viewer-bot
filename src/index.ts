@@ -62,7 +62,12 @@ import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
 import { UserInfo } from 'types';
-import { sendTemporaryMessage, updatePremiumPinnedMessage, isValidBitcoinAddress } from 'lib';
+import {
+  sendTemporaryMessage,
+  updatePremiumPinnedMessage,
+  isValidBitcoinAddress,
+  isValidStoryLink,
+} from 'lib';
 import {
   recordProfileRequestFx,
   wasProfileRequestedRecentlyFx,
@@ -795,7 +800,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  const isStoryLink = text.startsWith('https') || text.startsWith('t.me/');
+  const isStoryLink = isValidStoryLink(text);
   const isUsername = text.startsWith('@') || text.startsWith('+');
 
   if (isUsername || isStoryLink) {
