@@ -152,7 +152,7 @@ if (!fs.existsSync(logDir)) {
 bot.use(session());
 bot.use(async (ctx, next) => {
   if (ctx.from?.is_bot) {
-    if (ctx.from.id) {
+    if (ctx.from.id && ctx.from.id !== bot.botInfo?.id) {
       blockUser(String(ctx.from.id), true);
     }
     return;
