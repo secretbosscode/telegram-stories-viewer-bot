@@ -1,5 +1,5 @@
 {
-  "start.instructions": "🔗 Bitte sende eines der folgenden:\n\n*Benutzername mit '@':*\n`@durov`\n\n*Telefonnummer mit '+':*\n`+19875551234`\n\n*Direkter Link zu einer Story:*\n`https://t.me/durov/s/1`",
+  "start.instructions": "🔗 Bitte sende eines der folgenden:\n\n*Benutzername mit '@':*\n`@username`\n\n*Telefonnummer mit '+':*\n`+19875551234`\n\n*Direkter Link zu einer Story:*\n`https://t.me/username/s/1`",
   "start.freeTrial": "🎁 Neu hier? Nutze /freetrial für 7 Tage Premium kostenlos!\n\n",
   "start.invite": "Teile deinen Einladungslink: {{link}}",
   "start.inviteSuffix": "1 Woche gratis für je 5 Anmeldungen und 30 Tage, wenn ein Geworbener zahlt.",
@@ -26,7 +26,7 @@
   "cmd.restart": "Bot neu starten",
   "msg.startFirst": "Bitte zuerst /start eingeben.",
   "msg.botStart": "👋 Bitte mit /start beginnen.",
-  "msg.invalidInput": "🚫 Ungültige Eingabe. Sende `@username`, `+19875551234` oder einen Story-Link. /help für mehr Infos.",
+  "msg.invalidInput": "🚫 Ungültige Eingabe. Sende `@username`, `+19875551234` oder `https://t.me/username/s/1`. /help für mehr Infos.",
   "invalidLink.warning": "🚫 Invalid story link. {{count}} warning(s) left.",
   "invalidLink.suspended": "🚫 Too many invalid links. You are suspended for 1 hour.",
   "premium.already": "✅ Du hast bereits Premium-Zugang.",

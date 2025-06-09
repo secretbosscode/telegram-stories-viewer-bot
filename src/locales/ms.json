@@ -1,5 +1,5 @@
 {
-  "start.instructions": "🔗 Please send one of the following:\n\n*Username with '@' symbol:*\n`@durov`\n\n*Phone number with '+' symbol:*\n`+19875551234`\n\n*Direct link to a story:*\n`https://t.me/durov/s/1`",
+  "start.instructions": "🔗 Please send one of the following:\n\n*Username with '@' symbol:*\n`@username`\n\n*Phone number with '+' symbol:*\n`+19875551234`\n\n*Direct link to a story:*\n`https://t.me/username/s/1`",
   "start.freeTrial": "🎁 New here? Use /freetrial to get 7 days of Premium access for free!\n\n",
   "start.invite": "Share your invite link: {{link}}",
   "start.inviteSuffix": "Earn 1 week free for every 5 sign ups and 30 days if a referral pays.",
@@ -26,7 +26,7 @@
   "cmd.restart": "Restart the bot",
   "msg.startFirst": "Please type /start first.",
   "msg.botStart": "👋 Please type /start to begin using the bot.",
-  "msg.invalidInput": "🚫 Invalid input. Send `@username`, `+19875551234` or a story link. Type /help for more info.",
+  "msg.invalidInput": "🚫 Invalid input. Send `@username`, `+19875551234` or `https://t.me/username/s/1`. Type /help for more info.",
   "invalidLink.warning": "🚫 Invalid story link. {{count}} warning(s) left.",
   "invalidLink.suspended": "🚫 Too many invalid links. You are suspended for 1 hour.",
   "premium.already": "✅ You already have Premium access.",
