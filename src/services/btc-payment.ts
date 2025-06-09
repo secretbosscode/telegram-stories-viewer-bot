@@ -18,10 +18,25 @@ import { IContextBot } from 'config/context-interface';
 import { BTC_WALLET_ADDRESS, BTC_XPUB } from 'config/env-config';
 import * as bitcoin from 'bitcoinjs-lib';
 import { BIP32Factory } from 'bip32';
+import bs58check from 'bs58check';
 import * as ecc from 'tiny-secp256k1';
 import { extendPremium } from './premium-service';
 import type { Telegraf } from 'telegraf';
 const bip32 = BIP32Factory(ecc);
+
+function normalizeXpub(xpub: string): string {
+  try {
+    const data = Buffer.from(bs58check.decode(xpub));
+    const version = data.readUInt32BE(0);
+    if (version !== bitcoin.networks.bitcoin.bip32.public) {
+      data.writeUInt32BE(bitcoin.networks.bitcoin.bip32.public, 0);
+      return bs58check.encode(data);
+    }
+  } catch {
+    // ignore, return original
+  }
+  return xpub;
+}
 
 let botInstance: Telegraf<IContextBot> | null = null;
 export function setBotInstance(b: Telegraf<IContextBot>): void {
@@ -249,7 +264,7 @@ export async function createInvoice(
   let idx: number | null = null;
   if (BTC_XPUB) {
     idx = reserveAddressIndex();
-    const node = bip32.fromBase58(BTC_XPUB, bitcoin.networks.bitcoin);
+    const node = bip32.fromBase58(normalizeXpub(BTC_XPUB), bitcoin.networks.bitcoin);
     const child = node.derive(0).derive(idx);
     address = bitcoin.payments.p2wpkh({ pubkey: Buffer.from(child.publicKey), network: bitcoin.networks.bitcoin }).address!;
   }
