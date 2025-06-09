@@ -1,16 +1,17 @@
-# .github/workflows/docker-publish.yml
 name: Publish Docker image
 
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*'
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write  # Needed for provenance attestation
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -27,11 +28,23 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Extract version
+        id: vars
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="main-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Build and push with SBOM and Provenance
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: telix5000/telegram-story-bot:latest
-          provenance: true           # Enable provenance attestation
-          sbom: true                 # Enable SBOM attestation
+          tags: |
+            telix5000/telegram-story-bot:${{ steps.vars.outputs.version }}
+            telix5000/telegram-story-bot:latest
+          provenance: true
+          sbom: true
