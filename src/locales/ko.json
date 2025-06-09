@@ -27,6 +27,8 @@
   "msg.startFirst": "/start를 먼저 입력하세요.",
   "msg.botStart": "👋 /start를 입력하여 시작하세요.",
   "msg.invalidInput": "🚫 잘못된 입력. `@username`, `+19875551234` 또는 스토리 링크를 보내세요. /help를 활용하세요.",
+  "invalidLink.warning": "🚫 Invalid story link. {{count}} warning(s) left.",
+  "invalidLink.suspended": "🚫 Too many invalid links. You are suspended for 1 hour.",
   "premium.already": "✅ 이미 Premium을 사용 중입니다.",
   "premium.freeTrialUsed": "❌ 무료 트랜스 이미 사용하셨습니다.",
   "premium.freeTrialActivated": "🎉 트랜스 활성화! 7일간 Premium.",

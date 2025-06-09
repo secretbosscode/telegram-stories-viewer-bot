@@ -198,6 +198,15 @@ db.exec(`
   );
 `);
 
+// Track invalid link violations and temporary suspensions
+db.exec(`
+  CREATE TABLE IF NOT EXISTS invalid_link_violations (
+    telegram_id TEXT PRIMARY KEY,
+    count INTEGER DEFAULT 0,
+    suspended_until INTEGER
+  );
+`);
+
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
@@ -755,4 +764,44 @@ export function markReferralPaidRewarded(new_user_id: string): void {
 export function wasReferralPaidRewarded(new_user_id: string): boolean {
   const row = db.prepare(`SELECT paid_rewarded FROM referrals WHERE new_user_id = ?`).get(new_user_id) as { paid_rewarded: number } | undefined;
   return row?.paid_rewarded === 1;
+}
+
+// ===== Invalid link violation utilities =====
+
+export function recordInvalidLink(telegram_id: string): number {
+  db.prepare(
+    `INSERT INTO invalid_link_violations (telegram_id, count)
+     VALUES (?, 1)
+     ON CONFLICT(telegram_id) DO UPDATE SET count = count + 1`
+  ).run(telegram_id);
+  const row = db
+    .prepare('SELECT count FROM invalid_link_violations WHERE telegram_id = ?')
+    .get(telegram_id) as { count: number };
+  return row.count;
+}
+
+export function suspendUserTemp(telegram_id: string, seconds: number): void {
+  const until = Math.floor(Date.now() / 1000) + seconds;
+  db.prepare(
+    `INSERT INTO invalid_link_violations (telegram_id, count, suspended_until)
+     VALUES (?, 0, ?)
+     ON CONFLICT(telegram_id) DO UPDATE SET count = 0, suspended_until = ?`
+  ).run(telegram_id, until, until);
+}
+
+export function getSuspensionRemaining(telegram_id: string): number {
+  const row = db
+    .prepare('SELECT suspended_until FROM invalid_link_violations WHERE telegram_id = ?')
+    .get(telegram_id) as { suspended_until?: number } | undefined;
+  if (!row?.suspended_until) return 0;
+  const now = Math.floor(Date.now() / 1000);
+  if (row.suspended_until <= now) {
+    db.prepare('UPDATE invalid_link_violations SET suspended_until = NULL WHERE telegram_id = ?').run(telegram_id);
+    return 0;
+  }
+  return row.suspended_until - now;
+}
+
+export function isUserTemporarilySuspended(telegram_id: string): boolean {
+  return getSuspensionRemaining(telegram_id) > 0;
 }

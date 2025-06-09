@@ -30,6 +30,10 @@ import {
   getInviterForUser,
   markReferralPaidRewarded,
   wasReferralPaidRewarded,
+  recordInvalidLink,
+  suspendUserTemp,
+  getSuspensionRemaining,
+  isUserTemporarilySuspended,
 } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
@@ -153,6 +157,14 @@ bot.use(async (ctx, next) => {
     return;
   }
   if (ctx.from && isUserBlocked(String(ctx.from.id))) {
+    return;
+  }
+  if (ctx.from && isUserTemporarilySuspended(String(ctx.from.id))) {
+    const remaining = getSuspensionRemaining(String(ctx.from.id));
+    const m = Math.ceil(remaining / 60);
+    try {
+      await ctx.reply(`🚫 You are temporarily suspended for ${m} minute${m === 1 ? '' : 's'}.`);
+    } catch {}
     return;
   }
   await next();
@@ -802,6 +814,7 @@ bot.on('text', async (ctx) => {
 
   const isStoryLink = isValidStoryLink(text);
   const isUsername = text.startsWith('@') || text.startsWith('+');
+  const looksLikeLink = /^https?:\/\//i.test(text) || text.includes('t.me/');
 
   if (isUsername || isStoryLink) {
     const isPremium = isUserPremium(String(userId));
@@ -816,6 +829,18 @@ bot.on('text', async (ctx) => {
       isPremium: isPremium,
     };
     handleNewTask(task);
+    return;
+  }
+
+  if (looksLikeLink) {
+    const count = recordInvalidLink(String(userId));
+    if (count >= 5) {
+      suspendUserTemp(String(userId), 3600);
+      await ctx.reply(t(locale, 'invalidLink.suspended'));
+    } else {
+      const left = 5 - count;
+      await ctx.reply(t(locale, 'invalidLink.warning', { count: left }));
+    }
     return;
   }
 
