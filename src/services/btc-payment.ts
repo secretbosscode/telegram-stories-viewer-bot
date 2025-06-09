@@ -20,7 +20,7 @@ import * as bitcoin from 'bitcoinjs-lib';
 import { BIP32Factory } from 'bip32';
 import bs58check from 'bs58check';
 import * as ecc from 'tiny-secp256k1';
-import { extendPremium } from './premium-service';
+import { extendPremium, getPremiumDaysLeft } from './premium-service';
 import type { Telegraf } from 'telegraf';
 const bip32 = BIP32Factory(ecc);
 
@@ -102,8 +102,21 @@ function scheduleInvoiceCheck(
 
     if (newInv && newInv.paid_at) {
       extendPremium(userId, 30);
-      if (botInstance)
-        await botInstance.telegram.sendMessage(userId, '✅ Payment received! Premium extended by 30 days.');
+      if (botInstance) {
+        await botInstance.telegram.sendMessage(
+          userId,
+          '✅ Payment received! Premium extended by 30 days.',
+        );
+        const { updatePremiumPinnedMessage } = await import('lib');
+        const days = getPremiumDaysLeft(userId);
+        await updatePremiumPinnedMessage(
+          botInstance,
+          userId,
+          userId,
+          days,
+          true,
+        );
+      }
       deletePaymentCheck(invoice.id);
       paymentTimers.delete(invoice.id);
       if (reminderTimers.has(invoice.id)) {

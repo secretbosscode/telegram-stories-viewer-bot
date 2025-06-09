@@ -284,6 +284,14 @@ bot.command('verify', async (ctx) => {
     if (ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
       ctx.session.upgrade = undefined;
     }
+    const days = getPremiumDaysLeft(String(ctx.from.id));
+    await updatePremiumPinnedMessage(
+      bot,
+      ctx.chat!.id,
+      String(ctx.from.id),
+      days,
+      true,
+    );
     return ctx.reply('✅ Payment verified! Premium extended by 30 days.');
   }
   await ctx.reply('❌ Unable to verify this transaction.');
