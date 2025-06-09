@@ -179,6 +179,25 @@ db.exec(`
   );
 `);
 
+// Invitation codes table - maps each user to a unique code they can share
+db.exec(`
+  CREATE TABLE IF NOT EXISTS invite_codes (
+    user_id TEXT PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+`);
+
+// Referrals table - tracks who invited whom and reward status
+db.exec(`
+  CREATE TABLE IF NOT EXISTS referrals (
+    inviter_id TEXT NOT NULL,
+    new_user_id TEXT PRIMARY KEY,
+    paid_rewarded INTEGER DEFAULT 0,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+`);
+
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
@@ -697,4 +716,43 @@ export function updateVerifyAttempt(telegram_id: string): void {
     `INSERT INTO verify_attempts (telegram_id, last_attempt) VALUES (?, strftime('%s','now'))
      ON CONFLICT(telegram_id) DO UPDATE SET last_attempt = excluded.last_attempt`,
   ).run(telegram_id);
+}
+
+// ----- Invitation/Referral utilities -----
+export function getOrCreateInviteCode(user_id: string): string {
+  let row = db.prepare(`SELECT code FROM invite_codes WHERE user_id = ?`).get(user_id) as { code: string } | undefined;
+  if (row) return row.code;
+  const code = Math.random().toString(36).slice(2, 8);
+  db.prepare(`INSERT INTO invite_codes (user_id, code) VALUES (?, ?)`).run(user_id, code);
+  return code;
+}
+
+export function findInviterByCode(code: string): string | undefined {
+  const row = db.prepare(`SELECT user_id FROM invite_codes WHERE code = ?`).get(code) as { user_id: string } | undefined;
+  return row?.user_id;
+}
+
+export function recordReferral(inviter_id: string, new_user_id: string): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO referrals (inviter_id, new_user_id) VALUES (?, ?)`,
+  ).run(inviter_id, new_user_id);
+}
+
+export function countReferrals(inviter_id: string): number {
+  const row = db.prepare(`SELECT COUNT(*) as c FROM referrals WHERE inviter_id = ?`).get(inviter_id) as { c: number };
+  return row.c || 0;
+}
+
+export function getInviterForUser(new_user_id: string): string | undefined {
+  const row = db.prepare(`SELECT inviter_id FROM referrals WHERE new_user_id = ?`).get(new_user_id) as { inviter_id: string } | undefined;
+  return row?.inviter_id;
+}
+
+export function markReferralPaidRewarded(new_user_id: string): void {
+  db.prepare(`UPDATE referrals SET paid_rewarded = 1 WHERE new_user_id = ?`).run(new_user_id);
+}
+
+export function wasReferralPaidRewarded(new_user_id: string): boolean {
+  const row = db.prepare(`SELECT paid_rewarded FROM referrals WHERE new_user_id = ?`).get(new_user_id) as { paid_rewarded: number } | undefined;
+  return row?.paid_rewarded === 1;
 }
