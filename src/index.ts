@@ -11,6 +11,7 @@ import './config/setup-logs';
 import { IContextBot } from 'config/context-interface';
 import { BOT_ADMIN_ID, BOT_TOKEN, LOG_FILE } from 'config/env-config';
 import { initUserbot } from 'config/userbot';
+import { t } from './lib/i18n';
 import { session, Telegraf } from 'telegraf';
 import fs from 'fs';
 import path from 'path';
@@ -78,47 +79,54 @@ const extraOptions: any = { link_preview_options: { is_disabled: true } };
 // =============================
 // Command definitions
 // =============================
-const BASE_COMMANDS = [
-  { command: 'start', description: 'Show usage instructions' },
-  { command: 'help', description: 'Show help message' },
-  { command: 'premium', description: 'Info about premium features' },
-  { command: 'upgrade', description: 'Upgrade to premium' },
-  { command: 'freetrial', description: 'Free 7-day premium trial' },
-  { command: 'verify', description: 'Manually verify a payment' },
-  { command: 'queue', description: 'Show your queue status' },
-  { command: 'invite', description: 'Show your referral link' },
-  { command: 'profile', description: 'Get profile media for a user' },
-];
+function getBaseCommands(locale: string) {
+  return [
+    { command: 'start', description: t(locale, 'cmd.start') },
+    { command: 'help', description: t(locale, 'cmd.help') },
+    { command: 'premium', description: t(locale, 'cmd.premium') },
+    { command: 'upgrade', description: t(locale, 'cmd.upgrade') },
+    { command: 'freetrial', description: t(locale, 'cmd.freetrial') },
+    { command: 'verify', description: t(locale, 'cmd.verify') },
+    { command: 'queue', description: t(locale, 'cmd.queue') },
+    { command: 'invite', description: t(locale, 'cmd.invite') },
+    { command: 'profile', description: t(locale, 'cmd.profile') },
+  ];
+}
 
-const PREMIUM_COMMANDS = [
-  { command: 'monitor', description: 'Monitor a profile for new stories' },
-  { command: 'unmonitor', description: 'Stop monitoring a profile' },
-];
+function getPremiumCommands(locale: string) {
+  return [
+    { command: 'monitor', description: t(locale, 'cmd.monitor') },
+    { command: 'unmonitor', description: t(locale, 'cmd.unmonitor') },
+  ];
+}
 
-const ADMIN_COMMANDS = [
-  { command: 'setpremium', description: 'Mark user as premium' },
-  { command: 'unsetpremium', description: 'Remove premium status' },
-  { command: 'ispremium', description: 'Check premium status' },
-  { command: 'listpremium', description: 'List all premium users' },
-  { command: 'users', description: 'List all users' },
-  { command: 'history', description: 'Recent user activity' },
-  { command: 'block', description: 'Block a user' },
-  { command: 'unblock', description: 'Unblock a user' },
-  { command: 'blocklist', description: 'List blocked users' },
-  { command: 'restart', description: 'Restart the bot' },
-];
+function getAdminCommands(locale: string) {
+  return [
+    { command: 'setpremium', description: t(locale, 'cmd.setpremium') },
+    { command: 'unsetpremium', description: t(locale, 'cmd.unsetpremium') },
+    { command: 'ispremium', description: t(locale, 'cmd.ispremium') },
+    { command: 'listpremium', description: t(locale, 'cmd.listpremium') },
+    { command: 'users', description: t(locale, 'cmd.users') },
+    { command: 'history', description: t(locale, 'cmd.history') },
+    { command: 'block', description: t(locale, 'cmd.block') },
+    { command: 'unblock', description: t(locale, 'cmd.unblock') },
+    { command: 'blocklist', description: t(locale, 'cmd.blocklist') },
+    { command: 'restart', description: t(locale, 'cmd.restart') },
+  ];
+}
 
 async function updateUserCommands(
   ctx: IContextBot,
   isAdmin: boolean,
   isPremium: boolean,
 ) {
-  const commands = [...BASE_COMMANDS];
+  const locale = ctx.from?.language_code || 'en';
+  const commands = [...getBaseCommands(locale)];
   if (isPremium || isAdmin) {
-    commands.push(...PREMIUM_COMMANDS);
+    commands.push(...getPremiumCommands(locale));
   }
   if (isAdmin) {
-    commands.push(...ADMIN_COMMANDS);
+    commands.push(...getAdminCommands(locale));
   }
   await ctx.telegram.setMyCommands(commands, {
     scope: { type: 'chat', chat_id: ctx.chat!.id },
@@ -160,8 +168,9 @@ bot.catch((error, ctx) => {
   } catch (e) {
     console.error('Failed to write to log file', e);
   }
+  const locale = ctx.from?.language_code || 'en';
   ctx
-    .reply('Sorry, an unexpected error occurred. Please try again later.')
+    .reply(t(locale, 'error.unexpected'))
     .catch(() => {});
 });
 
@@ -209,10 +218,7 @@ bot.start(async (ctx) => {
       if (total % 5 === 0) {
         extendPremium(inviter, 7);
         try {
-          await ctx.telegram.sendMessage(
-            inviter,
-            '🎉 You referred 5 users! Premium extended by 7 days.',
-          );
+          await ctx.telegram.sendMessage(inviter, t('en', 'referral.fiveUsers'));
         } catch {}
       }
     }
@@ -220,63 +226,62 @@ bot.start(async (ctx) => {
   const inviteCode = getOrCreateInviteCode(String(ctx.from.id));
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
-  let msg =
-    "🔗 Please send one of the following:\n\n" +
-    "*Username with '@' symbol:*\n`@durov`\n\n" +
-    "*Phone number with '+' symbol:*\n`+19875551234`\n\n" +
-    '*Direct link to a story:*\n`https://t.me/durov/s/1`';
+  const locale = ctx.from.language_code || 'en';
+  let msg = t(locale, 'start.instructions');
   if (!isUserPremium(String(ctx.from.id)) && !hasUsedFreeTrial(String(ctx.from.id))) {
-    msg =
-      '🎁 New here? Use /freetrial to get 7 days of Premium access for free!\n\n' +
-      msg;
+    msg = t(locale, 'start.freeTrial') + msg;
   }
   const botUser = bot.botInfo?.username || 'this_bot';
-  msg += `\n\nShare your invite link: https://t.me/${botUser}?start=${inviteCode}`;
-  msg += '\nEarn 1 week free for every 5 sign ups and 30 days if a referral pays.';
+  const link = `https://t.me/${botUser}?start=${inviteCode}`;
+  msg += `\n\n${t(locale, 'start.invite', { link })}`;
+  msg += `\n${t(locale, 'start.inviteSuffix')}`;
   await ctx.reply(msg, { ...extraOptions, parse_mode: 'Markdown' });
   await updateUserCommands(ctx, isAdmin, isPremium);
 });
 
 bot.command('help', async (ctx) => {
-  let finalHelpText =
-    '*Ghost Stories Bot Help*\n\n' +
-    '*General Commands:*\n' +
-    '`/start` - Show usage instructions\n' +
-    '`/help` - Show this help message\n' +
-    '`/premium` - Info about premium features\n' +
-    '`/freetrial` - Get 7 days of Premium access\n' +
-    '`/queue` - View your place in the download queue\n' +
-    '`/invite` - Show your referral link\n' +
-    '`/profile` - Get profile media\n' +
-    '`/verify <txid>` - Manually verify a payment if it is not detected\n';
+  const locale = ctx.from.language_code || 'en';
+  let finalHelpText = t(locale, 'help.header') + '\n\n';
+  finalHelpText += t(locale, 'help.general', {
+    cmdStart: t(locale, 'cmd.start'),
+    cmdHelp: t(locale, 'cmd.help'),
+    cmdPremium: t(locale, 'cmd.premium'),
+    cmdFreetrial: t(locale, 'cmd.freetrial'),
+    cmdQueue: t(locale, 'cmd.queue'),
+    cmdInvite: t(locale, 'cmd.invite'),
+    cmdProfile: t(locale, 'cmd.profile'),
+    cmdVerify: t(locale, 'cmd.verify'),
+  });
 
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
   if (isPremium || isAdmin) {
     finalHelpText +=
-      '\n*Premium Commands:*\n' +
-      '`/monitor` - Monitor a profile for new stories\n' +
-      '  Use @username or a phone number like +19875551234 (no hyphens)\n' +
-      '`/unmonitor` - Stop monitoring a profile\n';
+      '\n' +
+      t(locale, 'help.premium', {
+        cmdMonitor: t(locale, 'cmd.monitor'),
+        cmdUnmonitor: t(locale, 'cmd.unmonitor'),
+      });
   }
 
-  if (ctx.from.id == BOT_ADMIN_ID) {
+  if (isAdmin) {
     finalHelpText +=
-      '\n*Admin Commands:*\n' +
-      '`/setpremium <ID or @username> [days]` - Mark user as premium (0 = never expires)\n' +
-      '`/unsetpremium <ID or @username>` - Remove premium status\n' +
-      '`/ispremium <ID or @username>` - Check if user is premium\n' +
-      '`/listpremium` - List all premium users\n' +
-      '`/users` - List all users\n' +
-      '`/history` - Recent user activity\n' +
-      '`/block <ID or @username>` - Block a user\n' +
-      '`/unblock <ID or @username>` - Unblock a user\n' +
-      '`/blocklist` - List blocked users\n' +
-      '`/restart` - Shows the restart confirmation button\n';
+      '\n' +
+      t(locale, 'help.admin', {
+        cmdSetpremium: t(locale, 'cmd.setpremium'),
+        cmdUnsetpremium: t(locale, 'cmd.unsetpremium'),
+        cmdIspremium: t(locale, 'cmd.ispremium'),
+        cmdListpremium: t(locale, 'cmd.listpremium'),
+        cmdUsers: t(locale, 'cmd.users'),
+        cmdHistory: t(locale, 'cmd.history'),
+        cmdBlock: t(locale, 'cmd.block'),
+        cmdUnblock: t(locale, 'cmd.unblock'),
+        cmdBlocklist: t(locale, 'cmd.blocklist'),
+        cmdRestart: t(locale, 'cmd.restart'),
+        neverExpires: t(locale, 'premium.neverExpires'),
+      });
   }
-  finalHelpText +=
-    '\nTo find the transaction ID (txid), check the details of your payment in your wallet.';
-  // Using 'Markdown' as it's more forgiving than 'MarkdownV2' for simple text.
+  finalHelpText += '\n' + t(locale, 'help.txidInfo');
   await ctx.reply(finalHelpText, { parse_mode: 'Markdown' });
   await updateUserCommands(ctx, isAdmin, isPremium);
 });
@@ -288,34 +293,36 @@ bot.command('upgrade', async (ctx) => {
 });
 
 bot.command('freetrial', async (ctx) => {
+  const locale = ctx.from.language_code || 'en';
   const userId = String(ctx.from.id);
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   if (isUserPremium(userId)) {
-    return ctx.reply('✅ You already have Premium access.');
+    return ctx.reply(t(locale, 'premium.already'));
   }
   if (hasUsedFreeTrial(userId)) {
-    return ctx.reply('❌ You have already used your free trial.');
+    return ctx.reply(t(locale, 'premium.freeTrialUsed'));
   }
   grantFreeTrial(userId);
-  await ctx.reply('🎉 Free trial activated! You now have Premium access for 7 days.');
+  await ctx.reply(t(locale, 'premium.freeTrialActivated'));
 });
 
 bot.command('verify', async (ctx) => {
+  const locale = ctx.from.language_code || 'en';
   const args = ctx.message.text.split(' ').slice(1);
   if (args.length < 1) {
     if (isUserPremium(String(ctx.from.id))) {
-      return ctx.reply('✅ You already have Premium access.');
+      return ctx.reply(t(locale, 'premium.already'));
     }
-    return ctx.reply('Usage: /verify <txid>');
+    return ctx.reply(t(locale, 'verify.usage'));
   }
   const [txid] = args;
-  if (!txid) return ctx.reply('Invalid arguments.');
+  if (!txid) return ctx.reply(t(locale, 'verify.invalidArgs'));
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   if (!isAdmin) {
     const last = await getLastVerifyAttemptFx(String(ctx.from.id));
     if (last && Math.floor(Date.now() / 1000) - last < 60) {
       const wait = 60 - (Math.floor(Date.now() / 1000) - last);
-      return ctx.reply(`⏳ Please wait ${wait}s before verifying again.`);
+      return ctx.reply(t(locale, 'verify.wait', { seconds: wait }));
     }
     await updateVerifyAttemptFx(String(ctx.from.id));
   }
@@ -327,10 +334,7 @@ bot.command('verify', async (ctx) => {
       extendPremium(inviter, 30);
       markReferralPaidRewarded(String(ctx.from.id));
       try {
-        await ctx.telegram.sendMessage(
-          inviter,
-          '🎉 Your referral made a payment! Premium extended by 30 days.',
-        );
+        await ctx.telegram.sendMessage(inviter, t('en', 'referral.paid'));
       } catch {}
     }
     if (ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
@@ -344,32 +348,32 @@ bot.command('verify', async (ctx) => {
       days,
       true,
     );
-    return ctx.reply('✅ Payment verified! Premium extended by 30 days.');
+    return ctx.reply(t(locale, 'verify.success'));
   }
-  await ctx.reply('❌ Unable to verify this transaction.');
+  await ctx.reply(t(locale, 'verify.failure'));
 });
 
 bot.command('queue', async (ctx) => {
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   const msg = await getQueueStatusForUser(String(ctx.from.id));
   await sendTemporaryMessage(bot, ctx.chat!.id, msg);
 });
 
 bot.command('invite', async (ctx) => {
+  const locale = ctx.from.language_code || 'en';
   const code = getOrCreateInviteCode(String(ctx.from.id));
   const botUser = bot.botInfo?.username || 'this_bot';
   const link = `https://t.me/${botUser}?start=${code}`;
-  await ctx.reply(
-    `Share this link with friends:\n${link}\n` +
-      'Earn 1 week free for every 5 sign ups and 30 days if a referral pays.',
-  );
+  await ctx.reply(t(locale, 'invite.msg', { link }));
 });
 
 bot.command('profile', async (ctx) => {
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   const args = ctx.message.text.split(' ').slice(1);
   if (args.length === 0) {
-    return ctx.reply('Usage: /profile <@username|+phone>');
+    return ctx.reply(t(locale, 'profile.usage'));
   }
   const input = args[0];
   const userId = String(ctx.from.id);
@@ -394,7 +398,12 @@ bot.command('profile', async (ctx) => {
     return sendTemporaryMessage(
       bot,
       ctx.chat!.id,
-      `⏳ You can request profile media for "${input}" once every ${cooldown} hours.\nTry again in ${h}h ${m}m.`,
+      t(locale, 'profile.cooldown', {
+        user: input,
+        hours: cooldown,
+        h,
+        m,
+      }),
     );
   }
 
@@ -403,86 +412,88 @@ bot.command('profile', async (ctx) => {
 });
 
 bot.command('monitor', async (ctx) => {
+  const locale = ctx.from.language_code || 'en';
   const userId = String(ctx.from.id);
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(userId);
   if (!isAdmin && !isPremium) {
-    return ctx.reply('🚫 Monitoring profiles is available for premium users.');
+    return ctx.reply(t(locale, 'monitor.premiumOnly'));
   }
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
     const list = listUserMonitors(userId);
     if (list.length === 0) {
       const limitMsg = isAdmin
-        ? 'You can monitor an unlimited number of profiles. '
-        : `You can monitor up to ${MAX_MONITORS_PER_USER} profiles. `;
+        ? t(locale, 'monitor.unlimited') + ' '
+        : t(locale, 'monitor.limitMsg', { max: MAX_MONITORS_PER_USER }) + ' ';
       return ctx.reply(
-        `Usage: /monitor <@username|+19875551234>\n` +
-          limitMsg +
-          `Checks run every ${CHECK_INTERVAL_HOURS}h.`
+        t(locale, 'monitor.usage', {
+          limitMsg,
+          hours: CHECK_INTERVAL_HOURS,
+        })
       );
     }
     const limit = isAdmin ? '∞' : MAX_MONITORS_PER_USER;
-    const msg =
-      `👀 Currently monitoring (${list.length}/${limit}):\n` +
-      list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n') +
-      `\nChecks run every ${CHECK_INTERVAL_HOURS}h. ` +
-      'Use /unmonitor <@username> to remove.';
+    const msg = t(locale, 'monitor.list', {
+      count: list.length,
+      limit,
+      list: list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n'),
+      hours: CHECK_INTERVAL_HOURS,
+    });
     return ctx.reply(msg);
   }
   const input = args[0];
   const username = input.replace(/^@/, '');
   if (!isAdmin) {
     if (userMonitorCount(userId) >= MAX_MONITORS_PER_USER) {
-      return ctx.reply(`🚫 You can monitor up to ${MAX_MONITORS_PER_USER} profiles.`);
+      return ctx.reply(t(locale, 'monitor.limit', { max: MAX_MONITORS_PER_USER }));
     }
   }
   addProfileMonitor(userId, username);
   const currentCount = userMonitorCount(userId);
   const remainingText = isAdmin
-    ? 'You can monitor unlimited profiles.'
-    : `You have ${Math.max(
-        MAX_MONITORS_PER_USER - currentCount,
-        0
-      )} monitor${
-        MAX_MONITORS_PER_USER - currentCount === 1 ? '' : 's'
-      } left.`;
+    ? t(locale, 'monitor.unlimited')
+    : t(locale, 'monitor.remaining', {
+        count: Math.max(MAX_MONITORS_PER_USER - currentCount, 0),
+      });
   await ctx.reply(
-    `✅ Now monitoring ${input} for active stories. ${remainingText}`
+    t(locale, 'monitor.started', { user: input, remaining: remainingText })
   );
 });
 
 bot.command('unmonitor', async (ctx) => {
+  const locale = ctx.from.language_code || 'en';
   const userId = String(ctx.from.id);
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(userId);
   if (!isAdmin && !isPremium) {
-    return ctx.reply('🚫 Monitoring profiles is available for premium users.');
+    return ctx.reply(t(locale, 'monitor.premiumOnly'));
   }
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
     const list = listUserMonitors(userId);
     if (list.length === 0) {
-      return ctx.reply('You are not monitoring any profiles.');
+      return ctx.reply(t(locale, 'monitor.none'));
     }
-    const msg =
-      '👀 Currently monitoring:\n' +
-      list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n');
+    const msg = t(locale, 'monitor.current', {
+      list: list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n'),
+    });
     return ctx.reply(msg);
   }
   const inputUn = args[0];
   const username = inputUn.replace(/^@/, '');
   removeProfileMonitor(userId, username);
-  await ctx.reply(`🛑 Stopped monitoring ${inputUn}.`);
+  await ctx.reply(t(locale, 'monitor.stopped', { user: inputUn }));
 });
 
 // --- Admin Commands ---
 
 bot.command('restart', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  await ctx.reply('Are you sure you want to restart?', {
+  const locale = ctx.from.language_code || 'en';
+  await ctx.reply(t(locale, 'admin.confirmRestart'), {
     reply_markup: {
-      inline_keyboard: [[{ text: 'Yes, Restart', callback_data: RESTART_COMMAND }]],
+      inline_keyboard: [[{ text: t(locale, 'admin.restartButton'), callback_data: RESTART_COMMAND }]],
     },
   });
 });
@@ -490,170 +501,190 @@ bot.command('restart', async (ctx) => {
 // FIX: Restored full implementation for all admin commands.
 bot.command('setpremium', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
     const args = ctx.message.text.split(' ').slice(1);
-    if (!args.length) return ctx.reply('Usage: /setpremium <telegram_id | @username> [days]');
+    if (!args.length) return ctx.reply(t(locale, 'admin.setpremiumUsage'));
     let telegramId: string | undefined, username: string | undefined;
     if (args[0].startsWith('@')) {
       username = args[0].replace('@', '');
       const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username) as { telegram_id?: string };
-      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      if (!row?.telegram_id) return ctx.reply(t(locale, 'user.notFound'));
       telegramId = row.telegram_id;
     } else if (/^\d+$/.test(args[0])) {
       telegramId = args[0];
-    } else { return ctx.reply('Invalid argument.'); }
-    if (!telegramId) return ctx.reply('Could not resolve telegram ID.');
+    } else { return ctx.reply(t(locale, 'argument.invalid')); }
+    if (!telegramId) return ctx.reply(t(locale, 'telegramId.resolveFail'));
     const days = args[1] ? parseInt(args[1], 10) : undefined;
     addPremiumUser(telegramId, username, days);
-    await ctx.reply(`✅ User ${username ? '@'+username : telegramId} marked as premium${days ? ' for ' + days + ' day(s)' : ''}!`);
-  } catch (e) { console.error("Error in /setpremium:", e); await ctx.reply("An error occurred."); }
+    const userLabel = username ? '@'+username : telegramId;
+    const daysText = days ? t(locale, 'admin.daysSuffix', { count: days }) : '';
+    await ctx.reply(t(locale, 'admin.setpremiumSuccess', { user: userLabel, days: daysText }));
+  } catch (e) { console.error("Error in /setpremium:", e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
 bot.command('unsetpremium', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
     const args = ctx.message.text.split(' ').slice(1);
-    if (!args.length) return ctx.reply('Usage: /unsetpremium <telegram_id | @username>');
+    if (!args.length) return ctx.reply(t(locale, 'admin.unsetpremiumUsage'));
     let telegramId: string | undefined, username: string | undefined;
     if (args[0].startsWith('@')) {
       username = args[0].replace('@', '');
       const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username) as { telegram_id?: string };
-      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      if (!row?.telegram_id) return ctx.reply(t(locale, 'user.notFound'));
       telegramId = row.telegram_id;
     } else if (/^\d+$/.test(args[0])) {
       telegramId = args[0];
-    } else { return ctx.reply('Invalid argument.'); }
-    if (!telegramId) return ctx.reply('Could not resolve telegram ID.');
+    } else { return ctx.reply(t(locale, 'argument.invalid')); }
+    if (!telegramId) return ctx.reply(t(locale, 'telegramId.resolveFail'));
     removePremiumUser(telegramId);
-    await ctx.reply(`✅ User ${username ? '@'+username : telegramId} is no longer premium.`);
-  } catch (e) { console.error("Error in /unsetpremium:", e); await ctx.reply("An error occurred."); }
+    const userLabel = username ? '@'+username : telegramId;
+    await ctx.reply(t(locale, 'admin.unsetpremiumSuccess', { user: userLabel }));
+  } catch (e) { console.error("Error in /unsetpremium:", e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
 bot.command('ispremium', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
     const args = ctx.message.text.split(' ').slice(1);
-    if (!args.length) return ctx.reply('Usage: /ispremium <telegram_id | @username>');
+    if (!args.length) return ctx.reply(t(locale, 'admin.ispremiumUsage'));
     let telegramId: string | undefined, username: string | undefined;
     if (args[0].startsWith('@')) {
       username = args[0].replace('@', '');
       const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(username) as { telegram_id?: string };
-      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      if (!row?.telegram_id) return ctx.reply(t(locale, 'user.notFound'));
       telegramId = row.telegram_id;
     } else if (/^\d+$/.test(args[0])) {
       telegramId = args[0];
-    } else { return ctx.reply('Invalid argument.'); }
-    if (!telegramId) return ctx.reply('Could not resolve telegram ID.');
+    } else { return ctx.reply(t(locale, 'argument.invalid')); }
+    if (!telegramId) return ctx.reply(t(locale, 'telegramId.resolveFail'));
     const premium = isUserPremium(telegramId);
-    await ctx.reply(premium ? `✅ User ${username ? '@'+username : telegramId} is PREMIUM.` : `❌ User ${username ? '@'+username : telegramId} is NOT premium.`);
-  } catch (e) { console.error("Error in /ispremium:", e); await ctx.reply("An error occurred."); }
+    const userLabel = username ? '@'+username : telegramId;
+    await ctx.reply(
+      premium
+        ? t(locale, 'admin.ispremiumYes', { user: userLabel })
+        : t(locale, 'admin.ispremiumNo', { user: userLabel })
+    );
+  } catch (e) { console.error("Error in /ispremium:", e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
 bot.command('listpremium', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
     const rows = db.prepare('SELECT telegram_id, username, is_bot FROM users WHERE is_premium = 1').all() as any[];
-    if (!rows.length) return ctx.reply('No premium users found.');
-    let msg = `🌟 Premium users (${rows.length}):\n`;
+    if (!rows.length) return ctx.reply(t(locale, 'premium.noneFound'));
+    let msg = t(locale, 'premium.usersHeader', { count: rows.length }) + '\n';
     rows.forEach((u, i) => {
       const days = getPremiumDaysLeft(String(u.telegram_id));
-      const daysText = days === Infinity ? 'never expires' : `${days}d`;
-      msg += `${i + 1}. ${u.username ? '@' + u.username : u.telegram_id} [${u.is_bot ? 'BOT' : 'USER'}] - ${daysText}\n`;
+      const daysText = days === Infinity ? t(locale, 'premium.neverExpires') : `${days}d`;
+      const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
+      msg += `${i + 1}. ${u.username ? '@' + u.username : u.telegram_id} [${type}] - ${daysText}\n`;
     });
     await ctx.reply(msg);
-  } catch (e) { console.error("Error in /listpremium:", e); await ctx.reply("An error occurred."); }
+  } catch (e) { console.error("Error in /listpremium:", e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
 bot.command('block', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
     const args = ctx.message.text.split(' ').slice(1);
-    if (!args.length) return ctx.reply('Usage: /block <telegram_id | @username>');
+    if (!args.length) return ctx.reply(t(locale, 'admin.blockUsage'));
     let telegramId: string | undefined;
     if (args[0].startsWith('@')) {
       const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(args[0].replace('@','')) as { telegram_id?: string };
-      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      if (!row?.telegram_id) return ctx.reply(t(locale, 'user.notFound'));
       telegramId = row.telegram_id;
     } else if (/^\d+$/.test(args[0])) {
       telegramId = args[0];
-    } else { return ctx.reply('Invalid argument.'); }
+    } else { return ctx.reply(t(locale, 'argument.invalid')); }
     const row = db.prepare('SELECT is_bot FROM users WHERE telegram_id = ?').get(telegramId!) as { is_bot?: number } | undefined;
     blockUser(telegramId!, row?.is_bot === 1);
-    await ctx.reply(`🚫 User ${telegramId} blocked.`);
-  } catch (e) { console.error('Error in /block:', e); await ctx.reply('An error occurred.'); }
+    await ctx.reply(t(locale, 'block.success', { user: telegramId }));
+  } catch (e) { console.error('Error in /block:', e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
 bot.command('unblock', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
     const args = ctx.message.text.split(' ').slice(1);
-    if (!args.length) return ctx.reply('Usage: /unblock <telegram_id | @username>');
+    if (!args.length) return ctx.reply(t(locale, 'admin.unblockUsage'));
     let telegramId: string | undefined;
     if (args[0].startsWith('@')) {
       const row = db.prepare('SELECT telegram_id FROM users WHERE username = ?').get(args[0].replace('@','')) as { telegram_id?: string };
-      if (!row?.telegram_id) return ctx.reply('User not found in database.');
+      if (!row?.telegram_id) return ctx.reply(t(locale, 'user.notFound'));
       telegramId = row.telegram_id;
     } else if (/^\d+$/.test(args[0])) {
       telegramId = args[0];
-    } else { return ctx.reply('Invalid argument.'); }
+    } else { return ctx.reply(t(locale, 'argument.invalid')); }
     unblockUser(telegramId!);
-    await ctx.reply(`✅ User ${telegramId} unblocked.`);
-  } catch (e) { console.error('Error in /unblock:', e); await ctx.reply('An error occurred.'); }
+    await ctx.reply(t(locale, 'unblock.success', { user: telegramId }));
+  } catch (e) { console.error('Error in /unblock:', e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
 bot.command('blocklist', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please use /start before using admin commands.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
     const rows = listBlockedUsers();
-    if (!rows.length) return ctx.reply('No blocked users.');
-    let msg = `🚫 Blocked users (${rows.length}):\n`;
+    if (!rows.length) return ctx.reply(t(locale, 'blocked.none'));
+    let msg = t(locale, 'blocked.usersHeader', { count: rows.length }) + '\n';
     rows.forEach((u, i) => {
-      msg += `${i + 1}. ${u.telegram_id} [${u.is_bot ? 'BOT' : 'USER'}] at ${new Date(u.blocked_at * 1000).toLocaleDateString()}\n`;
+      const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
+      msg += `${i + 1}. ${u.telegram_id} [${type}] at ${new Date(u.blocked_at * 1000).toLocaleDateString()}\n`;
     });
     await ctx.reply(msg);
-  } catch (e) { console.error('Error in /blocklist:', e); await ctx.reply('An error occurred.'); }
+  } catch (e) { console.error('Error in /blocklist:', e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
 bot.command('users', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
     const rows = db.prepare('SELECT telegram_id, username, is_premium, is_bot FROM users').all() as any[];
-    if (!rows.length) return ctx.reply('No users found in the database.');
-    let msg = `👥 Users (${rows.length}):\n`;
+    if (!rows.length) return ctx.reply(t(locale, 'users.none'));
+    let msg = t(locale, 'users.listHeader', { count: rows.length }) + '\n';
     rows.forEach((u, i) => {
-      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [`;
-      msg += u.is_premium ? 'PREMIUM' : 'FREE';
-      msg += `, ${u.is_bot ? 'BOT' : 'USER'}]`;
+      const premiumLabel = u.is_premium ? t(locale, 'label.premium') : t(locale, 'label.free');
+      const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
+      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${premiumLabel}, ${type}]`;
       msg += '\n';
     });
     await ctx.reply(msg);
-  } catch (e) { console.error("Error in /users:", e); await ctx.reply("An error occurred."); }
+  } catch (e) { console.error("Error in /users:", e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
 bot.command('history', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  if (!isActivated(ctx.from.id)) return ctx.reply('Please type /start first.');
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
     const rows = await getRecentHistoryFx(50);
-    if (!rows.length) return ctx.reply('No recent history found.');
-    let msg = `📜 History (last 30 days):\n`;
+    if (!rows.length) return ctx.reply(t(locale, 'history.none'));
+    let msg = t(locale, 'history.listHeader') + '\n';
     rows.forEach((r: any, i: number) => {
       const date = new Date(r.enqueued_ts * 1000).toLocaleDateString();
       const user = r.username ? `@${r.username}` : r.telegram_id;
-      msg += `${i + 1}. ${user} [${r.is_bot ? 'BOT' : 'USER'}] -> ${r.target_username} [${r.status}] ${date}\n`;
+      const type = r.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
+      msg += `${i + 1}. ${user} [${type}] -> ${r.target_username} [${r.status}] ${date}\n`;
     });
     await ctx.reply(msg);
   } catch (e) {
     console.error('Error in /history:', e);
-    await ctx.reply('An error occurred.');
+    await ctx.reply(t(locale, 'error.generic'));
   }
 });
 
@@ -663,14 +694,16 @@ export async function handleCallbackQuery(ctx: IContextBot) {
   const data = ctx.callbackQuery.data;
 
   if (data === RESTART_COMMAND && ctx.from?.id == BOT_ADMIN_ID) {
-    await ctx.answerCbQuery('⏳ Restarting server...');
+    const locale = ctx.from?.language_code || 'en';
+    await ctx.answerCbQuery(t(locale, 'admin.restarting'));
     process.exit();
   }
 
   if (data.includes('&')) {
     const isPremium = isUserPremium(String(ctx.from?.id));
     if (!isPremium) {
-      return ctx.answerCbQuery('This feature requires Premium access.', { show_alert: true });
+      const locale = ctx.from?.language_code || 'en';
+      return ctx.answerCbQuery(t(locale, 'feature.requiresPremium'), { show_alert: true });
     }
     const [username, nextStoriesIds] = data.split('&');
     const user = ctx.from!;
@@ -722,14 +755,16 @@ bot.on('callback_query', handleCallbackQuery);
 bot.on('text', async (ctx) => {
   const text = ctx.message.text;
   const userId = ctx.from.id;
+  const locale = ctx.from.language_code || 'en';
 
   if (!isActivated(userId)) {
-    return ctx.reply('👋 Please type /start to begin using the bot.');
+    const locale = ctx.from.language_code || 'en';
+    return ctx.reply(t(locale, 'msg.botStart'));
   }
 
   if (userId == BOT_ADMIN_ID && text === RESTART_COMMAND) {
-    return ctx.reply('Are you sure you want to restart?', {
-        reply_markup: { inline_keyboard: [[{ text: 'Yes, Restart', callback_data: RESTART_COMMAND }]] },
+    return ctx.reply(t(locale, 'admin.confirmRestart'), {
+        reply_markup: { inline_keyboard: [[{ text: t(locale, 'admin.restartButton'), callback_data: RESTART_COMMAND }]] },
     });
   }
 
@@ -737,7 +772,7 @@ bot.on('text', async (ctx) => {
   if (upgradeState && !upgradeState.fromAddress) {
     if (Date.now() > upgradeState.awaitingAddressUntil) {
       ctx.session.upgrade = undefined;
-      await ctx.reply('❌ Invoice expired.');
+        await ctx.reply(t(locale, 'invoice.expired'));
       return;
     }
     upgradeState.fromAddress = text.trim();
@@ -747,7 +782,7 @@ bot.on('text', async (ctx) => {
     await sendTemporaryMessage(
       bot,
       ctx.chat!.id,
-      'Address received. Monitoring for payment... Run `/verify <txid>` once paid.',
+      t(locale, 'invoice.addressReceived'),
       { parse_mode: 'Markdown' },
       remainingMs,
     );
@@ -774,7 +809,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  await ctx.reply('🚫 Invalid input. Send `@username`, `+19875551234` or a story link. Type /help for more info.');
+  await ctx.reply(t(locale, 'msg.invalidInput'));
 });
 
 
@@ -792,9 +827,9 @@ async function startApp() {
   processQueue();
   startMonitorLoop();
   resumePendingChecks();
-  await bot.telegram.setMyCommands(BASE_COMMANDS);
+  await bot.telegram.setMyCommands(getBaseCommands('en'));
   await bot.telegram.setMyCommands(
-    [...BASE_COMMANDS, ...PREMIUM_COMMANDS, ...ADMIN_COMMANDS],
+    [...getBaseCommands('en'), ...getPremiumCommands('en'), ...getAdminCommands('en')],
     { scope: { type: 'chat', chat_id: BOT_ADMIN_ID } }
   );
   bot.launch({ dropPendingUpdates: true }).then(() => {
