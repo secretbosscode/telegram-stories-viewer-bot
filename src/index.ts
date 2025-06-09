@@ -79,6 +79,9 @@ import {
   getProfileRequestCooldownRemainingFx,
   getLastVerifyAttemptFx,
   updateVerifyAttemptFx,
+  addBugReportFx,
+  listBugReportsFx,
+  getLastBugReportTimeFx,
 } from './db/effects';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
@@ -100,6 +103,7 @@ function getBaseCommands(locale: string) {
     { command: 'queue', description: t(locale, 'cmd.queue') },
     { command: 'invite', description: t(locale, 'cmd.invite') },
     { command: 'profile', description: t(locale, 'cmd.profile') },
+    { command: 'bugs', description: t(locale, 'cmd.bugs') },
   ];
 }
 
@@ -123,6 +127,7 @@ function getAdminCommands(locale: string) {
     { command: 'blocklist', description: t(locale, 'cmd.blocklist') },
     { command: 'status', description: t(locale, 'cmd.status') },
     { command: 'restart', description: t(locale, 'cmd.restart') },
+    { command: 'bugs', description: t(locale, 'cmd.bugs') },
   ];
 }
 
@@ -712,6 +717,59 @@ bot.command('history', async (ctx) => {
     await ctx.reply(msg);
   } catch (e) {
     console.error('Error in /history:', e);
+    await ctx.reply(t(locale, 'error.generic'));
+  }
+});
+
+bot.command('bugs', async (ctx) => {
+  const locale = ctx.from.language_code || 'en';
+  const userId = String(ctx.from.id);
+  const isAdmin = ctx.from.id === BOT_ADMIN_ID;
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
+  const args = ctx.message.text.split(' ').slice(1);
+
+  if (isAdmin && args.length === 0) {
+    try {
+      const rows = await listBugReportsFx();
+      if (!rows.length) return ctx.reply(t(locale, 'bugs.none'));
+      let msg = t(locale, 'bugs.listHeader') + '\n';
+      rows.forEach((b: any, i: number) => {
+        const date = new Date(b.created_at * 1000).toLocaleDateString();
+        const user = b.username ? `@${b.username}` : b.telegram_id;
+        msg += `${i + 1}. ${user} - ${b.description} (${date})\n`;
+      });
+      return ctx.reply(msg);
+    } catch (e) {
+      console.error('Error in /bugs list:', e);
+      return ctx.reply(t(locale, 'error.generic'));
+    }
+  }
+
+  if (!args.length) {
+    return ctx.reply(t(locale, 'bug.usage'));
+  }
+
+  try {
+    const last = await getLastBugReportTimeFx(userId);
+    const now = Math.floor(Date.now() / 1000);
+    if (last && now - last < 86400) {
+      const remaining = 86400 - (now - last);
+      const h = Math.floor(remaining / 3600);
+      const m = Math.floor((remaining % 3600) / 60);
+      return sendTemporaryMessage(
+        bot,
+        ctx.chat!.id,
+        t(locale, 'bug.cooldown', { h, m }),
+      );
+    }
+    await addBugReportFx({
+      telegram_id: userId,
+      username: ctx.from.username,
+      description: args.join(' '),
+    });
+    await ctx.reply(t(locale, 'bug.reported'));
+  } catch (e) {
+    console.error('Error in /bugs:', e);
     await ctx.reply(t(locale, 'error.generic'));
   }
 });

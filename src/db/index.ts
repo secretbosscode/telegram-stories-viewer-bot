@@ -207,6 +207,17 @@ db.exec(`
   );
 `);
 
+// Bug reports table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bug_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id TEXT NOT NULL,
+    username TEXT,
+    description TEXT NOT NULL,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+`);
+
 // ===== DB UTILS =====
 
 // CHANGE 2: `enqueueDownload` now accepts the full UserInfo object and saves it.
@@ -829,4 +840,47 @@ export function countReferralsSince(since: number): number {
     .prepare("SELECT COUNT(*) as c FROM referrals WHERE created_at > ?")
     .get(since) as { c: number } | undefined;
   return row?.c || 0;
+}
+
+// ----- Bug reports utils -----
+export interface BugReportRow {
+  id: number;
+  telegram_id: string;
+  username?: string;
+  description: string;
+  created_at: number;
+}
+
+export function cleanupOldBugs(): void {
+  const cutoff = Math.floor(Date.now() / 1000) - 30 * 86400;
+  db.prepare('DELETE FROM bug_reports WHERE created_at < ?').run(cutoff);
+}
+
+export function addBugReport(
+  telegram_id: string,
+  description: string,
+  username?: string,
+): void {
+  cleanupOldBugs();
+  db.prepare(
+    `INSERT INTO bug_reports (telegram_id, username, description) VALUES (?, ?, ?)`,
+  ).run(telegram_id, username ?? null, description);
+}
+
+export function listBugReports(): BugReportRow[] {
+  cleanupOldBugs();
+  return db
+    .prepare(
+      `SELECT id, telegram_id, username, description, created_at FROM bug_reports ORDER BY created_at DESC`,
+    )
+    .all() as BugReportRow[];
+}
+
+export function getLastBugReportTime(telegram_id: string): number | undefined {
+  const row = db
+    .prepare(
+      `SELECT created_at FROM bug_reports WHERE telegram_id = ? ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(telegram_id) as { created_at: number } | undefined;
+  return row?.created_at;
 }
