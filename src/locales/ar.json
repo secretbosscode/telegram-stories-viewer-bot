@@ -53,6 +53,7 @@
   "admin.restarting": "⏳ خادم إعادة تشغيل ...",
   "invoice.expired": "❌ انتهت صلاحية الفاتورة.",
   "invoice.addressReceived": "العنوان المستلم.مراقبة الدفع ... قم بتشغيل `/تحقق من <TXID>` بمجرد الدفع.",
+"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "هذه الميزة تتطلب الوصول المتميز.",
   "user.notFound": "المستخدم غير موجود في قاعدة البيانات.",
   "argument.invalid": "حجة غير صالحة.",

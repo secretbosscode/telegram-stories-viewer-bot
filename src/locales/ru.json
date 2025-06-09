@@ -53,6 +53,7 @@
   "admin.restarting": "⏳ Рестарт ...",
   "invoice.expired": "❌ Счет истек.",
   "invoice.addressReceived": "Адрес получен. Ожидаем оплаты... `/verify <txid>`.",
+"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "Требует Premium.",
   "user.notFound": "Пользователь не найден.",
   "argument.invalid": "Неверный аргумент.",

@@ -8,6 +8,7 @@ import {
   getPinnedMessageUpdatedAt,
   setPinnedMessageUpdatedAt,
 } from 'repositories/user-repository';
+import * as bitcoin from 'bitcoinjs-lib';
 
 const MAX_STORIES_SIZE = 45;
 
@@ -109,5 +110,16 @@ export async function updatePremiumPinnedMessage(
     setPinnedMessageUpdatedAt(telegramId, now);
   } catch (err) {
     console.error('Failed to update premium pinned message', err);
+  }
+}
+
+// Validate a bitcoin address string. Returns true if the address is valid for
+// the Bitcoin mainnet, otherwise false.
+export function isValidBitcoinAddress(address: string): boolean {
+  try {
+    bitcoin.address.toOutputScript(address, bitcoin.networks.bitcoin);
+    return true;
+  } catch {
+    return false;
   }
 }

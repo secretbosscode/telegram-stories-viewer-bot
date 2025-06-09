@@ -198,7 +198,8 @@ Obtain the transaction hash (TXID) from your wallet and run:
 /verify <txid>
 ```
 
-The bot will check the blockchain immediately and credit Premium time if the amount matches.
+The bot checks the blockchain immediately and credits Premium time if the amount matches.
+You don't need to send your own Bitcoin address—verification uses the TXID alone.
 The TXID (sometimes called transaction hash) looks like `2d339983a78206050b4d70c15c5e14a3553438b25caedebdf2bb2f7162e33d59`.
 
 ## Development

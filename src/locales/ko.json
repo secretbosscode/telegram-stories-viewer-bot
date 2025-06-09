@@ -53,6 +53,7 @@
   "admin.restarting": "⏳ 재시작 중...",
   "invoice.expired": "❌ 청상서 만료.",
   "invoice.addressReceived": "주소 받음. 배고 불러오는 중... `/verify <txid>` 진행.",
+"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "이 기능은 Premium이 필요합니다.",
   "user.notFound": "데이터벤이션에 있지 않음.",
   "argument.invalid": "잘못된 인수.",

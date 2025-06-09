@@ -53,6 +53,7 @@
   "admin.restarting": "⏳ 重启中...",
   "invoice.expired": "❌ 费用单已过期。",
   "invoice.addressReceived": "已收到地址。监测付款中... 付款后执行 `/verify <txid>`。",
+"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "此功能需要 Premium。",
   "user.notFound": "数据库中未找到用户。",
   "argument.invalid": "无效参数。",
