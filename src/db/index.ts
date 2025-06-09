@@ -805,3 +805,28 @@ export function getSuspensionRemaining(telegram_id: string): number {
 export function isUserTemporarilySuspended(telegram_id: string): boolean {
   return getSuspensionRemaining(telegram_id) > 0;
 }
+
+// ====== Stats helpers ======
+
+export function countNewUsersSince(since: number): number {
+  const row = db
+    .prepare("SELECT COUNT(*) as c FROM users WHERE strftime('%s', created_at) > ?")
+    .get(since) as { c: number } | undefined;
+  return row?.c || 0;
+}
+
+export function countPaymentsSince(since: number): number {
+  const row = db
+    .prepare(
+      "SELECT COUNT(*) as c FROM payments WHERE paid_at IS NOT NULL AND paid_at > ?",
+    )
+    .get(since) as { c: number } | undefined;
+  return row?.c || 0;
+}
+
+export function countReferralsSince(since: number): number {
+  const row = db
+    .prepare("SELECT COUNT(*) as c FROM referrals WHERE created_at > ?")
+    .get(since) as { c: number } | undefined;
+  return row?.c || 0;
+}

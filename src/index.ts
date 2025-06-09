@@ -62,6 +62,7 @@ import {
   setBotInstance,
   verifyPaymentByTxid,
 } from './services/btc-payment';
+import { startAdminStatusUpdates } from './services/admin-stats';
 import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
@@ -872,6 +873,7 @@ async function startApp() {
   );
   bot.launch({ dropPendingUpdates: true }).then(() => {
     console.log('✅ Telegram bot started successfully and is ready for commands.');
+    startAdminStatusUpdates(bot);
   });
 }
 

@@ -110,3 +110,16 @@ export const getLastVerifyAttemptFx = createEffect((telegram_id: string) =>
 export const updateVerifyAttemptFx = createEffect((telegram_id: string) =>
   db.updateVerifyAttempt(telegram_id),
 );
+
+// Stats effect helpers
+export const countNewUsersSinceFx = createEffect((since: number) =>
+  db.countNewUsersSince(since),
+);
+
+export const countPaymentsSinceFx = createEffect((since: number) =>
+  db.countPaymentsSince(since),
+);
+
+export const countReferralsSinceFx = createEffect((since: number) =>
+  db.countReferralsSince(since),
+);
