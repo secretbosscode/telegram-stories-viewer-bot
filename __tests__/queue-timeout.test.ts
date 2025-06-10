@@ -9,6 +9,7 @@ const markProcessingFx = jest.fn();
 const markErrorFx = jest.fn();
 const markDoneFx = jest.fn();
 const cleanupQueueFx = jest.fn();
+const runMaintenanceFx = jest.fn();
 const getNextQueueItemFx: any = jest.fn();
 
 jest.mock('db/effects', () => ({
@@ -17,6 +18,7 @@ jest.mock('db/effects', () => ({
   markDoneFx,
   markErrorFx,
   cleanupQueueFx,
+  runMaintenanceFx,
 }));
 
 const getAllStoriesFx = jest.fn();
