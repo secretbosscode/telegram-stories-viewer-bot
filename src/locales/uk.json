@@ -56,7 +56,7 @@
   "admin.restarting": "⏳ Restarting server...",
   "invoice.expired": "❌ Invoice expired.",
   "invoice.addressReceived": "Address received. Monitoring for payment... Run `/verify <txid>` once paid.",
-"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
+  "invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "This feature requires Premium access.",
   "user.notFound": "User not found in database.",
   "argument.invalid": "Invalid argument.",
@@ -91,8 +91,10 @@
   "referral.fiveUsers": "🎉 Ви запросили 5 користувачів! Преміум продовжено на 7 днів.",
   "referral.paid": "🎉 Ваш реферал здійснив оплату! Преміум продовжено на 30 днів.",
   "help.header": "*Довідка Ghost Stories Bot*",
-  "help.general": "*Загальні команди:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
+  "help.general": "*Загальні команди:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}\n`/bugs <description>` - {{cmdBugs}}",
   "help.premium": "*Преміум-команди:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*Адмін-команди:*\n`/setpremium <ID або @username> [днів]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID або @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID або @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID або @username>` - {{cmdBlock}}\n`/unblock <ID або @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
-  "error.unexpected": "Вибачте, сталася непередбачена помилка. Спробуйте пізніше."
+  "help.admin": "*Адмін-команди:*\n`/setpremium <ID або @username> [днів]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID або @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID або @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID або @username>` - {{cmdBlock}}\n`/unblock <ID або @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugs` - {{cmdListbugs}}",
+  "error.unexpected": "Вибачте, сталася непередбачена помилка. Спробуйте пізніше.",
+  "cmd.bugs": "Повідомити про помилку",
+  "cmd.listbugs": "Переглянути звіти про помилки"
 }

@@ -306,6 +306,7 @@ bot.command('help', async (ctx) => {
         cmdUnblock: t(locale, 'cmd.unblock'),
         cmdBlocklist: t(locale, 'cmd.blocklist'),
         cmdRestart: t(locale, 'cmd.restart'),
+        cmdListbugs: t(locale, 'cmd.listbugs'),
         neverExpires: t(locale, 'premium.neverExpires'),
       });
   }

@@ -56,7 +56,7 @@
   "admin.restarting": "⏳ Restarting server...",
   "invoice.expired": "❌ Invoice expired.",
   "invoice.addressReceived": "Address received. Monitoring for payment... Run `/verify <txid>` once paid.",
-"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
+  "invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "This feature requires Premium access.",
   "user.notFound": "User not found in database.",
   "argument.invalid": "Invalid argument.",
@@ -91,8 +91,10 @@
   "referral.fiveUsers": "🎉 Je hebt 5 gebruikers doorverwezen! Premium verlengd met 7 dagen.",
   "referral.paid": "🎉 Je verwijzing heeft betaald! Premium verlengd met 30 dagen.",
   "help.header": "*Ghost Stories Bot Hulp*",
-  "help.general": "*Algemene commando's:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
+  "help.general": "*Algemene commando's:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}\n`/bugs <description>` - {{cmdBugs}}",
   "help.premium": "*Premiumcommando's:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*Beheercommando's:*\n`/setpremium <ID of @username> [dagen]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID of @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID of @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID of @username>` - {{cmdBlock}}\n`/unblock <ID of @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
-  "error.unexpected": "Er is een onverwachte fout opgetreden. Probeer het later opnieuw."
+  "help.admin": "*Beheercommando's:*\n`/setpremium <ID of @username> [dagen]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID of @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID of @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID of @username>` - {{cmdBlock}}\n`/unblock <ID of @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugs` - {{cmdListbugs}}",
+  "error.unexpected": "Er is een onverwachte fout opgetreden. Probeer het later opnieuw.",
+  "cmd.bugs": "Bug melden",
+  "cmd.listbugs": "Bugrapporten bekijken"
 }
