@@ -310,6 +310,7 @@ bot.command('help', async (ctx) => {
         cmdBlock: t(locale, 'cmd.block'),
         cmdUnblock: t(locale, 'cmd.unblock'),
         cmdBlocklist: t(locale, 'cmd.blocklist'),
+        cmdStatus: t(locale, 'cmd.status'),
         cmdRestart: t(locale, 'cmd.restart'),
         cmdListbugs: t(locale, 'cmd.listbugs'),
         neverExpires: t(locale, 'premium.neverExpires'),
