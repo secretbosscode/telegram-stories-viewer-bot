@@ -733,7 +733,7 @@ bot.command('history', async (ctx) => {
       const type = r.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
       msg += `${i + 1}. ${user} [${type}] -> ${r.target_username} [${r.status}] ${date}\n`;
     });
-    await ctx.reply(msg);
+    await ctx.reply(msg, { link_preview_options: { is_disabled: true } });
   } catch (e) {
     console.error('Error in /history:', e);
     await ctx.reply(t(locale, 'error.generic'));
