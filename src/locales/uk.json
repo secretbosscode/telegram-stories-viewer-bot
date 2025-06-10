@@ -96,5 +96,10 @@
   "help.admin": "*Адмін-команди:*\n`/setpremium <ID або @username> [днів]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID або @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID або @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID або @username>` - {{cmdBlock}}\n`/unblock <ID або @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "Вибачте, сталася непередбачена помилка. Спробуйте пізніше.",
   "cmd.bugs": "Повідомити про помилку",
-  "cmd.listbugs": "Переглянути звіти про помилки"
+  "cmd.listbugs": "Переглянути звіти про помилки",
+  "bug.usage": "Використання: /bugs <опис>",
+  "bug.reported": "🐞 Помилку повідомлено, дякуємо!",
+  "bug.cooldown": "⏳ Ви зможете повідомити про іншу помилку через {{h}}г {{m}}хв.",
+  "bugs.none": "Немає звітів про помилки.",
+  "bugs.listHeader": "🐞 Звіти про помилки:"
 }

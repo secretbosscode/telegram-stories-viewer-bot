@@ -96,5 +96,10 @@
   "help.admin": "*管理员命令：*\n`/setpremium <ID 或 @username> [天]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 或 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 或 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 或 @username>` - {{cmdBlock}}\n`/unblock <ID 或 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "抱歉，发生意外错误。请稍后再试。",
   "cmd.bugs": "报告错误",
-  "cmd.listbugs": "查看错误报告"
+  "cmd.listbugs": "查看错误报告",
+  "bug.usage": "用法：/bugs <描述>",
+  "bug.reported": "🐞 Bug 已报告，谢谢！",
+  "bug.cooldown": "⏳ {{h}}小时{{m}}分钟后可再次报告。",
+  "bugs.none": "暂无错误报告。",
+  "bugs.listHeader": "🐞 错误报告："
 }
