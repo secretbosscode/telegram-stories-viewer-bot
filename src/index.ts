@@ -281,6 +281,7 @@ bot.command('help', async (ctx) => {
     cmdInvite: t(locale, 'cmd.invite'),
     cmdProfile: t(locale, 'cmd.profile'),
     cmdVerify: t(locale, 'cmd.verify'),
+    cmdBugs: t(locale, 'cmd.bugs'),
   });
 
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
