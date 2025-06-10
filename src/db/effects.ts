@@ -134,3 +134,11 @@ export const listBugReportsFx = createEffect(() => db.listBugReports());
 export const getLastBugReportTimeFx = createEffect((telegram_id: string) =>
   db.getLastBugReportTime(telegram_id),
 );
+
+export const countBugReportsLastDayFx = createEffect((telegram_id: string) =>
+  db.countBugReportsLastDay(telegram_id),
+);
+
+export const getEarliestBugReportTimeLastDayFx = createEffect(
+  (telegram_id: string) => db.getEarliestBugReportTimeLastDay(telegram_id),
+);

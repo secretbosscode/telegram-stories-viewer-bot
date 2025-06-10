@@ -93,7 +93,7 @@
   "help.header": "*고스트 스토리 봇 도움말*",
   "help.general": "*일반 명령:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}\n`/bugs <description>` - {{cmdBugs}}",
   "help.premium": "*프리미엄 명령:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*관리자 명령:*\n`/setpremium <ID 또는 @username> [일]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 또는 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 또는 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 또는 @username>` - {{cmdBlock}}\n`/unblock <ID 또는 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugs` - {{cmdListbugs}}",
+  "help.admin": "*관리자 명령:*\n`/setpremium <ID 또는 @username> [일]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 또는 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 또는 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 또는 @username>` - {{cmdBlock}}\n`/unblock <ID 또는 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "죄송합니다. 예상치 못한 오류가 발생했습니다. 나중에 다시 시도해주세요.",
   "cmd.bugs": "버그 신고",
   "cmd.listbugs": "버그 리포트 보기"

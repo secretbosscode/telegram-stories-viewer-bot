@@ -877,10 +877,35 @@ export function listBugReports(): BugReportRow[] {
 }
 
 export function getLastBugReportTime(telegram_id: string): number | undefined {
+  cleanupOldBugs();
   const row = db
     .prepare(
       `SELECT created_at FROM bug_reports WHERE telegram_id = ? ORDER BY created_at DESC LIMIT 1`,
     )
     .get(telegram_id) as { created_at: number } | undefined;
   return row?.created_at;
+}
+
+export function countBugReportsLastDay(telegram_id: string): number {
+  cleanupOldBugs();
+  const cutoff = Math.floor(Date.now() / 1000) - 86400;
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM bug_reports WHERE telegram_id = ? AND created_at >= ?`,
+    )
+    .get(telegram_id, cutoff) as { c: number } | undefined;
+  return row?.c || 0;
+}
+
+export function getEarliestBugReportTimeLastDay(
+  telegram_id: string,
+): number | undefined {
+  cleanupOldBugs();
+  const cutoff = Math.floor(Date.now() / 1000) - 86400;
+  const row = db
+    .prepare(
+      `SELECT MIN(created_at) as c FROM bug_reports WHERE telegram_id = ? AND created_at >= ?`,
+    )
+    .get(telegram_id, cutoff) as { c: number } | undefined;
+  return row?.c;
 }

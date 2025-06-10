@@ -93,7 +93,7 @@
   "help.header": "*Hilfe für Ghost Stories Bot*",
   "help.general": "*Allgemeine Befehle:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}\n`/bugs <description>` - {{cmdBugs}}",
   "help.premium": "*Premium-Befehle:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*Admin-Befehle:*\n`/setpremium <ID oder @username> [Tage]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID oder @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID oder @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID oder @username>` - {{cmdBlock}}\n`/unblock <ID oder @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugs` - {{cmdListbugs}}",
+  "help.admin": "*Admin-Befehle:*\n`/setpremium <ID oder @username> [Tage]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID oder @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID oder @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID oder @username>` - {{cmdBlock}}\n`/unblock <ID oder @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "Entschuldigung, ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.",
   "cmd.bugs": "Fehler melden",
   "cmd.listbugs": "Fehlerberichte anzeigen"
