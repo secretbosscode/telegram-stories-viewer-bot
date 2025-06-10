@@ -29,7 +29,8 @@ const locales: Record<string, Record<string, string>> = {
 };
 
 export function t(locale: string | undefined, key: string, vars: Record<string, string | number> = {}): string {
-  const lang = locale && locales[locale] ? locale : 'en';
+  const normalized = (locale || '').toLowerCase().split(/[_-]/)[0];
+  const lang = normalized && locales[normalized] ? normalized : 'en';
   const fallback = locales['en'][key] || key;
   let text = locales[lang][key] || fallback;
   for (const [k, v] of Object.entries(vars)) {
