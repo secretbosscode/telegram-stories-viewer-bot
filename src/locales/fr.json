@@ -56,7 +56,7 @@
   "admin.restarting": "⏳ Redémarrage du serveur...",
   "invoice.expired": "❌ Facture expirée.",
   "invoice.addressReceived": "Adresse reçue. Surveillance du paiement... Lancez `/verify <txid>` une fois payé.",
-"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
+  "invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "Cette fonctionnalité nécessite Premium.",
   "user.notFound": "Utilisateur introuvable dans la base.",
   "argument.invalid": "Argument invalide.",
@@ -91,8 +91,10 @@
   "referral.fiveUsers": "🎉 Vous avez parrainé 5 utilisateurs ! Premium prolongé de 7 jours.",
   "referral.paid": "🎉 Votre filleul a effectué un paiement ! Premium prolongé de 30 jours.",
   "help.header": "*Aide du bot Ghost Stories*",
-  "help.general": "*Commandes générales:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
+  "help.general": "*Commandes générales:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}\n`/bugs <description>` - {{cmdBugs}}",
   "help.premium": "*Commandes premium:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*Commandes admin:*\n`/setpremium <ID ou @username> [jours]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID ou @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID ou @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID ou @username>` - {{cmdBlock}}\n`/unblock <ID ou @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
-  "error.unexpected": "Désolé, une erreur inattendue est survenue. Veuillez réessayer plus tard."
+  "help.admin": "*Commandes admin:*\n`/setpremium <ID ou @username> [jours]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID ou @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID ou @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID ou @username>` - {{cmdBlock}}\n`/unblock <ID ou @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugs` - {{cmdListbugs}}",
+  "error.unexpected": "Désolé, une erreur inattendue est survenue. Veuillez réessayer plus tard.",
+  "cmd.bugs": "Signaler un bug",
+  "cmd.listbugs": "Voir les rapports de bugs"
 }

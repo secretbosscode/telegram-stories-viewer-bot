@@ -56,7 +56,7 @@
   "admin.restarting": "⏳ خادم إعادة تشغيل ...",
   "invoice.expired": "❌ انتهت صلاحية الفاتورة.",
   "invoice.addressReceived": "العنوان المستلم.مراقبة الدفع ... قم بتشغيل `/تحقق من <TXID>` بمجرد الدفع.",
-"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
+  "invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "هذه الميزة تتطلب الوصول المتميز.",
   "user.notFound": "المستخدم غير موجود في قاعدة البيانات.",
   "argument.invalid": "حجة غير صالحة.",
@@ -91,8 +91,10 @@
   "referral.fiveUsers": "🎉 لقد أحلت 5 مستخدمين! تم تمديد البريميوم 7 أيام.",
   "referral.paid": "🎉 قام الشخص الذي أحلته بالدفع! تم تمديد البريميوم 30 يوماً.",
   "help.header": "*مساعدة بوت القصص الشبحية*",
-  "help.general": "*الأوامر العامة:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
+  "help.general": "*الأوامر العامة:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}\n`/bugs <description>` - {{cmdBugs}}",
   "help.premium": "*أوامر البريميوم:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*أوامر المشرف:*\n`/setpremium <ID أو @username> [أيام]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID أو @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID أو @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID أو @username>` - {{cmdBlock}}\n`/unblock <ID أو @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
-  "error.unexpected": "عذرًا، حدث خطأ غير متوقع. يرجى المحاولة لاحقًا."
+  "help.admin": "*أوامر المشرف:*\n`/setpremium <ID أو @username> [أيام]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID أو @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID أو @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID أو @username>` - {{cmdBlock}}\n`/unblock <ID أو @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugs` - {{cmdListbugs}}",
+  "error.unexpected": "عذرًا، حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.",
+  "cmd.bugs": "الإبلاغ عن خطأ",
+  "cmd.listbugs": "عرض تقارير الأخطاء"
 }

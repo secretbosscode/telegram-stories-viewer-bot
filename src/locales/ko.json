@@ -56,7 +56,7 @@
   "admin.restarting": "⏳ 재시작 중...",
   "invoice.expired": "❌ 청상서 만료.",
   "invoice.addressReceived": "주소 받음. 배고 불러오는 중... `/verify <txid>` 진행.",
-"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
+  "invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "이 기능은 Premium이 필요합니다.",
   "user.notFound": "데이터벤이션에 있지 않음.",
   "argument.invalid": "잘못된 인수.",
@@ -91,8 +91,10 @@
   "referral.fiveUsers": "🎉 5명을 추천했습니다! 프리미엄이 7일 연장되었습니다.",
   "referral.paid": "🎉 추천인이 결제했습니다! 프리미엄이 30일 연장되었습니다.",
   "help.header": "*고스트 스토리 봇 도움말*",
-  "help.general": "*일반 명령:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
+  "help.general": "*일반 명령:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}\n`/bugs <description>` - {{cmdBugs}}",
   "help.premium": "*프리미엄 명령:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*관리자 명령:*\n`/setpremium <ID 또는 @username> [일]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 또는 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 또는 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 또는 @username>` - {{cmdBlock}}\n`/unblock <ID 또는 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
-  "error.unexpected": "죄송합니다. 예상치 못한 오류가 발생했습니다. 나중에 다시 시도해주세요."
+  "help.admin": "*관리자 명령:*\n`/setpremium <ID 또는 @username> [일]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 또는 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 또는 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 또는 @username>` - {{cmdBlock}}\n`/unblock <ID 또는 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugs` - {{cmdListbugs}}",
+  "error.unexpected": "죄송합니다. 예상치 못한 오류가 발생했습니다. 나중에 다시 시도해주세요.",
+  "cmd.bugs": "버그 신고",
+  "cmd.listbugs": "버그 리포트 보기"
 }

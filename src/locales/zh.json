@@ -56,7 +56,7 @@
   "admin.restarting": "⏳ 重启中...",
   "invoice.expired": "❌ 费用单已过期。",
   "invoice.addressReceived": "已收到地址。监测付款中... 付款后执行 `/verify <txid>`。",
-"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
+  "invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "此功能需要 Premium。",
   "user.notFound": "数据库中未找到用户。",
   "argument.invalid": "无效参数。",
@@ -91,8 +91,10 @@
   "referral.fiveUsers": "🎉 你已推荐 5 位用户！高级功能延长 7 天。",
   "referral.paid": "🎉 你推荐的用户已付款！高级功能延长 30 天。",
   "help.header": "*幽灵故事机器人帮助*",
-  "help.general": "*常用命令：*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
+  "help.general": "*常用命令：*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}\n`/bugs <description>` - {{cmdBugs}}",
   "help.premium": "*高级命令：*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*管理员命令：*\n`/setpremium <ID 或 @username> [天]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 或 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 或 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 或 @username>` - {{cmdBlock}}\n`/unblock <ID 或 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
-  "error.unexpected": "抱歉，发生意外错误。请稍后再试。"
+  "help.admin": "*管理员命令：*\n`/setpremium <ID 或 @username> [天]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 或 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 或 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 或 @username>` - {{cmdBlock}}\n`/unblock <ID 或 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugs` - {{cmdListbugs}}",
+  "error.unexpected": "抱歉，发生意外错误。请稍后再试。",
+  "cmd.bugs": "报告错误",
+  "cmd.listbugs": "查看错误报告"
 }

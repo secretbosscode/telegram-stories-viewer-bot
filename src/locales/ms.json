@@ -56,7 +56,7 @@
   "admin.restarting": "⏳ Restarting server...",
   "invoice.expired": "❌ Invoice expired.",
   "invoice.addressReceived": "Address received. Monitoring for payment... Run `/verify <txid>` once paid.",
-"invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
+  "invoice.invalidAddress": "❌ Invalid address. Please send a valid BTC address.",
   "feature.requiresPremium": "This feature requires Premium access.",
   "user.notFound": "User not found in database.",
   "argument.invalid": "Invalid argument.",
@@ -91,8 +91,10 @@
   "referral.fiveUsers": "🎉 Anda merujuk 5 pengguna! Premium dilanjutkan 7 hari.",
   "referral.paid": "🎉 Rujukan anda telah membuat pembayaran! Premium dilanjutkan 30 hari.",
   "help.header": "*Bantuan Bot Ghost Stories*",
-  "help.general": "*Arahan umum:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}",
+  "help.general": "*Arahan umum:*\n`/start` - {{cmdStart}}\n`/help` - {{cmdHelp}}\n`/premium` - {{cmdPremium}}\n`/freetrial` - {{cmdFreetrial}}\n`/queue` - {{cmdQueue}}\n`/invite` - {{cmdInvite}}\n`/profile` - {{cmdProfile}}\n`/verify <txid>` - {{cmdVerify}}\n`/bugs <description>` - {{cmdBugs}}",
   "help.premium": "*Arahan premium:*\n`/monitor` - {{cmdMonitor}}\n`/unmonitor` - {{cmdUnmonitor}}",
-  "help.admin": "*Arahan pentadbir:*\n`/setpremium <ID atau @username> [hari]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID atau @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID atau @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID atau @username>` - {{cmdBlock}}\n`/unblock <ID atau @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}",
-  "error.unexpected": "Maaf, ralat tidak dijangka berlaku. Sila cuba lagi nanti."
+  "help.admin": "*Arahan pentadbir:*\n`/setpremium <ID atau @username> [hari]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID atau @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID atau @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID atau @username>` - {{cmdBlock}}\n`/unblock <ID atau @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugs` - {{cmdListbugs}}",
+  "error.unexpected": "Maaf, ralat tidak dijangka berlaku. Sila cuba lagi nanti.",
+  "cmd.bugs": "Laporkan pepijat",
+  "cmd.listbugs": "Lihat laporan pepijat"
 }
