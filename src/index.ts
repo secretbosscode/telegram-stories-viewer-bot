@@ -63,6 +63,7 @@ import {
   verifyPaymentByTxid,
 } from './services/btc-payment';
 import { getStatusText } from './services/admin-stats';
+import { scheduleDatabaseBackups } from './services/backup-service';
 import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
@@ -952,6 +953,7 @@ async function startApp() {
   processQueue();
   startMonitorLoop();
   resumePendingChecks();
+  scheduleDatabaseBackups();
   await bot.telegram.setMyCommands(getBaseCommands('en'));
   await bot.telegram.setMyCommands(
     [...getBaseCommands('en'), ...getPremiumCommands('en'), ...getAdminCommands('en')],
