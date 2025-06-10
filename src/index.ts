@@ -917,7 +917,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  await ctx.reply(t(locale, 'msg.invalidInput'));
+  await ctx.reply(t(locale, 'msg.invalidInput'), extraOptions);
 });
 
 
