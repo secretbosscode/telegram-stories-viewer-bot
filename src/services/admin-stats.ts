@@ -31,6 +31,21 @@ function countRows(query: string, param: number): number {
   return row?.c || 0;
 }
 
+function getQueueLoad(): { pending: number; processing: number } {
+  const row = db
+    .prepare(
+      `SELECT
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing
+       FROM download_queue`,
+    )
+    .get() as { pending: number; processing: number } | undefined;
+  return {
+    pending: row?.pending || 0,
+    processing: row?.processing || 0,
+  };
+}
+
 export function getDailyStats() {
   const since = Math.floor(Date.now() / 1000) - 86400;
   const newUsers = countRows(
@@ -71,12 +86,19 @@ function formatUptime(): string {
 
 export function getStatusText(): string {
   const stats = getDailyStats();
+  const queue = getQueueLoad();
+  const total = queue.pending + queue.processing;
+  const queueText =
+    total === 0
+      ? 'empty'
+      : `${queue.pending} pending, ${queue.processing} processing`;
   return (
     `🕒 Uptime: ${formatUptime()}\n` +
     `New users: ${stats.newUsers}\n` +
     `Payments: ${stats.paidInvoices}\n` +
     `Invites redeemed: ${stats.invitesRedeemed}\n` +
-    `Errors last 24h: ${stats.errors}`
+    `Errors last 24h: ${stats.errors}\n` +
+    `Queue: ${queueText}`
   );
 }
 
