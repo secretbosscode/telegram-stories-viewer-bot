@@ -1,4 +1,4 @@
-<h1><a href="https://t.me/tg_stories_downloader_bot">🕵🏼‍♂️ Telegram Stories Viewer Bot</a></h1>
+<h1><a href="https://t.me/ghoststoriesbot">🕵🏼‍♂️ Telegram Stories Viewer Bot</a></h1>
 
 <p>The bot allows to view Telegram stories <code>anonymously</code> by leveraging a bot and userbot</p>
 
