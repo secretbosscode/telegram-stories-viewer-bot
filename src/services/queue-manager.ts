@@ -7,6 +7,7 @@ import {
   markDoneFx,
   markErrorFx,
   cleanupQueueFx,
+  runMaintenanceFx,
   wasRecentlyDownloadedFx,
   getDownloadCooldownRemainingFx,
   isDuplicatePendingFx,
@@ -200,9 +201,11 @@ export async function processQueue() {
     if (!timedOut) {
       isProcessing = false;
       await cleanupQueueFx();
+      await runMaintenanceFx();
       setImmediate(processQueue);
     } else {
       await cleanupQueueFx();
+      await runMaintenanceFx();
     }
   }
 }

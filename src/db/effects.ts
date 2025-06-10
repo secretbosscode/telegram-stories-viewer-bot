@@ -40,6 +40,7 @@ export const markErrorFx = createEffect(
 );
 
 export const cleanupQueueFx = createEffect(() => db.cleanupQueue());
+export const runMaintenanceFx = createEffect(() => db.runMaintenance());
 
 export const wasRecentlyDownloadedFx = createEffect(
   async (params: { telegram_id: string; target_username: string; hours: number }): Promise<boolean> => {

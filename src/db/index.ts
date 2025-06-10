@@ -309,6 +309,20 @@ export function cleanupQueue(): void {
   `).run();
 }
 
+let lastMaintenance = 0;
+export function runMaintenance(): void {
+  const now = Math.floor(Date.now() / 1000);
+  if (now - lastMaintenance < 86400) return;
+  lastMaintenance = now;
+  try {
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    db.exec('VACUUM;');
+    db.exec('PRAGMA optimize;');
+  } catch (err) {
+    console.error('[DB] Maintenance error:', err);
+  }
+}
+
 // Retrieve recent usage history limited to the last 30 days
 export function getRecentHistory(limit: number): any[] {
   return db

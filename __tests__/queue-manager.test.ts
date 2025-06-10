@@ -21,6 +21,7 @@ const countRecentUserRequestsFx: any = jest.fn();
 const countPendingJobsFx: any = jest.fn();
 const recordUserRequestFx: any = jest.fn();
 const getNextQueueItemFx: any = jest.fn();
+const runMaintenanceFx: any = jest.fn();
 
 jest.mock('db/effects', () => ({
   enqueueDownloadFx,
@@ -31,6 +32,7 @@ jest.mock('db/effects', () => ({
   countPendingJobsFx,
   recordUserRequestFx,
   getNextQueueItemFx,
+  runMaintenanceFx,
 }));
 
 const bot = { telegram: { sendMessage: jest.fn() } } as any;
