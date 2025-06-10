@@ -2,6 +2,7 @@
 
 import { notifyAdmin } from 'controllers/send-message';
 import { db } from 'db';
+import { t } from '../lib/i18n';
 import { User } from 'telegraf/typings/core/types/typegram';
 
 // Define a type for our user model that matches the database table.
@@ -35,10 +36,13 @@ export const saveUser = (user: User) => {
         'INSERT INTO users (telegram_id, username, is_bot) VALUES (?, ?, ?)'
       ).run(telegramId, username, isBot);
 
-      notifyAdmin({
-        status: 'info',
-        baseInfo: `👤 New user added to DB: @${username} (${telegramId})`,
-      });
+      notifyAdmin({
+        status: 'info',
+        baseInfo: t('en', 'admin.newUserRegistered', {
+          user: username ? '@' + username : telegramId,
+          id: telegramId,
+        }),
+      });
     }
   } catch (error) {
     notifyAdmin({

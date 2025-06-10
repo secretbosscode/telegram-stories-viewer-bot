@@ -67,6 +67,7 @@ import { scheduleDatabaseBackups } from './services/backup-service';
 import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
+import { notifyAdmin } from 'controllers/send-message';
 import { UserInfo } from 'types';
 import {
   sendTemporaryMessage,
@@ -335,6 +336,12 @@ bot.command('freetrial', async (ctx) => {
     return ctx.reply(t(locale, 'premium.freeTrialUsed'));
   }
   grantFreeTrial(userId);
+  notifyAdmin({
+    status: 'info',
+    baseInfo: t('en', 'admin.freeTrialRedeemed', {
+      user: ctx.from.username ? '@' + ctx.from.username : userId,
+    }),
+  });
   await ctx.reply(t(locale, 'premium.freeTrialActivated'));
 });
 
@@ -380,6 +387,13 @@ bot.command('verify', async (ctx) => {
       days,
       true,
     );
+    notifyAdmin({
+      status: 'info',
+      baseInfo: t('en', 'admin.upgradePayment', {
+        user: ctx.from.username ? '@' + ctx.from.username : ctx.from.id,
+        amount: invoice.paid_amount.toFixed(8),
+      }),
+    });
     return ctx.reply(t(locale, 'verify.success'));
   }
   await ctx.reply(t(locale, 'verify.failure'));
