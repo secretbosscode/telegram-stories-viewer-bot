@@ -16,6 +16,7 @@ jest.mock('../src/db', () => {
     CREATE TABLE users (created_at TEXT);
     CREATE TABLE payments (paid_at INTEGER);
     CREATE TABLE referrals (created_at INTEGER);
+    CREATE TABLE download_queue (status TEXT);
   `);
   return { db };
 });
@@ -50,6 +51,8 @@ describe('admin stats status message', () => {
       0,
       expect.stringContaining('Uptime: 0h 0m'),
     );
+    const text = telegram.sendMessage.mock.calls[0][1];
+    expect(text).toContain('Queue:');
     expect(telegram.unpinChatMessage).toHaveBeenCalledWith(0, 9);
     expect(telegram.pinChatMessage).toHaveBeenCalledWith(0, 1, {
       disable_notification: true,
@@ -66,5 +69,7 @@ describe('admin stats status message', () => {
       undefined,
       expect.stringContaining('Uptime:'),
     );
+    const text = telegram.editMessageText.mock.calls[0][3];
+    expect(text).toContain('Queue:');
   });
 });
