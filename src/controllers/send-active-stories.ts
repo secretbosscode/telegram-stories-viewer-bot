@@ -96,18 +96,20 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       // --- Send in chunks (albums) ---
       const chunkedList = chunkMediafiles(uploadableStories);
       for (const album of chunkedList) {
+        const isSingle = album.length === 1;
         await bot.telegram.sendMediaGroup(
           task.chatId,
           album.map((x: MappedStoryItem) => ({ // <--- 'x' is typed here
             media: { source: x.buffer! },
             type: x.mediaType,
-            caption: x.caption ?? undefined,
+            caption: isSingle ? undefined : x.caption ?? undefined,
           }))
         );
+        const caption = isSingle ? album[0].caption ?? `Active story from ${task.link}` : `Active story from ${task.link}`;
         await sendTemporaryMessage(
           bot,
           task.chatId,
-          `Active story from ${task.link}`,
+          caption,
         ).catch((err) => {
           console.error(
             `[sendActiveStories] Failed to send temporary caption to ${task.chatId}:`,
@@ -139,7 +141,8 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
         acc[chunkIndex].push(curr);
         return acc;
       }, []);
-      await bot.telegram.sendMessage(
+      await sendTemporaryMessage(
+        bot,
         task.chatId,
         `Uploaded ${PER_PAGE}/${stories.length} active stories from ${task.link} ✅`,
         Markup.inlineKeyboard(keyboard)
