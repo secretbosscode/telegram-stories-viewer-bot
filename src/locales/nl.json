@@ -96,5 +96,10 @@
   "help.admin": "*Beheercommando's:*\n`/setpremium <ID of @username> [dagen]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID of @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID of @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID of @username>` - {{cmdBlock}}\n`/unblock <ID of @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "Er is een onverwachte fout opgetreden. Probeer het later opnieuw.",
   "cmd.bugs": "Bug melden",
-  "cmd.listbugs": "Bugrapporten bekijken"
+  "cmd.listbugs": "Bugrapporten bekijken",
+  "bug.usage": "Gebruik: /bugs <beschrijving>",
+  "bug.reported": "🐞 Bug gemeld, bedankt!",
+  "bug.cooldown": "⏳ Je kunt over {{h}}u {{m}}m nog een bug melden.",
+  "bugs.none": "Geen bugrapporten.",
+  "bugs.listHeader": "🐞 Bugrapporten:"
 }

@@ -96,5 +96,10 @@
   "help.admin": "*Comandi admin:*\n`/setpremium <ID o @username> [giorni]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID o @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID o @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID o @username>` - {{cmdBlock}}\n`/unblock <ID o @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "Spiacenti, si è verificato un errore imprevisto. Riprova più tardi.",
   "cmd.bugs": "Segnala un bug",
-  "cmd.listbugs": "Visualizza segnalazioni bug"
+  "cmd.listbugs": "Visualizza segnalazioni bug",
+  "bug.usage": "Uso: /bugs <descrizione>",
+  "bug.reported": "🐞 Bug segnalato, grazie!",
+  "bug.cooldown": "⏳ Puoi segnalare un altro bug tra {{h}}h {{m}}m.",
+  "bugs.none": "Nessun report di bug.",
+  "bugs.listHeader": "🐞 Report dei bug:"
 }

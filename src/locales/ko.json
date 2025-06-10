@@ -96,5 +96,10 @@
   "help.admin": "*관리자 명령:*\n`/setpremium <ID 또는 @username> [일]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID 또는 @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID 또는 @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID 또는 @username>` - {{cmdBlock}}\n`/unblock <ID 또는 @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "죄송합니다. 예상치 못한 오류가 발생했습니다. 나중에 다시 시도해주세요.",
   "cmd.bugs": "버그 신고",
-  "cmd.listbugs": "버그 리포트 보기"
+  "cmd.listbugs": "버그 리포트 보기",
+  "bug.usage": "사용법: /bugs <설명>",
+  "bug.reported": "🐞 버그가 보고되었습니다. 감사합니다!",
+  "bug.cooldown": "⏳ {{h}}시간 {{m}}분 후에 다른 버그를 신고할 수 있습니다.",
+  "bugs.none": "버그 보고가 없습니다.",
+  "bugs.listHeader": "🐞 버그 보고:"
 }

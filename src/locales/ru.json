@@ -96,5 +96,10 @@
   "help.admin": "*Команды администратора:*\n`/setpremium <ID или @username> [дней]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID или @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID или @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID или @username>` - {{cmdBlock}}\n`/unblock <ID или @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "Извините, произошла непредвиденная ошибка. Пожалуйста, попробуйте позже.",
   "cmd.bugs": "Сообщить об ошибке",
-  "cmd.listbugs": "Просмотреть отчеты об ошибках"
+  "cmd.listbugs": "Просмотреть отчеты об ошибках",
+  "bug.usage": "Использование: /bugs <описание>",
+  "bug.reported": "🐞 Ошибка сообщена, спасибо!",
+  "bug.cooldown": "⏳ Вы сможете сообщить об ошибке через {{h}}ч {{m}}м.",
+  "bugs.none": "Нет отчетов об ошибках.",
+  "bugs.listHeader": "🐞 Отчеты об ошибках:"
 }

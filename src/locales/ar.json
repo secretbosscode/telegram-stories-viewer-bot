@@ -96,5 +96,10 @@
   "help.admin": "*أوامر المشرف:*\n`/setpremium <ID أو @username> [أيام]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID أو @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID أو @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID أو @username>` - {{cmdBlock}}\n`/unblock <ID أو @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "عذرًا، حدث خطأ غير متوقع. يرجى المحاولة لاحقًا.",
   "cmd.bugs": "الإبلاغ عن خطأ",
-  "cmd.listbugs": "عرض تقارير الأخطاء"
+  "cmd.listbugs": "عرض تقارير الأخطاء",
+  "bug.usage": "الاستخدام: /bugs <الوصف>",
+  "bug.reported": "🐞 تم الإبلاغ عن الخطأ، شكرًا!",
+  "bug.cooldown": "⏳ يمكنك الإبلاغ عن خطأ آخر خلال {{h}}س {{m}}د.",
+  "bugs.none": "لا توجد تقارير أخطاء.",
+  "bugs.listHeader": "🐞 تقارير الأخطاء:"
 }

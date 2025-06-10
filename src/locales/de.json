@@ -96,5 +96,10 @@
   "help.admin": "*Admin-Befehle:*\n`/setpremium <ID oder @username> [Tage]` - {{cmdSetpremium}} (0 = {{neverExpires}})\n`/unsetpremium <ID oder @username>` - {{cmdUnsetpremium}}\n`/ispremium <ID oder @username>` - {{cmdIspremium}}\n`/listpremium` - {{cmdListpremium}}\n`/users` - {{cmdUsers}}\n`/history` - {{cmdHistory}}\n`/block <ID oder @username>` - {{cmdBlock}}\n`/unblock <ID oder @username>` - {{cmdUnblock}}\n`/blocklist` - {{cmdBlocklist}}\n`/status` - {{cmdStatus}}\n`/restart` - {{cmdRestart}}\n`/bugreport` - {{cmdListbugs}}",
   "error.unexpected": "Entschuldigung, ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.",
   "cmd.bugs": "Fehler melden",
-  "cmd.listbugs": "Fehlerberichte anzeigen"
+  "cmd.listbugs": "Fehlerberichte anzeigen",
+  "bug.usage": "Verwendung: /bugs <beschreibung>",
+  "bug.reported": "🐞 Fehler gemeldet, danke!",
+  "bug.cooldown": "⏳ Du kannst in {{h}}h {{m}}m einen weiteren Bug melden.",
+  "bugs.none": "Keine Fehlerberichte.",
+  "bugs.listHeader": "🐞 Fehlerberichte:"
 }
