@@ -28,5 +28,9 @@ fi
 # =========================================================================
 # `exec gosu appuser "$@"` switches from the root user to 'appuser'
 # and then executes the command provided in the Dockerfile's CMD.
-echo "Dropping root privileges and starting application..."
-exec gosu appuser "$@"
+if [ "$(id -u)" = "0" ]; then
+  echo "Dropping root privileges and starting application..."
+  exec gosu appuser "$@"
+else
+  exec "$@"
+fi
