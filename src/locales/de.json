@@ -1,4 +1,5 @@
 {
+  "start.welcome": "👋 Welcome to Ghost Stories Bot! Use /help to see available commands.",
   "start.instructions": "🔗 Bitte sende eines der folgenden:\n\n*Benutzername mit '@':*\n`@username`\n\n*Telefonnummer mit '+':*\n`+19875551234`\n\n*Direkter Link zu einer Story:*\n`https://t.me/username/s/1`",
   "start.freeTrial": "🎁 Neu hier? Nutze /freetrial für 7 Tage Premium kostenlos!\n\n",
   "start.invite": "Teile deinen Einladungslink: {{link}}",
