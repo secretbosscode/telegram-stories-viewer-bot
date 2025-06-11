@@ -107,5 +107,6 @@
   "bug.reported": "🐞 버그가 보고되었습니다. 감사합니다!",
   "bug.cooldown": "⏳ {{h}}시간 {{m}}분 후에 다른 버그를 신고할 수 있습니다.",
   "bugs.none": "버그 보고가 없습니다.",
-  "bugs.listHeader": "🐞 버그 보고:"
+  "bugs.listHeader": "🐞 버그 보고:",
+  "cmd.welcome": "초기 환영 메시지 표시"
 }
