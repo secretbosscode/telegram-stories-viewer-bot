@@ -1,5 +1,6 @@
 import { TelegramClient } from 'telegram';
 import { StoreSession } from 'telegram/sessions';
+import readline from 'readline';
 
 import {
   USERBOT_API_HASH,
@@ -68,15 +69,38 @@ async function initClient() {
   );
 
   const password = USERBOT_PASSWORD || '';
-  const phoneCode = USERBOT_PHONE_CODE || '';
+  let phoneCode = USERBOT_PHONE_CODE || '';
+  const isInteractive = process.stdin.isTTY;
+
+  const promptInput = async (query: string): Promise<string> => {
+    if (!isInteractive) return '';
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise((resolve) =>
+      rl.question(query, (answer) => {
+        rl.close();
+        resolve(answer.trim());
+      }),
+    );
+  };
 
   await client.start({
     phoneNumber: USERBOT_PHONE_NUMBER,
     password: async () => {
-      if (!password) throw new Error('USERBOT_PASSWORD is required for this account!');
-      return password;
+      if (password) return password;
+      if (!isInteractive) throw new Error('USERBOT_PASSWORD is required when not running interactively');
+      const pw = await promptInput('Please enter two-factor authentication password: ');
+      if (!pw) throw new Error('USERBOT_PASSWORD is required for this account');
+      return pw;
     },
     phoneCode: async (_isCodeViaApp?: boolean) => {
+      if (!phoneCode && !isInteractive) {
+        throw new Error(
+          'USERBOT_PHONE_CODE is required for first login. Start the container without -d to enter it interactively.',
+        );
+      }
+      if (!phoneCode) {
+        phoneCode = await promptInput('Please enter the Telegram login code: ');
+      }
       if (!phoneCode) throw new Error('USERBOT_PHONE_CODE is required for first login!');
       return phoneCode;
     },

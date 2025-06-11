@@ -164,17 +164,22 @@ bot.telegram.sendMediaGroup(
     will derive unique addresses from it.
   - Optional: <code>LOG_FILE</code> to change where runtime errors are logged (defaults to <code>./data/error.log</code>).
   - Optional: <code>DEBUG_LOG_FILE</code> to also store verbose debug logs on disk. Leave empty to disable file logging.
-2. Build and start the container:
+2. Build the image and start the container in the foreground **for the first run**:
+
+```shell
+docker compose up
+```
+
+Enter the login code (and two‑factor password if prompted). Once authentication
+completes the session file is saved. You can then stop the container and start it
+in the background normally:
 
 ```shell
 docker compose up -d
 ```
 
-The first start will fail with <code>USERBOT_PHONE_CODE is required for first login!</code>.
-Telegram will send a login code to the phone number specified in <code>USERBOT_PHONE_NUMBER</code>.
-Add this code to your <code>.env</code> as <code>USERBOT_PHONE_CODE</code> and run the command again.
-Once authentication completes the session file is saved, so you can remove the
-<code>USERBOT_PHONE_CODE</code> line from the environment file.
+If you prefer not to run interactively, add the code to your <code>.env</code> as
+<code>USERBOT_PHONE_CODE</code> before starting the container.
 
 ### Viewing Logs
 
