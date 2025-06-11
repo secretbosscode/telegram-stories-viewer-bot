@@ -59,6 +59,9 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 RUN chown -R appuser:appgroup /app
 
+# Run the container as the non-root user by default
+USER appuser
+
 # Set our script as the entrypoint for the container.
 ENTRYPOINT ["entrypoint.sh"]
 
