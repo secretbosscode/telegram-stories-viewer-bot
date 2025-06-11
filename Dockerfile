@@ -29,7 +29,7 @@ FROM node:22-alpine
 COPY --from=builder /usr/local/bin/gosu /usr/local/bin/gosu
 
 # Install only the remaining system dependencies.
-RUN apk add --no-cache sqlite sqlite-dev python3 make g++
+RUN apk add --no-cache sqlite sqlite-dev python3 make g++ shadow
 
 #RUN apk add --no-cache sqlite sqlite-dev python3 make g++
 
@@ -57,6 +57,8 @@ ENV NODE_ENV=production
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN chown -R appuser:appgroup /app
+USER appuser
 
 # Set our script as the entrypoint for the container.
 ENTRYPOINT ["entrypoint.sh"]

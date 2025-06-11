@@ -12,16 +12,17 @@ PGID=${PGID:-568}
 
 echo "Starting with UID: $PUID, GID: $PGID"
 
-# Change the group ID of 'appgroup' to match the host's group ID
-groupmod -o -g "$PGID" appgroup
-# Change the user ID of 'appuser' to match the host's user ID
-usermod -o -u "$PUID" appuser
-
+# Change IDs only if running as root and required tools exist
+if [ "$(id -u)" = "0" ]; then
+  command -v groupmod >/dev/null 2>&1 && groupmod -o -g "$PGID" appgroup || true
+  command -v usermod >/dev/null 2>&1 && usermod -o -u "$PUID" appuser || true
+fi
 # =========================================================================
 # PERMISSIONS
 # =========================================================================
-chown -R appuser:appgroup /app/data
-
+if [ "$(id -u)" = "0" ]; then
+  chown -R appuser:appgroup /app/data
+fi
 # =========================================================================
 # EXECUTE MAIN COMMAND
 # =========================================================================
