@@ -45,16 +45,20 @@ if (!BTC_WALLET_ADDRESS && !BTC_XPUB && !BTC_YPUB && !BTC_ZPUB) {
   );
 }
 
+// Base directory for all runtime data. Defaults to a `data` folder relative to
+// the project when running locally. The Docker setup passes DATA_DIR=/data so
+// files are stored in the mounted volume.
+export const DATA_DIR =
+  process.env.DATA_DIR || path.resolve(__dirname, '../../data');
+
 // error log file path
-export const LOG_FILE = process.env.LOG_FILE || parsed?.LOG_FILE || path.join(
-  __dirname,
-  '../../data/error.log',
-);
+export const LOG_FILE =
+  process.env.LOG_FILE || parsed?.LOG_FILE || path.join(DATA_DIR, 'error.log');
 
 // verbose debugging
 /**
  * When `DEBUG_LOG` is truthy all console output is mirrored to
- * `/app/data/debug.log` (inside the container). The path is fixed so the user
+ * `/data/debug.log` (inside the container). The path is fixed so the user
  * does not need to provide it.
  */
 export const DEBUG_LOG = (() => {
@@ -63,7 +67,4 @@ export const DEBUG_LOG = (() => {
 })();
 
 // Debug log file path is always relative to the application data directory
-export const DEBUG_LOG_FILE = path.join(
-  __dirname,
-  '../../data/debug.log',
-);
+export const DEBUG_LOG_FILE = path.join(DATA_DIR, 'debug.log');
