@@ -8445,9 +8445,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"patronum@npm:^2.3.0":
   version: 2.3.0
-  resolution: "patronum@npm:2.3.0"
   peerDependencies:
     effector: ^23
   checksum: 10c0/dfac44a7e3943cce9d673522749992597a5525fd2e66ba5283b81070bf597b5041abe08e7bdea22f3f8f42eafd737fdd775958c34cd008e5332e5c74441d05b8
@@ -9934,7 +9932,6 @@ __metadata:
     node-cron: "npm:^3.0.3"
     nodemon: "npm:^3.1.10"
     p-limit: "npm:^6.2.0"
-    patronum: "npm:^2.3.0"
     prettier: "npm:^3.5.3"
     sqlite3: "npm:^5.1.7"
     telegraf: "npm:^4.16.3"
