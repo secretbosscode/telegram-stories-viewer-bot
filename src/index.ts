@@ -185,6 +185,10 @@ bot.use(async (ctx, next) => {
     } catch {}
     return;
   }
+  if (ctx.from) {
+    // Update user's language in the database on every interaction
+    saveUser(ctx.from);
+  }
   await next();
 });
 bot.use(async (ctx, next) => {
