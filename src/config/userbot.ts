@@ -1,6 +1,8 @@
 import { TelegramClient } from 'telegram';
 import { StoreSession } from 'telegram/sessions';
 import readline from 'readline';
+import path from 'path';
+import { DB_PATH } from '../db';
 
 import {
   USERBOT_API_HASH,
@@ -57,7 +59,9 @@ export class Userbot {
 }
 
 async function initClient() {
-  const storeSession = new StoreSession('userbot-session');
+  const dataDir = path.dirname(DB_PATH);
+  const storeSessionPath = path.join(dataDir, 'userbot-session');
+  const storeSession = new StoreSession(storeSessionPath);
 
   const client = new TelegramClient(
     storeSession,
