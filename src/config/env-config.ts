@@ -54,9 +54,11 @@ export const LOG_FILE = process.env.LOG_FILE || parsed?.LOG_FILE || path.join(__
  * project root so it ends up alongside `LOG_FILE` in the mounted data volume.
  */
 export const DEBUG_LOG_FILE = (() => {
-  const file = process.env.DEBUG_LOG_FILE || parsed?.DEBUG_LOG_FILE || '';
-  if (file && !path.isAbsolute(file)) {
-    return path.join(__dirname, '../../', file);
+  let file = process.env.DEBUG_LOG_FILE || parsed?.DEBUG_LOG_FILE;
+  if (!file) {
+    file = path.join(__dirname, '../../data/debug.log');
+  } else if (!path.isAbsolute(file)) {
+    file = path.join(__dirname, '../../', file);
   }
   return file;
 })();
