@@ -58,7 +58,6 @@ ENV NODE_ENV=production
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 RUN chown -R appuser:appgroup /app
-USER appuser
 
 # Set our script as the entrypoint for the container.
 ENTRYPOINT ["entrypoint.sh"]
