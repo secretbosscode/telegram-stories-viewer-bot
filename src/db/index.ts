@@ -1,6 +1,6 @@
 // src/db/index.ts
 
-import Database from 'better-sqlite3';
+import SyncDatabase from './sqlite-sync';
 import fs from 'fs';
 import path from 'path';
 import { DownloadQueueItem, UserInfo } from 'types';
@@ -11,7 +11,7 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-export const db = new Database(DB_PATH);
+export const db = new SyncDatabase(DB_PATH);
 
 // --- Schema Setup ---
 

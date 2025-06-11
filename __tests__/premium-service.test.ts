@@ -9,8 +9,8 @@ import {
 
 // Mock the ../db module used by premium-service to use an in-memory DB
 jest.mock('../src/db', () => {
-  const Database = require('better-sqlite3');
-  const db = new Database(':memory:');
+  const SyncDatabase = require('../src/db/sqlite-sync').default;
+  const db = new SyncDatabase(':memory:');
   db.exec(`
     CREATE TABLE users (
       telegram_id TEXT PRIMARY KEY NOT NULL,

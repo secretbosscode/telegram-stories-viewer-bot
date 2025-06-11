@@ -3,8 +3,8 @@ import { jest } from '@jest/globals';
 jest.mock('../src/config/env-config', () => ({ BOT_ADMIN_ID: 0, BOT_TOKEN: 't', LOG_FILE: '/tmp/test.log' }));
 
 jest.mock('../src/db', () => {
-  const Database = require('better-sqlite3');
-  const db = new Database(':memory:');
+  const SyncDatabase = require('../src/db/sqlite-sync').default;
+  const db = new SyncDatabase(':memory:');
   db.exec(`
     CREATE TABLE invalid_link_violations (
       telegram_id TEXT PRIMARY KEY,

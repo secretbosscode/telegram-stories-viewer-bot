@@ -10,8 +10,8 @@ jest.mock('../src/config/env-config', () => ({
 }));
 
 jest.mock('../src/db', () => {
-  const Database = require('better-sqlite3');
-  const db = new Database(':memory:');
+  const SyncDatabase = require('../src/db/sqlite-sync').default;
+  const db = new SyncDatabase(':memory:');
   db.exec(`
     CREATE TABLE users (created_at TEXT);
     CREATE TABLE payments (paid_at INTEGER);
