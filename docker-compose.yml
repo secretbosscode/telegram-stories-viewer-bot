@@ -21,8 +21,6 @@ services:
     environment:
       - PUID=568
       - PGID=568
-      - DATA_DIR=/data
-    # This mounts your persistent data directory on the host to the /data
-    # directory inside the container.
+    # Map a directory on the host to /data inside the container.
     volumes:
-      - ./storage_entry:/data
+      - /path/to/storage:/data

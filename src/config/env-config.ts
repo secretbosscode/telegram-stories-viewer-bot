@@ -45,11 +45,9 @@ if (!BTC_WALLET_ADDRESS && !BTC_XPUB && !BTC_YPUB && !BTC_ZPUB) {
   );
 }
 
-// Base directory for all runtime data. Defaults to a `data` folder relative to
-// the project when running locally. The Docker setup passes DATA_DIR=/data so
-// files are stored in the mounted volume.
-export const DATA_DIR =
-  process.env.DATA_DIR || path.resolve(__dirname, '../../data');
+// Base directory for all runtime data inside the container. Docker mounts a
+// persistent host directory here.
+export const DATA_DIR = '/data';
 
 // error log file path
 export const LOG_FILE =

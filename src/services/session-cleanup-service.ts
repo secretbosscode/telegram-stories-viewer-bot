@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import cron from 'node-cron';
-import { DATA_DIR } from '../db';
 
 // Temporary session files are stored in the same data directory as the
 // database to keep everything contained under a single folder.
@@ -10,10 +9,10 @@ const KEEP_DAYS = 7;
 
 function cleanupOldSessions(): void {
   const cutoff = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
-  const files = fs.readdirSync(DATA_DIR).filter((f) => f.startsWith(SESSION_PREFIX));
+  const files = fs.readdirSync('/data').filter((f) => f.startsWith(SESSION_PREFIX));
   for (const name of files) {
     try {
-      const file = path.join(DATA_DIR, name);
+      const file = path.join('/data', name);
       const mtime = fs.statSync(file).mtime.getTime();
       if (mtime < cutoff) {
         fs.unlinkSync(file);
