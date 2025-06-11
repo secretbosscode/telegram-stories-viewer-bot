@@ -11,7 +11,7 @@ This project packages a Telegram bot for anonymously viewing stories. It is base
    - Optionally `USERBOT_PASSWORD` if that account has two‑factor authentication enabled
    - Leave `USERBOT_PHONE_CODE` empty on the first run
    - Fill in `BOT_ADMIN_ID` and either `BTC_WALLET_ADDRESS` or one of `BTC_XPUB`, `BTC_YPUB`, `BTC_ZPUB`
-   - Optional: `LOG_FILE` and `DEBUG_LOG_FILE` to change where runtime errors are stored. If `DEBUG_LOG_FILE` is a relative path, it is created inside the container's data directory.
+   - Optional: `LOG_FILE` and `DEBUG_LOG_FILE` to change where runtime errors are stored. `DEBUG_LOG_FILE` defaults to `./data/debug.log` and relative paths are created inside the container's data directory.
 
 2. Build and start the container:
 
