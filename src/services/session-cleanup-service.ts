@@ -1,9 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import cron from 'node-cron';
-import { DB_PATH } from '../db';
+import { DATA_DIR } from '../db';
 
-const DATA_DIR = path.dirname(DB_PATH);
+// Temporary session files are stored in the same data directory as the
+// database to keep everything contained under a single folder.
 const SESSION_PREFIX = 'userbot-session';
 const KEEP_DAYS = 7;
 
