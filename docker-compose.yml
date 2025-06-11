@@ -9,6 +9,8 @@ services:
     build: .
     # This sets a friendly name for your running container.
     container_name: ghost-stories-bot
+    stdin_open: true  # allow interactive login on first run
+    tty: true         # allocate a TTY so you can type the code
     # This ensures the bot always restarts if it stops or if the server reboots.
     restart: unless-stopped
     # Load environment variables from the provided .env file.
