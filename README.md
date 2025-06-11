@@ -170,11 +170,14 @@ bot.telegram.sendMediaGroup(
 docker compose up -d
 ```
 
-The first start will fail with <code>USERBOT_PHONE_CODE is required for first login!</code>.
-Telegram will send a login code to the phone number specified in <code>USERBOT_PHONE_NUMBER</code>.
-Add this code to your <code>.env</code> as <code>USERBOT_PHONE_CODE</code> and run the command again.
-Once authentication completes the session file is saved, so you can remove the
-<code>USERBOT_PHONE_CODE</code> line from the environment file.
+The first start will fail with <code>USERBOT_PHONE_CODE is required for first login!</code>
+unless the code is provided. Telegram sends the login code to the phone number
+specified in <code>USERBOT_PHONE_NUMBER</code>.
+You can either add this code to your <code>.env</code> as <code>USERBOT_PHONE_CODE</code>
+and rerun the command, or simply start the container and enter the code when
+prompted interactively. Once authentication completes the session file is saved,
+so you can remove the <code>USERBOT_PHONE_CODE</code> line from the environment
+file.
 
 ### Viewing Logs
 
