@@ -3,7 +3,7 @@
 import { Userbot } from 'config/userbot';
 import { createEffect } from 'effector';
 import { bot } from 'index';
-import { timeout, sendTemporaryMessage, isValidStoryLink } from 'lib';
+import { timeout, sendTemporaryMessage, isValidStoryLink, getEntityWithTempContact } from 'lib';
 import { UserInfo, NotifyAdminParams } from 'types';
 import { Api } from 'telegram';
 import { FloodWaitError } from 'telegram/errors';
@@ -23,7 +23,7 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
     );
 
     const client = await Userbot.getInstance();
-    const entity = await client.getEntity(task.link);
+    const entity = await getEntityWithTempContact(task.link);
     notifyAdmin({ task, status: 'start' });
 
     // This path handles pagination clicks from inline buttons.

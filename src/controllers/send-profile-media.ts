@@ -1,6 +1,6 @@
 import { Userbot } from 'config/userbot';
 import { bot } from 'index';
-import { sendTemporaryMessage, chunkArray } from 'lib';
+import { sendTemporaryMessage, chunkArray, getEntityWithTempContact } from 'lib';
 import { Api } from 'telegram';
 import { notifyAdmin } from 'controllers/send-message';
 import { User } from 'telegraf/typings/core/types/typegram';
@@ -24,7 +24,7 @@ export async function sendProfileMedia(
   try {
 
     const client = await Userbot.getInstance();
-    const entity = await client.getEntity(input);
+    const entity = await getEntityWithTempContact(input);
 
     const photos: Api.Photo[] = [];
     let offset = 0;
