@@ -40,6 +40,7 @@ export const markErrorFx = createEffect(
 );
 
 export const cleanupQueueFx = createEffect(() => db.cleanupQueue());
+export const flushQueueFx = createEffect(() => db.flushQueue());
 export const runMaintenanceFx = createEffect(() => db.runMaintenance());
 
 export const wasRecentlyDownloadedFx = createEffect(

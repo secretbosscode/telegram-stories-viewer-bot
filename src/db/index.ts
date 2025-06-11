@@ -309,6 +309,13 @@ export function cleanupQueue(): void {
   `).run();
 }
 
+export function flushQueue(): number {
+  const result = db.prepare(
+    `DELETE FROM download_queue WHERE status IN ('pending','processing','error')`
+  ).run();
+  return result.changes as number;
+}
+
 let lastMaintenance = 0;
 export function runMaintenance(): void {
   const now = Math.floor(Date.now() / 1000);
