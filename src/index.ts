@@ -64,6 +64,7 @@ import {
 } from './services/btc-payment';
 import { getStatusText } from './services/admin-stats';
 import { scheduleDatabaseBackups } from './services/backup-service';
+import { scheduleSessionCleanup } from './services/session-cleanup-service';
 import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
@@ -969,6 +970,7 @@ async function startApp() {
   startMonitorLoop();
   resumePendingChecks();
   scheduleDatabaseBackups();
+  scheduleSessionCleanup();
   await bot.telegram.setMyCommands(getBaseCommands('en'));
   await bot.telegram.setMyCommands(
     [...getBaseCommands('en'), ...getPremiumCommands('en'), ...getAdminCommands('en')],
