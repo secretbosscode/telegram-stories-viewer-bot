@@ -1,4 +1,5 @@
 {
+  "start.welcome": "👋 Welcome to Ghost Stories Bot! Use /help to see available commands.",
   "start.instructions": "🔗 다음 중 하나를 보내세요:\n\n*'@'가 포함된 사용자 이름:*\n`@username`\n\n*'+'가 포함된 전화번호:*\n`+19875551234`\n\n*스토리 직접 링크:*\n`https://t.me/username/s/1`",
   "start.freeTrial": "🎁 처음 오셨나요? /freetrial 로 7일간 프리미엄을 무료로 이용하세요!\n\n",
   "start.invite": "요청 링크 공유: {{link}}",

@@ -260,7 +260,7 @@ bot.start(async (ctx) => {
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
   const locale = ctx.from.language_code || 'en';
-  let msg = t(locale, 'start.instructions');
+  let msg = t(locale, 'start.welcome') + '\n\n' + t(locale, 'start.instructions');
   if (!isUserPremium(String(ctx.from.id)) && !hasUsedFreeTrial(String(ctx.from.id))) {
     msg = t(locale, 'start.freeTrial') + msg;
   }
@@ -883,7 +883,13 @@ bot.on('text', async (ctx) => {
 
   if (!isActivated(userId)) {
     const locale = ctx.from.language_code || 'en';
-    return ctx.reply(t(locale, 'msg.botStart'));
+    return ctx.reply(t(locale, 'msg.botStart'), {
+      reply_markup: {
+        keyboard: [['/start']],
+        resize_keyboard: true,
+        one_time_keyboard: true,
+      },
+    });
   }
 
   if (userId == BOT_ADMIN_ID && text === RESTART_COMMAND) {

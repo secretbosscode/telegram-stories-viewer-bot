@@ -1,4 +1,5 @@
 {
+  "start.welcome": "👋 Welcome to Ghost Stories Bot! Use /help to see available commands.",
   "start.instructions": "🔗 请发送以下其中一项:\n\n*含 '@' 的用户名:*\n`@username`\n\n*含 '+' 的电话号码:*\n`+19875551234`\n\n*故事直接链接:*\n`https://t.me/username/s/1`",
   "start.freeTrial": "🎁 新用户吗? 使用 /freetrial 免费获得1 周高级权限!\n\n",
   "start.invite": "分享你的邀请链接: {{link}}",
