@@ -15,6 +15,7 @@ jest.mock('../src/db', () => {
     CREATE TABLE users (
       telegram_id TEXT PRIMARY KEY NOT NULL,
       username TEXT,
+      language TEXT,
       is_bot INTEGER DEFAULT 0,
       is_premium INTEGER DEFAULT 0,
       free_trial_used INTEGER DEFAULT 0,
