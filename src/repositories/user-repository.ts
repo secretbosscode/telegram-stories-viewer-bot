@@ -9,6 +9,7 @@ import { User } from 'telegraf/typings/core/types/typegram';
 export interface UserModel {
   telegram_id: string;
   username?: string;
+  language?: string;
   is_bot?: number;
   is_premium: 0 | 1; // SQLite stores booleans as 0 or 1
   premium_until?: number | null;
@@ -28,13 +29,14 @@ export const saveUser = (user: User) => {
     const telegramId = user.id.toString();
     const username = user.username || null;
     const isBot = user.is_bot ? 1 : 0;
+    const language = user.language_code || null;
 
     const exists = db.prepare('SELECT 1 FROM users WHERE telegram_id = ?').get(telegramId);
 
-    if (!exists) {
+    if (!exists) {
       db.prepare(
-        'INSERT INTO users (telegram_id, username, is_bot) VALUES (?, ?, ?)'
-      ).run(telegramId, username, isBot);
+        'INSERT INTO users (telegram_id, username, is_bot, language) VALUES (?, ?, ?, ?)'
+      ).run(telegramId, username, isBot, language);
 
       notifyAdmin({
         status: 'info',
@@ -43,7 +45,12 @@ export const saveUser = (user: User) => {
           id: telegramId,
         }),
       });
-    }
+    } else {
+      db.prepare('UPDATE users SET language = ? WHERE telegram_id = ?').run(
+        language,
+        telegramId,
+      );
+    }
   } catch (error) {
     notifyAdmin({
       status: 'error',

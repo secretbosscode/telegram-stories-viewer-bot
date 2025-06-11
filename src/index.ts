@@ -711,13 +711,14 @@ bot.command('users', async (ctx) => {
   const locale = ctx.from.language_code || 'en';
   if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
-    const rows = db.prepare('SELECT telegram_id, username, is_premium, is_bot FROM users').all() as any[];
+    const rows = db.prepare('SELECT telegram_id, username, is_premium, is_bot, language FROM users').all() as any[];
     if (!rows.length) return ctx.reply(t(locale, 'users.none'));
     let msg = t(locale, 'users.listHeader', { count: rows.length }) + '\n';
     rows.forEach((u, i) => {
       const premiumLabel = u.is_premium ? t(locale, 'label.premium') : t(locale, 'label.free');
       const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
-      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${premiumLabel}, ${type}]`;
+      const lang = u.language ? ` (${u.language})` : '';
+      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${premiumLabel}, ${type}]${lang}`;
       msg += '\n';
     });
     await ctx.reply(msg);

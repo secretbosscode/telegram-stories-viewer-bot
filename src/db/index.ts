@@ -20,6 +20,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     telegram_id TEXT PRIMARY KEY NOT NULL,
     username TEXT,
+    language TEXT,
     is_bot INTEGER DEFAULT 0,
     is_premium INTEGER DEFAULT 0,
     free_trial_used INTEGER DEFAULT 0,
@@ -44,6 +45,9 @@ if (!userColumns.some((c) => c.name === 'pinned_message_updated_at')) {
 }
 if (!userColumns.some((c) => c.name === 'is_bot')) {
   db.exec('ALTER TABLE users ADD COLUMN is_bot INTEGER DEFAULT 0');
+}
+if (!userColumns.some((c) => c.name === 'language')) {
+  db.exec('ALTER TABLE users ADD COLUMN language TEXT');
 }
 
 // Download Queue Table
