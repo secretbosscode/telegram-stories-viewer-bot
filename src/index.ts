@@ -86,6 +86,7 @@ import {
   listBugReportsFx,
   countBugReportsLastDayFx,
   getEarliestBugReportTimeLastDayFx,
+  flushQueueFx,
 } from './db/effects';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
@@ -131,6 +132,7 @@ function getAdminCommands(locale: string) {
     { command: 'blocklist', description: t(locale, 'cmd.blocklist') },
     { command: 'status', description: t(locale, 'cmd.status') },
     { command: 'restart', description: t(locale, 'cmd.restart') },
+    { command: 'flush', description: t(locale, 'cmd.flush') },
     { command: 'bugreport', description: t(locale, 'cmd.listbugs') },
     { command: 'bugs', description: t(locale, 'cmd.bugs') },
   ];
@@ -313,6 +315,7 @@ bot.command('help', async (ctx) => {
         cmdBlocklist: t(locale, 'cmd.blocklist'),
         cmdStatus: t(locale, 'cmd.status'),
         cmdRestart: t(locale, 'cmd.restart'),
+        cmdFlush: t(locale, 'cmd.flush'),
         cmdListbugs: t(locale, 'cmd.listbugs'),
         neverExpires: t(locale, 'premium.neverExpires'),
       });
@@ -804,6 +807,19 @@ bot.command('bugs', async (ctx) => {
     await ctx.reply(t(locale, 'bug.reported'));
   } catch (e) {
     console.error('Error in /bugs:', e);
+    await ctx.reply(t(locale, 'error.generic'));
+  }
+});
+
+bot.command('flush', async (ctx) => {
+  if (ctx.from.id != BOT_ADMIN_ID) return;
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
+  try {
+    const count = await flushQueueFx();
+    await ctx.reply(t(locale, 'queue.flushed', { count }));
+  } catch (e) {
+    console.error('Error in /flush:', e);
     await ctx.reply(t(locale, 'error.generic'));
   }
 });
