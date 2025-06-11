@@ -134,3 +134,8 @@ export function isValidStoryLink(link: string): boolean {
     link.trim(),
   );
 }
+
+// Check if the provided string is a phone number in international format
+export function isPhoneNumber(text: string): boolean {
+  return /^\+\d{5,15}$/.test(text.trim());
+}
