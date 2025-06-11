@@ -2,8 +2,8 @@ import { jest } from '@jest/globals';
 
 // Mock ../src/db with an in-memory sqlite DB
 jest.mock('../src/db', () => {
-  const Database = require('better-sqlite3');
-  const db = new Database(':memory:');
+  const SyncDatabase = require('../src/db/sqlite-sync').default;
+  const db = new SyncDatabase(':memory:');
   db.exec(`
     CREATE TABLE payments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

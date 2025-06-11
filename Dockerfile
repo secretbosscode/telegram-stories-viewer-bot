@@ -2,10 +2,10 @@
 # Stage 1: The "Builder" - Compile a secure `gosu` binary from source
 # =========================================================================
 # Use the official Go image based on Debian Bookworm to perfectly match our final image's OS.
-FROM golang:1.24-bookworm as builder
+FROM golang:1.24-alpine as builder
 
 # Install git, which is needed to clone the gosu source code.
-RUN apt-get update && apt-get install -y --no-install-recommends git
+RUN apk add --no-cache git
 
 # Set the version of gosu we want to build. 1.17 is the latest stable version.
 ENV GOSU_VERSION 1.17
@@ -22,16 +22,14 @@ RUN cd /gosu && CGO_ENABLED=0 go build -v -ldflags="-s -w" -o /usr/local/bin/gos
 # =========================================================================
 # Stage 2: The "Final Image" - Our Node.js Application
 # =========================================================================
-# Use the official Node.js LTS slim runtime as our secure and reliable base.
-FROM node:22-slim
+# Use the official Node.js LTS alpine runtime as our secure and reliable base.
+FROM node:22-alpine
 
 # Copy the freshly compiled gosu binary from our builder stage.
 COPY --from=builder /usr/local/bin/gosu /usr/local/bin/gosu
 
 # Install only the remaining system dependencies.
-RUN apt-get update && \
-    apt-get install -y sqlite3 && \
-    rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache sqlite sqlite-dev python3 make g++
 
 #RUN apk add --no-cache sqlite sqlite-dev python3 make g++
 
