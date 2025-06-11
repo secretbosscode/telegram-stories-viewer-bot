@@ -6,9 +6,10 @@ import { db, unblockUser } from '../db';
 
 let startTimestamp = Math.floor(Date.now() / 1000);
 let statusMessageId: number | null = null;
+const BASE_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../../data');
 const STATUS_ID_FILE =
   process.env.STATUS_ID_FILE ||
-  path.join(__dirname, '../../data/admin_status_id');
+  path.join(BASE_DIR, 'admin_status_id');
 
 function readSavedStatusId(): number | null {
   try {

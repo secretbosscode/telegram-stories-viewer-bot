@@ -21,7 +21,7 @@ fi
 # PERMISSIONS
 # =========================================================================
 if [ "$(id -u)" = "0" ]; then
-  chown -R appuser:appgroup /app/data
+  chown -R appuser:appgroup /data
 fi
 # =========================================================================
 # EXECUTE MAIN COMMAND
