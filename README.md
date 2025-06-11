@@ -26,6 +26,7 @@ Logs are available with `docker logs ghost-stories-bot` and additionally stored 
 ## Usage
 
 Send the bot a username, phone number or link to a story. The bot will fetch the available stories and return them to you. Premium users can monitor up to five profiles with `/monitor <@username|+15555555555>` and `/unmonitor <@username>`.
+Administrators browse stories with the same paginated interface to prevent large downloads from clogging the queue.
 
 After paying for Premium you can verify the transaction manually with:
 
