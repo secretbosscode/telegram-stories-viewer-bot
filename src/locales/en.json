@@ -29,6 +29,7 @@
   "cmd.status": "Show bot status",
   "cmd.restart": "Restart the bot",
   "cmd.flush": "Flush the download queue",
+  "cmd.welcome": "Show the initial welcome message",
   "msg.startFirst": "Please type /start first.",
   "msg.botStart": "👋 Please type /start to begin using the bot.",
   "msg.invalidInput": "🚫 Invalid input. Send `@username`, `+19875551234` or `https://t.me/username/s/1`. Type /help for more info.",

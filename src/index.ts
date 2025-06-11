@@ -133,6 +133,7 @@ function getAdminCommands(locale: string) {
     { command: 'status', description: t(locale, 'cmd.status') },
     { command: 'restart', description: t(locale, 'cmd.restart') },
     { command: 'flush', description: t(locale, 'cmd.flush') },
+    { command: 'welcome', description: t(locale, 'cmd.welcome') },
     { command: 'bugreport', description: t(locale, 'cmd.listbugs') },
     { command: 'bugs', description: t(locale, 'cmd.bugs') },
   ];
@@ -823,6 +824,18 @@ bot.command('flush', async (ctx) => {
     console.error('Error in /flush:', e);
     await ctx.reply(t(locale, 'error.generic'));
   }
+});
+
+bot.command('welcome', async (ctx) => {
+  if (ctx.from.id != BOT_ADMIN_ID) return;
+  const locale = ctx.from.language_code || 'en';
+  await ctx.reply(t(locale, 'msg.botStart'), {
+    reply_markup: {
+      keyboard: [['/start']],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+    },
+  });
 });
 
 // --- Handle button presses ---
