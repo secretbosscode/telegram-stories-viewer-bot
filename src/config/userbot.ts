@@ -60,7 +60,7 @@ export class Userbot {
 
 async function initClient() {
   const dataDir = path.dirname(DB_PATH);
-  const storeSessionPath = path.join(dataDir, 'userbot-session');
+  const storeSessionPath = path.resolve(dataDir, 'userbot-session');
   const storeSession = new StoreSession(storeSessionPath);
 
   const client = new TelegramClient(

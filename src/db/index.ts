@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { DownloadQueueItem, UserInfo } from 'types';
 
-export const DB_PATH = path.join(__dirname, '../../data/database.db');
+export const DB_PATH = path.resolve(__dirname, '../../data/database.db');
 const dataDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
