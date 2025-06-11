@@ -12,7 +12,7 @@ const getEnvVar = (key: string): string => {
 };
 
 /** Runtime mode */
-export const NODE_ENV = getEnvVar('NODE_ENV');
+export const NODE_ENV = process.env.NODE_ENV ?? parsed?.NODE_ENV ?? 'production';
 /** Dev mode */
 export const isDevEnv = NODE_ENV === 'development';
 /** Prod mode */

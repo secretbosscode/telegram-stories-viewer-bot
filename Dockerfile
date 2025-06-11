@@ -53,7 +53,6 @@ RUN yarn build
 # =========================================================================
 # Set up environment and permissions
 # =========================================================================
-ENV NODE_ENV=production
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
