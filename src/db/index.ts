@@ -6,17 +6,14 @@ import path from 'path';
 import { DownloadQueueItem, UserInfo } from 'types';
 
 /**
- * Base directory where all runtime data is stored. Defaults to a `data` folder
- * relative to the project when running locally. Set the DATA_DIR environment
- * variable (e.g. to `/data` inside the Docker container) to override.
+ * Base directory where all runtime data is stored inside the container.
+ * The Docker compose file mounts a persistent host directory to `/data`.
  */
-export const DATA_DIR =
-  process.env.DATA_DIR || path.resolve(__dirname, '../../data');
+export const DATA_DIR = '/data';
 export const DB_PATH = path.join(DATA_DIR, 'database.db');
 // Ensure the data directory exists before using it
-const dataDir = DATA_DIR;
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
 export const db = new SyncDatabase(DB_PATH);

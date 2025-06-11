@@ -1,11 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import cron from 'node-cron';
-import { DB_PATH, DATA_DIR } from '../db';
+import { DB_PATH } from '../db';
 
 // Place backups inside the main data directory so all runtime files
 // are grouped together under a single folder.
-const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const BACKUP_DIR = path.join('/data', 'backups');
 const KEEP_DAYS = 7;
 
 function ensureDir() {
