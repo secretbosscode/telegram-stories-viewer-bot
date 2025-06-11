@@ -107,5 +107,6 @@
   "bug.reported": "🐞 Bug segnalato, grazie!",
   "bug.cooldown": "⏳ Puoi segnalare un altro bug tra {{h}}h {{m}}m.",
   "bugs.none": "Nessun report di bug.",
-  "bugs.listHeader": "🐞 Report dei bug:"
+  "bugs.listHeader": "🐞 Report dei bug:",
+  "cmd.welcome": "Mostra il messaggio di benvenuto iniziale"
 }

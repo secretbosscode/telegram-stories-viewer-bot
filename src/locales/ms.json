@@ -107,5 +107,6 @@
   "bug.reported": "🐞 Pepijat dilaporkan, terima kasih!",
   "bug.cooldown": "⏳ Anda boleh melaporkan pepijat lagi dalam {{h}}h {{m}}m.",
   "bugs.none": "Tiada laporan pepijat.",
-  "bugs.listHeader": "🐞 Laporan pepijat:"
+  "bugs.listHeader": "🐞 Laporan pepijat:",
+  "cmd.welcome": "Tunjukkan mesej alu-aluan awal"
 }
