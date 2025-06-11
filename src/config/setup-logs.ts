@@ -1,10 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import util from 'util';
-import { DEBUG_LOG_FILE } from './env-config';
+import { DEBUG_LOG, DEBUG_LOG_FILE } from './env-config';
 
-// Only mirror logs to a file when DEBUG_LOG_FILE is provided
-if (DEBUG_LOG_FILE) {
+// Only mirror logs to a file when DEBUG_LOG is enabled
+if (DEBUG_LOG) {
   const logFile = DEBUG_LOG_FILE;
   const logDir = path.dirname(logFile);
   if (!fs.existsSync(logDir)) {
