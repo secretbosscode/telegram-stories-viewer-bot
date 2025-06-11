@@ -5,8 +5,15 @@ import fs from 'fs';
 import path from 'path';
 import { DownloadQueueItem, UserInfo } from 'types';
 
-export const DB_PATH = path.resolve(__dirname, '../../data/database.db');
-const dataDir = path.dirname(DB_PATH);
+/**
+ * Base directory where all runtime data is stored.
+ * Using a single constant helps avoid path resolution issues
+ * when the application is executed from different locations.
+ */
+export const DATA_DIR = path.resolve(__dirname, '../../data');
+export const DB_PATH = path.join(DATA_DIR, 'database.db');
+// Ensure the data directory exists before using it
+const dataDir = DATA_DIR;
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
