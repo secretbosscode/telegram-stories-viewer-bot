@@ -36,12 +36,12 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     const STORY_LIMIT_FOR_FREE_USERS = 5;
     let wasLimited = false;
 
-    // Pagination setup for premium users (non-admin) if too many stories
+    // Pagination setup for premium users (and admin) if too many stories
     const PER_PAGE = 5;
     let hasMorePages = false;
     const nextStories: Record<string, number[]> = {};
 
-    if (task.isPremium && !isAdmin && mapped.length > PER_PAGE) {
+    if ((task.isPremium || isAdmin) && mapped.length > PER_PAGE) {
       hasMorePages = true;
       const currentStories: MappedStoryItem[] = mapped.slice(0, PER_PAGE);
       for (let i = PER_PAGE; i < mapped.length; i += PER_PAGE) {
