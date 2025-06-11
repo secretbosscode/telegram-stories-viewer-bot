@@ -46,19 +46,24 @@ if (!BTC_WALLET_ADDRESS && !BTC_XPUB && !BTC_YPUB && !BTC_ZPUB) {
 }
 
 // error log file path
-export const LOG_FILE = process.env.LOG_FILE || parsed?.LOG_FILE || path.join(__dirname, '../../data/error.log');
+export const LOG_FILE = process.env.LOG_FILE || parsed?.LOG_FILE || path.join(
+  __dirname,
+  '../../data/error.log',
+);
 
-// debug log file path for verbose logging
+// verbose debugging
 /**
- * Path for verbose logs. If a relative path is supplied it is resolved from the
- * project root so it ends up alongside `LOG_FILE` in the mounted data volume.
+ * When `DEBUG_LOG` is truthy all console output is mirrored to
+ * `/app/data/debug.log` (inside the container). The path is fixed so the user
+ * does not need to provide it.
  */
-export const DEBUG_LOG_FILE = (() => {
-  let file = process.env.DEBUG_LOG_FILE || parsed?.DEBUG_LOG_FILE;
-  if (!file) {
-    file = path.join(__dirname, '../../data/debug.log');
-  } else if (!path.isAbsolute(file)) {
-    file = path.join(__dirname, '../../', file);
-  }
-  return file;
+export const DEBUG_LOG = (() => {
+  const flag = process.env.DEBUG_LOG ?? parsed?.DEBUG_LOG ?? '';
+  return ['1', 'true', 'yes'].includes(String(flag).toLowerCase());
 })();
+
+// Debug log file path is always relative to the application data directory
+export const DEBUG_LOG_FILE = path.join(
+  __dirname,
+  '../../data/debug.log',
+);
