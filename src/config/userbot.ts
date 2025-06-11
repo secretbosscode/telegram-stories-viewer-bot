@@ -1,5 +1,6 @@
 import { TelegramClient } from 'telegram';
-import { StoreSession } from 'telegram/sessions';
+import { StringSession } from 'telegram/sessions';
+import fs from 'fs';
 import readline from 'readline';
 import path from 'path';
 
@@ -58,12 +59,16 @@ export class Userbot {
 }
 
 async function initClient() {
-  // Store the userbot session alongside the main database and other data
-  const storeSessionPath = path.resolve('/data', 'userbot-session');
-  const storeSession = new StoreSession(storeSessionPath);
+  // Load the stored session string from /data if it exists
+  const sessionFile = path.join('/data', 'userbot-session');
+  let sessionStr = '';
+  try {
+    sessionStr = fs.readFileSync(sessionFile, 'utf8');
+  } catch {}
+  const stringSession = new StringSession(sessionStr);
 
   const client = new TelegramClient(
-    storeSession,
+    stringSession,
     USERBOT_API_ID,
     USERBOT_API_HASH,
     {
@@ -101,7 +106,13 @@ async function initClient() {
   });
 
   console.log('You should now be connected.');
-  console.log(client.session.save()); // Save the session to avoid logging in again
+  const saved = client.session.save() as unknown as string;
+  console.log(saved); // Save the session to avoid logging in again
+  try {
+    fs.writeFileSync(sessionFile, saved);
+  } catch (err) {
+    console.error('[Userbot] Failed to write session', err);
+  }
   await client.sendMessage('me', { message: 'Hi!' });
   return client;
 }
