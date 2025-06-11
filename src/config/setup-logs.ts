@@ -11,18 +11,24 @@ if (DEBUG_LOG_FILE) {
     fs.mkdirSync(logDir, { recursive: true });
   }
 
+  const originalConsole = {
+    log: console.log.bind(console),
+    error: console.error.bind(console),
+    warn: console.warn.bind(console),
+  } as const;
+
   function writeLog(message: string): void {
     const entry = `[${new Date().toISOString()}] ${message}\n`;
     try {
       fs.appendFileSync(logFile, entry);
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('Failed to write debug log', err);
+      originalConsole.error('Failed to write debug log', err);
     }
   }
 
   (['log', 'error', 'warn'] as const).forEach((method) => {
-    const original = console[method].bind(console);
+    const original = originalConsole[method];
     console[method] = (...args: any[]) => {
       const formatted = util.format(...args);
       writeLog(formatted);
