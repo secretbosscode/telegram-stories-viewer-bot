@@ -49,4 +49,14 @@ if (!BTC_WALLET_ADDRESS && !BTC_XPUB && !BTC_YPUB && !BTC_ZPUB) {
 export const LOG_FILE = process.env.LOG_FILE || parsed?.LOG_FILE || path.join(__dirname, '../../data/error.log');
 
 // debug log file path for verbose logging
-export const DEBUG_LOG_FILE = process.env.DEBUG_LOG_FILE || parsed?.DEBUG_LOG_FILE || '';
+/**
+ * Path for verbose logs. If a relative path is supplied it is resolved from the
+ * project root so it ends up alongside `LOG_FILE` in the mounted data volume.
+ */
+export const DEBUG_LOG_FILE = (() => {
+  const file = process.env.DEBUG_LOG_FILE || parsed?.DEBUG_LOG_FILE || '';
+  if (file && !path.isAbsolute(file)) {
+    return path.join(__dirname, '../../', file);
+  }
+  return file;
+})();

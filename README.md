@@ -11,7 +11,7 @@ This project packages a Telegram bot for anonymously viewing stories. It is base
    - Optionally `USERBOT_PASSWORD` if that account has two‑factor authentication enabled
    - Leave `USERBOT_PHONE_CODE` empty on the first run
    - Fill in `BOT_ADMIN_ID` and either `BTC_WALLET_ADDRESS` or one of `BTC_XPUB`, `BTC_YPUB`, `BTC_ZPUB`
-   - Optional: `LOG_FILE` and `DEBUG_LOG_FILE` to change where runtime errors are stored
+   - Optional: `LOG_FILE` and `DEBUG_LOG_FILE` to change where runtime errors are stored. If `DEBUG_LOG_FILE` is a relative path, it is created inside the container's data directory.
 
 2. Build and start the container:
 
@@ -21,7 +21,7 @@ docker compose up
 
 The compose file sets `stdin_open: true` and `tty: true` so you can enter the SMS code in the terminal on the first run. When the container prints `USERBOT_PHONE_CODE is required for first login!`, type the code you receive from Telegram. After the session is saved to `storage_entry/userbot-session`, future starts do not require a code and you can run in detached mode with `docker compose up -d`.
 
-Logs are available with `docker logs ghost-stories-bot` and additionally stored in the file pointed to by `LOG_FILE`.
+Logs are available with `docker logs ghost-stories-bot` and additionally stored in the file pointed to by `LOG_FILE`. When `DEBUG_LOG_FILE` is set, all console output is mirrored to that path for troubleshooting.
 
 ## Usage
 
