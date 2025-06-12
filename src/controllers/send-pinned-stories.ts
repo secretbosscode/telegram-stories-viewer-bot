@@ -5,6 +5,7 @@ import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
 import { chunkMediafiles, timeout, sendTemporaryMessage } from 'lib';
 import { Markup } from 'telegraf';
+import { t } from "lib/i18n";
 import { Api } from 'telegram';
 
 // CORRECTED: Import InlineKeyboardButton for precise typing (if Markup.inlineKeyboard uses it explicitly in its return type)
@@ -85,7 +86,7 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     await sendTemporaryMessage(
       bot,
       task.chatId!,
-      '⏳ Downloading Pinned stories...'
+      t(task.locale, 'pinned.downloading')
     ).catch((err) => {
       console.error(
         `[SendPinnedStories] Failed to send 'Downloading Pinned stories' message to ${task.chatId}:`,
@@ -115,7 +116,7 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
       await sendTemporaryMessage(
         bot,
         task.chatId!,
-        `📥 ${uploadableStories.length} Pinned stories downloaded successfully!\n⏳ Uploading stories to Telegram...`
+        t(task.locale, 'pinned.uploading', { count: uploadableStories.length })
       ).catch((err) => {
         console.error(
           `[SendPinnedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
@@ -186,14 +187,14 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
         );
         await bot.telegram.sendMessage(
           task.chatId!,
-          'Select the next batch of pinned stories:',
+          t(task.locale, 'pinned.selectNext'),
           Markup.inlineKeyboard(keyboard),
         );
       }
     } else {
       await bot.telegram.sendMessage(
         task.chatId,
-        '❌ No Pinned stories could be sent. They might be too large or none were found.'
+        t(task.locale, 'pinned.none')
       );
     }
 
@@ -202,9 +203,7 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
         await timeout(1000);
         await bot.telegram.sendMessage(
             task.chatId,
-            `💎 You have reached the free limit of **${STORY_LIMIT_FOR_FREE_USERS} stories**.\n\n` +
-            `To download all stories from this user and enjoy unlimited access, please upgrade to Premium!\n\n` +
-            `👉 Run the **/premium** command to learn more.`,
+            t(task.locale, 'pinned.limitReached', { limit: STORY_LIMIT_FOR_FREE_USERS }),
             { parse_mode: 'Markdown' }
         );
     }
@@ -223,10 +222,9 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     } as NotifyAdminParams);
     console.error(`[SendPinnedStories] [${task.link}] CRITICAL error occurred:`, error);
     try {
-        await bot.telegram.sendMessage(task.chatId, ' An error occurred while processing pinned stories. The admin has been notified.');
+        await bot.telegram.sendMessage(task.chatId, t(task.locale, 'pinned.error'));
     } catch (e) { /* ignore */}
     throw error;
-  } finally {
     console.log(`[SendPinnedStories] [${task.link}] Function execution complete.`);
   }
 }

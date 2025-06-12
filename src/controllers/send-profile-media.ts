@@ -3,6 +3,7 @@ import { bot } from 'index';
 import { sendTemporaryMessage, chunkArray, getEntityWithTempContact } from 'lib';
 import { Api } from 'telegram';
 import { notifyAdmin } from 'controllers/send-message';
+import { t } from "lib/i18n";
 import { User } from 'telegraf/typings/core/types/typegram';
 // No need for the private _downloadPhoto helper; use downloadMedia instead
 
@@ -43,7 +44,7 @@ export async function sendProfileMedia(
       if (limit !== undefined && photos.length >= limit) break;
     }
     if (!photos.length) {
-      await bot.telegram.sendMessage(chatId, 'No profile media found.');
+      await bot.telegram.sendMessage(chatId, t(user?.language_code || '', 'profile.none'));
       return;
     }
 
@@ -69,7 +70,7 @@ export async function sendProfileMedia(
       await sendTemporaryMessage(
         bot,
         chatId,
-        `📸 Sent ${sendAlbum.length} profile media item(s) of ${input}`,
+        t(user?.language_code || '', 'profile.sent', { count: sendAlbum.length, user: input }),
       );
       notifyAdmin({
         status: 'info',
@@ -77,12 +78,12 @@ export async function sendProfileMedia(
         task: { chatId: String(chatId), user } as any,
       });
     } else {
-      await bot.telegram.sendMessage(chatId, 'Failed to download profile media.');
+      await bot.telegram.sendMessage(chatId, t(user?.language_code || '', 'profile.downloadError'));
     }
   } catch (e) {
     console.error('[sendProfileMedia] Error:', e);
     notifyAdmin({ status: 'error', errorInfo: { cause: e } });
-    await bot.telegram.sendMessage(chatId, 'Error retrieving profile media.');
+    await bot.telegram.sendMessage(chatId, t(user?.language_code || '', 'profile.error'));
   }
 }
 

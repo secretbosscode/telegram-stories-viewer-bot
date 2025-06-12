@@ -21,6 +21,7 @@ import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
 import { sendTemporaryMessage } from 'lib';
 import { UserInfo, DownloadQueueItem, SendStoriesFxParams } from 'types';
+import { t } from 'lib/i18n';
 import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 
@@ -36,13 +37,13 @@ function formatEta(seconds: number): string {
   return `${m}m ${s}s`;
 }
 
-export async function getQueueStatusForUser(telegram_id: string): Promise<string> {
+export async function getQueueStatusForUser(telegram_id: string, locale = 'en'): Promise<string> {
   const jobId = await findPendingJobFx(telegram_id);
   if (!jobId) {
-    return '✅ You have no items in the queue.';
+    return t(locale, 'queue.empty');
   }
   const { position, eta } = await getQueueStatsFx(jobId);
-  return `⏳ Queue position: ${position}. Estimated wait ${formatEta(eta)}.`;
+  return t(locale, 'queue.position', { position, eta: formatEta(eta) });
 }
 
 function getCooldownHours({ isPremium, isAdmin }: { isPremium?: boolean; isAdmin?: boolean }) {
@@ -65,7 +66,7 @@ export async function handleNewTask(user: UserInfo) {
         await sendTemporaryMessage(
           bot,
           telegram_id,
-          '🚫 Too many requests, please slow down.',
+          t(user.locale, 'queue.rateLimit'),
         );
         return;
       }
@@ -75,7 +76,7 @@ export async function handleNewTask(user: UserInfo) {
         await sendTemporaryMessage(
           bot,
           telegram_id,
-          '🚫 You already have too many pending requests.',
+          t(user.locale, 'queue.pendingLimit'),
         );
         return;
       }
@@ -91,7 +92,7 @@ export async function handleNewTask(user: UserInfo) {
         await sendTemporaryMessage(
           bot,
           telegram_id,
-          `⏳ You can request stories for "${target_username}" once every ${cooldown} hours.\nTry again in ${h}h ${m}m.`,
+          t(user.locale, 'queue.cooldown', { user: target_username, hours: cooldown, h, m }),
         );
         return;
       }
@@ -101,7 +102,7 @@ export async function handleNewTask(user: UserInfo) {
       await sendTemporaryMessage(
         bot,
         telegram_id,
-        `⚠️ This download is already in the queue.`
+        t(user.locale, 'queue.already')
       );
       return;
     }
@@ -126,13 +127,13 @@ export async function handleNewTask(user: UserInfo) {
     await sendTemporaryMessage(
       bot,
       telegram_id,
-      `✅ Your request for ${target_username} has been queued!\nPosition: ${position} | ETA: ${formatEta(eta)}`,
+      t(user.locale, 'queue.enqueued', { user: target_username, position, eta: formatEta(eta) }),
     );
     
     setImmediate(processQueue);
   } catch(e: any) {
     console.error('[handleNewTask] Error during task validation/enqueueing:', e);
-    await bot.telegram.sendMessage(telegram_id, `❌ An error occurred while queueing your request.`);
+      await bot.telegram.sendMessage(telegram_id, t(user.locale, 'queue.enqueueError'));
   }
 }
 
@@ -166,7 +167,7 @@ export async function processQueue() {
     await sendTemporaryMessage(
       bot,
       job.chatId,
-      `❌ Your download for ${currentTask.link} failed. Reason: Processing timeout`
+      t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link })
     );
     isProcessing = false;
     setImmediate(processQueue);
@@ -194,7 +195,13 @@ export async function processQueue() {
     if (!timedOut) {
       console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
       await markErrorFx({ jobId: job.id, message: err?.message || 'Unknown processing error' });
-      await bot.telegram.sendMessage(job.chatId, `❌ Your download for ${currentTask.link} failed. Reason: ${err?.message || 'Unknown error'}`);
+      await bot.telegram.sendMessage(
+        job.chatId,
+        t(currentTask.locale, 'queue.processingError', {
+          user: currentTask.link,
+          reason: err?.message || 'Unknown error',
+        })
+      );
     }
   } finally {
     clearTimeout(timeoutId);

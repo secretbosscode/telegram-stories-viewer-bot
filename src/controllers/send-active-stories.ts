@@ -5,6 +5,7 @@ import { bot } from 'index'; // Corrected path to use tsconfig alias
 import { chunkMediafiles, sendTemporaryMessage } from 'lib';
 import { Markup } from 'telegraf';
 import { Api } from 'telegram';
+import { t } from "lib/i18n";
 
 // CORRECTED: Import InlineKeyboardButton for precise typing
 import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram'; // <--- This import is key for fixing TS2724
@@ -64,7 +65,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     await sendTemporaryMessage(
       bot,
       task.chatId,
-      `⏳ Downloading Active stories from ${task.link}...`
+      t(task.locale, 'active.downloading', { user: task.link })
     ).catch((err) => {
       console.error(
         `[sendActiveStories] Failed to send 'Downloading Active stories' message to ${task.chatId}:`,
@@ -85,7 +86,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       await sendTemporaryMessage(
         bot,
         task.chatId,
-        `📥 ${uploadableStories.length} Active stories from ${task.link} downloaded successfully!\n⏳ Uploading stories to Telegram...`
+        t(task.locale, 'active.uploading', { count: uploadableStories.length, user: task.link })
       ).catch((err) => {
         console.error(
           `[sendActiveStories] Failed to send 'Uploading' message to ${task.chatId}:`,
@@ -120,7 +121,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     } else {
       await bot.telegram.sendMessage(
         task.chatId,
-        '❌ Cannot download Active stories, most likely they are too large to send via bot.'
+        t(task.locale, 'active.none')
       );
     }
 
@@ -144,7 +145,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       await sendTemporaryMessage(
         bot,
         task.chatId,
-        `Uploaded ${PER_PAGE}/${stories.length} active stories from ${task.link} ✅`,
+        t(task.locale, 'active.uploadedBatch', { sent: PER_PAGE, total: stories.length, user: task.link }),
         Markup.inlineKeyboard(keyboard)
       );
     }
@@ -165,7 +166,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       await bot.telegram
         .sendMessage(
           task.chatId,
-          'An error occurred while sending stories. The admin has been notified.'
+          t(task.locale, 'active.error')
         )
         .catch((err) => {
           console.error(
