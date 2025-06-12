@@ -19,7 +19,7 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
     await sendTemporaryMessage(
       bot,
       task.chatId,
-      '⏳ Fetching story lists...'
+      t(task.locale, 'stories.fetchingList')
     );
 
     const client = await Userbot.getInstance();
@@ -105,12 +105,12 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
     }
     if (error instanceof FloodWaitError) {
       const seconds = error.seconds || 60;
-      return `⚠️ Too many requests. Please wait about ${Math.ceil(seconds / 60)} minute(s).`;
+        return t(task.locale, 'stories.floodWait', { minutes: Math.ceil(seconds / 60) });
     }
-    if (error.message?.includes('No user corresponding to')) {
-      return `🚫 User "${task.link}" not found. Please check the username.`;
+      if (error.message?.includes('No user corresponding to')) {
+        return t(task.locale, 'stories.userNotFound', { user: task.link });
     }
-    return `🚫 Error fetching stories for "${task.link}". User may not exist or have public stories.`;
+        return t(task.locale, 'stories.errorGeneric', { user: task.link });
   }
 });
 
@@ -123,24 +123,24 @@ export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
     await sendTemporaryMessage(
       bot,
       task.chatId,
-      '⏳ Fetching specific story...'
+      t(task.locale, 'stories.fetchingSpecific')
     );
 
     const client = await Userbot.getInstance();
 
     if (!isValidStoryLink(task.link)) {
-      return '🚫 Invalid story link format. Expected format: t.me/username/s/id';
+      return t(task.locale, 'stories.invalidLinkFormat');
     }
 
     const match = /^(?:https?:\/\/)?t\.me\/([^\/]+)\/s\/(\d+)/i.exec(task.link.trim());
     if (!match) {
-      return '🚫 Invalid story link. Could not parse username/channel or story ID.';
+      return t(task.locale, 'stories.invalidLinkParse');
     }
     const usernameOrChannelId = match[1];
     const storyId = Number(match[2]);
 
     if (!usernameOrChannelId || isNaN(storyId)) {
-      return '🚫 Invalid story link. Could not parse username/channel or story ID.';
+      return t(task.locale, 'stories.invalidLinkParse');
     }
 
     console.log(`[GetStories] Fetching particular story for ${usernameOrChannelId}, story ID: ${storyId}`);
@@ -152,7 +152,7 @@ export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
     );
 
     if (storyData.stories.length === 0) {
-      return `🚫 Story with ID ${storyId} not found for "${usernameOrChannelId}"!`;
+      return t(task.locale, 'stories.storyNotFound', { id: storyId, user: usernameOrChannelId });
     }
 
     return {
@@ -164,11 +164,11 @@ export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
     console.error(`[GetStories] ERROR in getParticularStoryFx for ${task.link}:`, error);
     if (error instanceof FloodWaitError) {
       const seconds = error.seconds || 60;
-      return `⚠️ Too many requests. Please wait about ${Math.ceil(seconds / 60)} minute(s).`;
+        return t(task.locale, 'stories.floodWait', { minutes: Math.ceil(seconds / 60) });
     }
     if (error.message?.includes('No user corresponding to')) {
-      return `🚫 User/Channel for story link "${task.link}" not found.`;
+        return t(task.locale, 'stories.userNotFound', { user: task.link });
     }
-    return `🚫 Error fetching specific story: ${task.link}. Link might be invalid or story deleted.`;
+      return t(task.locale, 'stories.errorGeneric', { user: task.link });
   }
 });

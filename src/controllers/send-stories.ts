@@ -4,6 +4,7 @@ import { createEffect } from 'effector';
 import { timeout } from 'lib';
 import { sendTemporaryMessage } from 'lib/helpers';
 import { Api } from 'telegram';
+import { t } from "lib/i18n";
 import { bot } from 'index'; // Import the bot instance for sending messages
 
 // Types are correctly imported from a central file.
@@ -77,10 +78,17 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       // =========================================================================
       if (storiesWereSent) {
         // If we actually sent one or more stories, send the completion message.
-        await sendTemporaryMessage(bot, task.chatId, `🎉 Download for ${task.link} completed!`);
+        await sendTemporaryMessage(
+          bot,
+          task.chatId,
+          t(task.locale, 'stories.completed', { link: task.link })
+        );
       } else {
         // If we went through all the logic and sent nothing, inform the user.
-        await bot.telegram.sendMessage(task.chatId, `🤷 No public stories found for ${task.link}.`);
+        await bot.telegram.sendMessage(
+          task.chatId,
+          t(task.locale, 'stories.noneFound', { link: task.link })
+        );
       }
 
     } catch (error: any) {

@@ -2,6 +2,7 @@
 
 import { bot } from 'index'; // Corrected path to use tsconfig alias
 import { Api } from 'telegram';
+import { t } from "lib/i18n";
 import { sendTemporaryMessage } from 'lib';
 
 // CORRECTED: Import types from your central types.ts file
@@ -26,7 +27,7 @@ export async function sendParticularStory({
 
   try {
     // Notify user that download is starting
-    await sendTemporaryMessage(bot, task.chatId, '⏳ Downloading...').catch(
+    await sendTemporaryMessage(bot, task.chatId, t(task.locale, 'download.downloading')).catch(
       (err) => {
         console.error(
           `[sendParticularStory] Failed to send 'Downloading' message to ${task.chatId}:`,
@@ -45,7 +46,7 @@ export async function sendParticularStory({
       await sendTemporaryMessage(
         bot,
         task.chatId,
-        '⏳ Uploading to Telegram...'
+        t(task.locale, 'download.uploading')
       ).catch((err) => {
         console.error(
           `[sendParticularStory] Failed to send 'Uploading' message to ${task.chatId}:`,
@@ -66,7 +67,7 @@ export async function sendParticularStory({
     } else {
       // Notify user if download failed
       await bot.telegram
-        .sendMessage(task.chatId, '❌ Could not retrieve the requested story.')
+        .sendMessage(task.chatId, t(task.locale, 'download.noStory'))
         .catch((err) => {
           console.error(
             `[sendParticularStory] Failed to notify ${task.chatId} about retrieval error:`,
@@ -92,7 +93,7 @@ export async function sendParticularStory({
       await bot.telegram
         .sendMessage(
           task.chatId,
-          'An error occurred while sending this story. The admin has been notified.'
+          t(task.locale, 'pinned.error')
         )
         .catch((err) => {
           console.error(

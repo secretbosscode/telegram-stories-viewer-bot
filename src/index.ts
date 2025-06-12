@@ -411,7 +411,7 @@ bot.command('verify', async (ctx) => {
 bot.command('queue', async (ctx) => {
   const locale = ctx.from.language_code || 'en';
   if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
-  const msg = await getQueueStatusForUser(String(ctx.from.id));
+  const msg = await getQueueStatusForUser(String(ctx.from.id), locale);
   await sendTemporaryMessage(bot, ctx.chat!.id, msg);
 });
 

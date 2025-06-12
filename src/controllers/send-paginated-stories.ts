@@ -3,6 +3,7 @@
 import { bot } from 'index'; // Corrected path to use tsconfig alias
 import { Api } from 'telegram';
 import { sendTemporaryMessage } from 'lib';
+import { t } from "lib/i18n";
 
 // CORRECTED: Import types from your central types.ts file
 import { SendPaginatedStoriesArgs, MappedStoryItem, NotifyAdminParams } from 'types'; // <--- Corrected import path & added MappedStoryItem, NotifyAdminParams
@@ -26,7 +27,7 @@ export async function sendPaginatedStories({
 
   try {
     // Notify user that download is starting
-    await sendTemporaryMessage(bot, task.chatId, '⏳ Downloading...').catch(
+    await sendTemporaryMessage(bot, task.chatId, t(task.locale, 'download.downloading')).catch(
       (err) => {
         console.error(
           `[sendPaginatedStories] Failed to send 'Downloading' message to ${task.chatId}:`,
@@ -60,7 +61,7 @@ export async function sendPaginatedStories({
       await sendTemporaryMessage(
         bot,
         task.chatId,
-        '❌ Download timed out. Please try again later.'
+        t(task.locale, 'download.timedOut')
       ).catch(() => {/* ignore */});
       throw err;
     }
@@ -75,7 +76,7 @@ export async function sendPaginatedStories({
       await sendTemporaryMessage(
         bot,
         task.chatId,
-        '⏳ Uploading to Telegram...'
+        t(task.locale, 'download.uploading')
       ).catch((err) => {
         console.error(
           `[sendPaginatedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
@@ -111,7 +112,7 @@ export async function sendPaginatedStories({
       await bot.telegram
         .sendMessage(
           task.chatId,
-          '❌ No paginated stories could be sent. They might be too large or none were found.'
+          t(task.locale, 'pinned.none')
         )
         .catch((err) => {
           console.error(
@@ -138,7 +139,7 @@ export async function sendPaginatedStories({
       await bot.telegram
         .sendMessage(
           task.chatId,
-          'An error occurred while sending these stories. The admin has been notified.'
+          t(task.locale, 'pinned.error')
         )
         .catch((err) => {
           console.error(
