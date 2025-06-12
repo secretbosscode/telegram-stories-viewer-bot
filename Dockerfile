@@ -2,13 +2,13 @@
 # Stage 1: The "Builder" - Compile a secure `gosu` binary from source
 # =========================================================================
 # Use the official Go image based on Debian Bookworm to perfectly match our final image's OS.
-FROM golang:1.24-alpine as builder
+FROM golang:1.24-alpine AS builder
 
 # Install git, which is needed to clone the gosu source code.
 RUN apk add --no-cache git
 
 # Set the version of gosu we want to build. 1.17 is the latest stable version.
-ENV GOSU_VERSION 1.17
+ENV GOSU_VERSION=1.17
 
 # Clone the gosu repository, check out the specific version tag...
 RUN git clone https://github.com/tianon/gosu.git /gosu
