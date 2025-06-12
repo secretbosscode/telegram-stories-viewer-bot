@@ -33,23 +33,25 @@ jobs:
       - name: Extract version and tags
         id: vars
         run: |
+          BRANCH_NAME=$(echo "${GITHUB_REF#refs/heads/}" | tr '/' '-')
           TAG_NAME=""
-          if [[ $GITHUB_REF == refs/tags/v* ]]; then
-            TAG_NAME="${GITHUB_REF#refs/tags/}"
-          else
+
+          # Try to get the latest tag; fallback if none found
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
             TAG_NAME=$(git describe --tags --abbrev=0)
+          else
+            TAG_NAME="0.0.0"
           fi
 
-          BRANCH_NAME=$(echo "${GITHUB_REF#refs/heads/}" | tr '/' '-')
           TAGS=""
 
-          if [[ $BRANCH_NAME == "main" ]]; then
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+            TAGS="telix5000/telegram-story-bot:${VERSION} telix5000/telegram-story-bot:latest"
+          elif [[ "$BRANCH_NAME" == "main" ]]; then
             TAGS="telix5000/telegram-story-bot:${TAG_NAME} telix5000/telegram-story-bot:latest"
-          elif [[ $BRANCH_NAME == "development" ]]; then
+          elif [[ "$BRANCH_NAME" == "development" ]]; then
             TAGS="telix5000/telegram-story-bot:dev-${TAG_NAME}"
-          elif [[ $GITHUB_REF == refs/tags/v* ]]; then
-            # If triggered by an actual tag push
-            TAGS="telix5000/telegram-story-bot:${TAG_NAME} telix5000/telegram-story-bot:latest"
           fi
 
           echo "version=$TAG_NAME" >> $GITHUB_OUTPUT
