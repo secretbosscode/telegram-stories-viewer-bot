@@ -38,6 +38,7 @@
   "premium.already": "✅ You already have Premium access.",
   "premium.freeTrialUsed": "❌ You have already used your free trial.",
   "premium.freeTrialActivated": "🎉 Free trial activated! You now have Premium access for 7 days.",
+  "premium.info": "🌟 *Premium Access*\n\nPremium users get:\n✅ Unlimited story downloads\n✅ Monitor up to {{limit}} users' active stories\n✅ No cooldowns or waiting in queues\n\nRun `/upgrade` to unlock Premium features.\nYou will receive a unique payment address. Invoices expire after one hour.",
   "verify.usage": "Usage: /verify <txid>",
   "verify.invalidArgs": "Invalid arguments.",
   "verify.wait": "⏳ Please wait {{seconds}}s before verifying again.",

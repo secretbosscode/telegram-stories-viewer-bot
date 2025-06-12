@@ -25,6 +25,7 @@ jest.mock('../src/services/monitor-service', () => ({ MAX_MONITORS_PER_USER: 5 }
 
 import { handlePremium } from '../src/controllers/premium';
 import { IContextBot } from '../src/config/context-interface';
+import { t } from '../src/lib/i18n';
 
 describe('handlePremium', () => {
   test('sends temporary message for existing premium users', async () => {
@@ -32,6 +33,6 @@ describe('handlePremium', () => {
 
     await handlePremium(ctx);
 
-    expect(sendTemporaryMessage).toHaveBeenCalledWith(bot, 1, '✅ You already have Premium access.');
+    expect(sendTemporaryMessage).toHaveBeenCalledWith(bot, 1, t('en', 'premium.already'));
   });
 });

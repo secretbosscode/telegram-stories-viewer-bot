@@ -37,7 +37,7 @@ import {
 } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
-import { saveUser } from './repositories/user-repository';
+import { saveUser, findUserById } from './repositories/user-repository';
 import {
   isUserPremium,
   addPremiumUser,
@@ -256,7 +256,8 @@ bot.start(async (ctx) => {
       if (total % 5 === 0) {
         extendPremium(inviter, 7);
         try {
-          await ctx.telegram.sendMessage(inviter, t('en', 'referral.fiveUsers'));
+          const inviterLang = findUserById(inviter)?.language;
+          await ctx.telegram.sendMessage(inviter, t(inviterLang, 'referral.fiveUsers'));
         } catch {}
       }
     }
@@ -382,7 +383,8 @@ bot.command('verify', async (ctx) => {
       extendPremium(inviter, daysAdded);
       markReferralPaidRewarded(String(ctx.from.id));
       try {
-        await ctx.telegram.sendMessage(inviter, t('en', 'referral.paid', { days: daysAdded }));
+        const inviterLang = findUserById(inviter)?.language;
+        await ctx.telegram.sendMessage(inviter, t(inviterLang, 'referral.paid', { days: daysAdded }));
       } catch {}
     }
     if (ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
