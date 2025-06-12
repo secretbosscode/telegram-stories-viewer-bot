@@ -7,7 +7,7 @@
   "cmd.start": "사용방법 보기",
   "cmd.help": "도움말 보기",
   "cmd.premium": "프리미엄 기능 정보",
-  "cmd.upgrade": "프리미엄으로 업그레이드",
+  "cmd.upgrade": "프리미엄으로 업그레이드 - BTC를 더 지불하면 추가 기간 제공",
   "cmd.freetrial": "7일 프리미엄 체험",
   "cmd.verify": "결제 수동 확인",
   "cmd.queue": "대기열 상태 보기",

@@ -42,6 +42,9 @@ export async function handleUpgrade(ctx: IContextBot): Promise<void> {
         'Once paid, run `/verify <txid>` within one hour to confirm.',
         "The txid (transaction hash) is shown in your wallet's transaction details.",
         'Example: `2d339983a78206050b4d70c15c5e14a3553438b25caedebdf2bb2f7162e33d59`',
+        '',
+        'Paying more than the above amount will credit extra days based on the current BTC value.',
+        'For example: paying double grants 60 days, paying triple grants 90 days.',
       ].join('\n');
       await sendTemporaryMessage(
         bot,
@@ -70,6 +73,9 @@ export async function handleUpgrade(ctx: IContextBot): Promise<void> {
       'Once paid, run `/verify <txid>` within one hour to confirm.',
       "The txid (transaction hash) is shown in your wallet's transaction details.",
       'Example: `2d339983a78206050b4d70c15c5e14a3553438b25caedebdf2bb2f7162e33d59`',
+      '',
+      'Paying more than the above amount will credit extra days based on the current BTC value.',
+      'For example: paying double grants 60 days, paying triple grants 90 days.',
     ].join('\n');
     await sendTemporaryMessage(
       bot,
