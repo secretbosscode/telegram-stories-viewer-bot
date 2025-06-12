@@ -3,6 +3,7 @@ import { MAX_MONITORS_PER_USER } from 'services/monitor-service';
 import { isUserPremium } from 'services/premium-service';
 import { sendTemporaryMessage } from 'lib';
 import { bot } from 'index';
+import { t } from 'lib/i18n';
 
 /**
  * Handle the `/premium` command.
@@ -10,18 +11,12 @@ import { bot } from 'index';
  */
 export async function handlePremium(ctx: IContextBot): Promise<void> {
   const userId = String(ctx.from!.id);
+  const locale = ctx.from?.language_code || 'en';
   if (isUserPremium(userId)) {
-    await sendTemporaryMessage(bot, ctx.chat!.id, '✅ You already have Premium access.');
+    await sendTemporaryMessage(bot, ctx.chat!.id, t(locale, 'premium.already'));
     return;
   }
-  await ctx.reply(
-    '🌟 *Premium Access*\n\n' +
-      'Premium users get:\n' +
-      '✅ Unlimited story downloads\n' +
-      `✅ Monitor up to ${MAX_MONITORS_PER_USER} users' active stories\n` +
-      '✅ No cooldowns or waiting in queues\n\n' +
-      'Run `/upgrade` to unlock Premium features.\n' +
-      'You will receive a unique payment address. Invoices expire after one hour.',
-    { parse_mode: 'Markdown' },
-  );
+  await ctx.reply(t(locale, 'premium.info', { limit: MAX_MONITORS_PER_USER }), {
+    parse_mode: 'Markdown',
+  });
 }
