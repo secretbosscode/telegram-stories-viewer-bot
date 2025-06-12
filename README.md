@@ -71,6 +71,7 @@ After paying for Premium you can verify the transaction manually with:
 The application is written in TypeScript. If you wish to run tests or build locally, install Node.js and run:
 
 ```bash
+npm install -g npm@11.4.1
 npm install --legacy-peer-deps
 npm test
 ```

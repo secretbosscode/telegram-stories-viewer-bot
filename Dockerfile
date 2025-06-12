@@ -31,6 +31,9 @@ COPY --from=builder /usr/local/bin/gosu /usr/local/bin/gosu
 # Install only the remaining system dependencies.
 RUN apk add --no-cache sqlite sqlite-dev python3 make g++ shadow
 
+# Ensure the latest npm is installed to avoid upgrade notices
+RUN npm install -g npm@11.4.1
+
 #RUN apk add --no-cache sqlite sqlite-dev python3 make g++
 
 # Set the working directory inside the container.
