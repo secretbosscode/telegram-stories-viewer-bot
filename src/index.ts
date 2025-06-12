@@ -367,8 +367,8 @@ bot.command('verify', async (ctx) => {
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   if (!isAdmin) {
     const last = await getLastVerifyAttemptFx(String(ctx.from.id));
-    if (last && Math.floor(Date.now() / 1000) - last < 60) {
-      const wait = 60 - (Math.floor(Date.now() / 1000) - last);
+    if (last && Math.floor(Date.now() / 1000) - last < 300) {
+      const wait = 300 - (Math.floor(Date.now() / 1000) - last);
       return ctx.reply(t(locale, 'verify.wait', { seconds: wait }));
     }
     await updateVerifyAttemptFx(String(ctx.from.id));
@@ -984,7 +984,6 @@ async function startApp() {
   startMonitorLoop();
   resumePendingChecks();
   scheduleDatabaseBackups();
-  // Session cleanup has been disabled due to potential side effects.
   await bot.telegram.setMyCommands(getBaseCommands('en'));
   await bot.telegram.setMyCommands(
     [...getBaseCommands('en'), ...getPremiumCommands('en'), ...getAdminCommands('en')],

@@ -11,6 +11,30 @@ if (DEBUG_LOG) {
     fs.mkdirSync(logDir, { recursive: true });
   }
 
+  function rotateLogs() {
+    if (fs.existsSync(logFile)) {
+      const stats = fs.statSync(logFile);
+      const dateStr = stats.mtime.toISOString().slice(0, 10);
+      const rotated = path.join(logDir, `debug-${dateStr}.log`);
+      if (!fs.existsSync(rotated)) {
+        fs.renameSync(logFile, rotated);
+      }
+    }
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const name of fs.readdirSync(logDir)) {
+      if (/^debug-\d{4}-\d{2}-\d{2}\.log$/.test(name)) {
+        const file = path.join(logDir, name);
+        try {
+          if (fs.statSync(file).mtime.getTime() < cutoff) {
+            fs.unlinkSync(file);
+          }
+        } catch {}
+      }
+    }
+  }
+
+  rotateLogs();
+
   const originalConsole = {
     log: console.log.bind(console),
     error: console.error.bind(console),
