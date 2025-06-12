@@ -71,8 +71,8 @@ After paying for Premium you can verify the transaction manually with:
 The application is written in TypeScript. If you wish to run tests or build locally, install Node.js and run:
 
 ```bash
-yarn install
-yarn test
+npm install --legacy-peer-deps
+npm test
 ```
 
 ---
