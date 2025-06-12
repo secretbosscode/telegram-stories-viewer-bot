@@ -30,16 +30,26 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract version
+      - name: Extract version and target tag
         id: vars
         run: |
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
+            SECONDARY_TAG="latest"
           else
-            BRANCH_NAME=$(echo "${GITHUB_REF#refs/heads/}" | tr '/' '-')
+            BRANCH_NAME="${GITHUB_REF#refs/heads/}"
             VERSION="${BRANCH_NAME}-$(git rev-parse --short HEAD)"
+            if [[ "$BRANCH_NAME" == "main" ]]; then
+              SECONDARY_TAG="latest"
+            elif [[ "$BRANCH_NAME" == "development" ]]; then
+              SECONDARY_TAG="dev"
+            else
+              SECONDARY_TAG=""
+            fi
           fi
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "secondary_tag=$SECONDARY_TAG" >> $GITHUB_OUTPUT
 
       - name: Build and push with SBOM and Provenance
         uses: docker/build-push-action@v5
@@ -48,6 +58,6 @@ jobs:
           push: true
           tags: |
             telix5000/telegram-story-bot:${{ steps.vars.outputs.version }}
-            telix5000/telegram-story-bot:latest
+            telix5000/telegram-story-bot:${{ steps.vars.outputs.secondary_tag }}
           provenance: true
           sbom: true
