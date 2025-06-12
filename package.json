@@ -1,6 +1,6 @@
 {
   "name": "telegram-stories-viewer-bot",
-  "version": "1.9.7",
+  "version": "1.9.8",
   "main": "./src/index.ts",
   "author": "k.khamidov <khamidoff09@gmail.com>",
   "license": "MIT",
