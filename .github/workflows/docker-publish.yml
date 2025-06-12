@@ -30,40 +30,24 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract version and tags
+      - name: Extract version
         id: vars
         run: |
-          BRANCH_NAME=$(echo "${GITHUB_REF#refs/heads/}" | tr '/' '-')
-          TAG_NAME=""
-
-          # Try to get the latest tag; fallback if none found
-          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
-            TAG_NAME=$(git describe --tags --abbrev=0)
-          else
-            TAG_NAME="0.0.0"
-          fi
-
-          TAGS=""
-
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
-            TAGS="telix5000/telegram-story-bot:${VERSION} telix5000/telegram-story-bot:latest"
-          elif [[ "$BRANCH_NAME" == "main" ]]; then
-            TAGS="telix5000/telegram-story-bot:${TAG_NAME} telix5000/telegram-story-bot:latest"
-          elif [[ "$BRANCH_NAME" == "development" ]]; then
-            TAGS="telix5000/telegram-story-bot:dev-${TAG_NAME}"
+          else
+            BRANCH_NAME=$(echo "${GITHUB_REF#refs/heads/}" | tr '/' '-')
+            VERSION="${BRANCH_NAME}-$(git rev-parse --short HEAD)"
           fi
-
-          echo "version=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "tags<<EOF" >> $GITHUB_OUTPUT
-          echo "$TAGS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Build and push with SBOM and Provenance
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ steps.vars.outputs.tags }}
+          tags: |
+            telix5000/telegram-story-bot:${{ steps.vars.outputs.version }}
+            telix5000/telegram-story-bot:latest
           provenance: true
           sbom: true
