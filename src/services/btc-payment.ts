@@ -25,6 +25,8 @@ import bs58check from 'bs58check';
 import * as ecc from 'tiny-secp256k1';
 import { extendPremium, getPremiumDaysLeft, calcPremiumDays } from './premium-service';
 import type { Telegraf } from 'telegraf';
+import { t } from 'lib/i18n';
+import { findUserById } from '../repositories/user-repository';
 const bip32 = BIP32Factory(ecc);
 
 const DEFAULT_FETCH_TIMEOUT = 15_000; // 15 seconds
@@ -90,8 +92,13 @@ function scheduleInvoiceCheck(
     }
 
     if (Date.now() - checkStart * 1000 > 24 * 60 * 60 * 1000) {
-      if (botInstance)
-        await botInstance.telegram.sendMessage(userId, '❌ Invoice expired.');
+      if (botInstance) {
+        const lang = findUserById(userId)?.language;
+        await botInstance.telegram.sendMessage(
+          userId,
+          t(lang, 'invoice.expired'),
+        );
+      }
       deletePaymentCheck(invoice.id);
       paymentTimers.delete(invoice.id);
       if (reminderTimers.has(invoice.id)) {
@@ -104,11 +111,16 @@ function scheduleInvoiceCheck(
     const result = await checkPayment(inv, checkStart);
 
     if (result.unexpectedSenders && result.unexpectedSenders.length) {
-      if (botInstance)
+      if (botInstance) {
+        const lang = findUserById(userId)?.language;
         await botInstance.telegram.sendMessage(
-        userId,
-        `⚠️ Payment from unexpected address(es): ${result.unexpectedSenders.join(', ')}. Please pay from ${fromAddress}.`,
-      );
+          userId,
+          t(lang, 'payment.unexpectedAddress', {
+            addresses: result.unexpectedSenders.join(', '),
+            from: fromAddress,
+          }),
+        );
+      }
     }
 
     const newInv = result.invoice;
@@ -121,16 +133,18 @@ function scheduleInvoiceCheck(
         extendPremium(inviter, daysAdded);
         markReferralPaidRewarded(userId);
         if (botInstance) {
+          const inviterLang = findUserById(inviter)?.language;
           await botInstance.telegram.sendMessage(
             inviter,
-            `🎉 Your referral made a payment! Premium extended by ${daysAdded} days.`,
+            t(inviterLang, 'referral.paid', { days: daysAdded }),
           );
         }
       }
       if (botInstance) {
+        const userLang = findUserById(userId)?.language;
         await botInstance.telegram.sendMessage(
           userId,
-          `✅ Payment received! Premium extended by ${daysAdded} days.`,
+          t(userLang, 'verify.success', { days: daysAdded }),
         );
         const { updatePremiumPinnedMessage } = await import('lib');
         const days = getPremiumDaysLeft(userId);
@@ -151,12 +165,17 @@ function scheduleInvoiceCheck(
       return;
     } else if (newInv && newInv.id !== invoice.id) {
       invoice = newInv;
-      if (botInstance)
+      if (botInstance) {
+        const lang = findUserById(userId)?.language;
         await botInstance.telegram.sendMessage(
-        userId,
-        `Partial payment detected. Please send remaining ${newInv.invoice_amount.toFixed(8)} BTC to address:\n\`${newInv.user_address}\``,
-        { parse_mode: 'Markdown' },
-      );
+          userId,
+          t(lang, 'payment.partial', {
+            amount: newInv.invoice_amount.toFixed(8),
+            address: newInv.user_address,
+          }),
+          { parse_mode: 'Markdown' },
+        );
+      }
       deletePaymentCheck(inv.id);
       upsertPaymentCheck(newInv.id, Math.floor(Date.now() / 1000), checkStart);
       paymentTimers.delete(inv.id);
@@ -181,12 +200,9 @@ function scheduleInvoiceCheck(
   if (!reminderTimers.has(invoice.id)) {
     const rTimer = setTimeout(() => {
       if (botInstance) {
+        const lang = findUserById(userId)?.language;
         botInstance.telegram
-          .sendMessage(
-            userId,
-            '❓ Payment not detected yet. If you have already sent it, please run /verify <txid> to confirm.\n' +
-              `You can find the transaction ID (txid) in your wallet's transaction details.`
-          )
+          .sendMessage(userId, t(lang, 'payment.reminder'))
           .catch(() => {});
       }
       reminderTimers.delete(invoice.id);
