@@ -57,7 +57,6 @@ import {
   MAX_MONITORS_PER_USER,
 } from './services/monitor-service';
 import {
-  schedulePaymentCheck,
   resumePendingChecks,
   setBotInstance,
   verifyPaymentByTxid,
@@ -72,7 +71,6 @@ import { UserInfo } from 'types';
 import {
   sendTemporaryMessage,
   updatePremiumPinnedMessage,
-  isValidBitcoinAddress,
   isValidStoryLink,
 } from 'lib';
 import {
@@ -931,32 +929,7 @@ bot.on('text', async (ctx) => {
     });
   }
 
-  const upgradeState = ctx.session?.upgrade;
-  if (upgradeState && !upgradeState.fromAddress) {
-    if (Date.now() > upgradeState.awaitingAddressUntil) {
-      ctx.session.upgrade = undefined;
-      await ctx.reply(t(locale, 'invoice.expired'));
-      return;
-    }
-    const addr = text.trim();
-    if (!isValidBitcoinAddress(addr)) {
-      await ctx.reply(t(locale, 'argument.invalid'));
-      return;
-    }
-    upgradeState.fromAddress = addr;
-    upgradeState.checkStart = Date.now();
-    updateFromAddress(upgradeState.invoice.id, upgradeState.fromAddress);
-    const remainingMs = upgradeState.awaitingAddressUntil - Date.now();
-    await sendTemporaryMessage(
-      bot,
-      ctx.chat!.id,
-      t(locale, 'invoice.addressReceived'),
-      { parse_mode: 'Markdown' },
-      remainingMs,
-    );
-    schedulePaymentCheck(ctx);
-    return;
-  }
+
 
   const isStoryLink = isValidStoryLink(text);
   const isUsername = text.startsWith('@') || text.startsWith('+');
