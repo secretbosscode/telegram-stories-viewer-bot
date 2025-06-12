@@ -23,7 +23,7 @@ import * as bitcoin from 'bitcoinjs-lib';
 import { BIP32Factory } from 'bip32';
 import bs58check from 'bs58check';
 import * as ecc from 'tiny-secp256k1';
-import { extendPremium, getPremiumDaysLeft } from './premium-service';
+import { extendPremium, getPremiumDaysLeft, calcPremiumDays } from './premium-service';
 import type { Telegraf } from 'telegraf';
 const bip32 = BIP32Factory(ecc);
 
@@ -104,22 +104,23 @@ function scheduleInvoiceCheck(
     const newInv = result.invoice;
 
     if (newInv && newInv.paid_at) {
-      extendPremium(userId, 30);
+      const daysAdded = calcPremiumDays(newInv.invoice_amount, newInv.paid_amount);
+      extendPremium(userId, daysAdded);
       const inviter = getInviterForUser(userId);
       if (inviter && !wasReferralPaidRewarded(userId)) {
-        extendPremium(inviter, 30);
+        extendPremium(inviter, daysAdded);
         markReferralPaidRewarded(userId);
         if (botInstance) {
           await botInstance.telegram.sendMessage(
             inviter,
-            '🎉 Your referral made a payment! Premium extended by 30 days.',
+            `🎉 Your referral made a payment! Premium extended by ${daysAdded} days.`,
           );
         }
       }
       if (botInstance) {
         await botInstance.telegram.sendMessage(
           userId,
-          '✅ Payment received! Premium extended by 30 days.',
+          `✅ Payment received! Premium extended by ${daysAdded} days.`,
         );
         const { updatePremiumPinnedMessage } = await import('lib');
         const days = getPremiumDaysLeft(userId);
