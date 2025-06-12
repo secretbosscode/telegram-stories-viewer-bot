@@ -54,6 +54,7 @@ The bot is configured through environment variables. Copy `.env.example` to `.en
 ### BTC payments
 
 When a user runs `/upgrade` the bot creates an invoice for roughly five dollars worth of BTC. If `BTC_WALLET_ADDRESS` is set, all invoices point to that address. When an extended public key is provided instead (`BTC_XPUB`, `BTC_YPUB` or `BTC_ZPUB`), a new address is derived for each invoice using the BIP32 path `m/0/<index>`. After sending the payment the user confirms it with `/verify <txid>` and Premium access is granted once the transaction is detected.
+If a user sends more BTC than requested, the bot will credit additional Premium days based on the current BTC value (e.g. paying double grants 60 days).
 
 ## Usage
 

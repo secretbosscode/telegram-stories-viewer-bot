@@ -7,7 +7,7 @@
   "cmd.start": "Afficher les instructions",
   "cmd.help": "Afficher l'aide",
   "cmd.premium": "Infos sur les fonctionnalités premium",
-  "cmd.upgrade": "Passer en premium",
+  "cmd.upgrade": "Passer en premium - payez plus de BTC pour plus de jours",
   "cmd.freetrial": "Essai premium de 7 jours",
   "cmd.verify": "Vérifier un paiement manuellement",
   "cmd.queue": "Voir votre position dans la file",

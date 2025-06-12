@@ -7,7 +7,7 @@
   "cmd.start": "显示使用说明",
   "cmd.help": "显示帮助信息",
   "cmd.premium": "高级功能信息",
-  "cmd.upgrade": "升级至高级版",
+  "cmd.upgrade": "升级至高级版 - 多付BTC可获得额外天数",
   "cmd.freetrial": "免费 7 天高级体验",
   "cmd.verify": "手动验证付款",
   "cmd.queue": "查看你的队列状态",
