@@ -46,6 +46,7 @@ import {
   getPremiumDaysLeft,
   grantFreeTrial,
   hasUsedFreeTrial,
+  calcPremiumDays,
 } from './services/premium-service';
 import {
   addProfileMonitor,
@@ -374,13 +375,14 @@ bot.command('verify', async (ctx) => {
   }
   const invoice = await verifyPaymentByTxid(txid);
   if (invoice && invoice.paid_at) {
-    extendPremium(String(ctx.from.id), 30);
+    const daysAdded = calcPremiumDays(invoice.invoice_amount, invoice.paid_amount);
+    extendPremium(String(ctx.from.id), daysAdded);
     const inviter = getInviterForUser(String(ctx.from.id));
     if (inviter && !wasReferralPaidRewarded(String(ctx.from.id))) {
-      extendPremium(inviter, 30);
+      extendPremium(inviter, daysAdded);
       markReferralPaidRewarded(String(ctx.from.id));
       try {
-        await ctx.telegram.sendMessage(inviter, t('en', 'referral.paid'));
+        await ctx.telegram.sendMessage(inviter, t('en', 'referral.paid', { days: daysAdded }));
       } catch {}
     }
     if (ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
@@ -401,7 +403,7 @@ bot.command('verify', async (ctx) => {
         amount: invoice.paid_amount.toFixed(8),
       }),
     });
-    return ctx.reply(t(locale, 'verify.success'));
+    return ctx.reply(t(locale, 'verify.success', { days: daysAdded }));
   }
   await ctx.reply(t(locale, 'verify.failure'));
 });

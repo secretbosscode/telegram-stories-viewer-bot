@@ -1,5 +1,17 @@
 import { db } from '../db';
 
+export const PREMIUM_BASE_DAYS = 30;
+
+export function calcPremiumDays(
+  invoiceAmount: number,
+  paidAmount: number,
+): number {
+  if (invoiceAmount <= 0) return PREMIUM_BASE_DAYS;
+  const ratio = paidAmount / invoiceAmount;
+  const factor = ratio >= 1 ? ratio : 1;
+  return Math.round(factor * PREMIUM_BASE_DAYS);
+}
+
 export interface UserRow {
   telegram_id?: string;
   username?: string;
