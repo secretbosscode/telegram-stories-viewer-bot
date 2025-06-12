@@ -9,6 +9,7 @@ import { Api } from 'telegram';
 import { FloodWaitError } from 'telegram/errors';
 import { isDevEnv } from 'config/env-config';
 import { notifyAdmin } from 'controllers/send-message';
+import { t } from 'lib/i18n';
 
 
 // =========================================================================
