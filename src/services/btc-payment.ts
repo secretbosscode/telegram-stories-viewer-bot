@@ -27,6 +27,16 @@ import { extendPremium, getPremiumDaysLeft, calcPremiumDays } from './premium-se
 import type { Telegraf } from 'telegraf';
 const bip32 = BIP32Factory(ecc);
 
+const DEFAULT_FETCH_TIMEOUT = 15_000; // 15 seconds
+
+async function fetchJson(url: string, timeout = DEFAULT_FETCH_TIMEOUT): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  const res = await fetch(url, { signal: controller.signal });
+  clearTimeout(timer);
+  return res.json();
+}
+
 function normalizeXpub(xpub: string): string {
   try {
     const data = Buffer.from(bs58check.decode(xpub));
@@ -191,9 +201,7 @@ async function fetchTransactions(address: string): Promise<any[]> {
     `https://mempool.space/api/address/${address}/txs`,
     `https://api.blockcypher.com/v1/btc/main/addrs/${address}/full?limit=50`,
   ];
-  const results = await Promise.allSettled(
-    urls.map((u) => fetch(u).then((r) => r.json())),
-  );
+  const results = await Promise.allSettled(urls.map((u) => fetchJson(u)));
   for (const res of results) {
     if (res.status === 'fulfilled') {
       const val = res.value;
@@ -211,9 +219,7 @@ async function fetchTransactionById(txid: string): Promise<any | null> {
     `https://api.blockcypher.com/v1/btc/main/txs/${txid}`,
     `https://sochain.com/api/v2/get_tx/BTC/${txid}`,
   ];
-  const results = await Promise.allSettled(
-    urls.map((u) => fetch(u).then((r) => r.json()))
-  );
+  const results = await Promise.allSettled(urls.map((u) => fetchJson(u)));
   for (const res of results) {
     if (res.status === 'fulfilled' && res.value) {
       const val = res.value.data ?? res.value;
@@ -265,7 +271,7 @@ export async function getBtcPriceUsd(): Promise<number> {
   ];
 
   const requests = await Promise.allSettled(
-    endpoints.map((e) => fetch(e.url).then((r) => r.json())),
+    endpoints.map((e) => fetchJson(e.url)),
   );
 
   const prices: number[] = [];
@@ -308,9 +314,7 @@ async function queryAddressBalance(address: string): Promise<number> {
     `https://sochain.com/api/v2/get_address_balance/BTC/${address}`,
   ];
 
-  const results = await Promise.allSettled(
-    urls.map((u) => fetch(u).then((r) => r.json())),
-  );
+  const results = await Promise.allSettled(urls.map((u) => fetchJson(u)));
   const amounts: number[] = [];
 
   if (results[0].status === 'fulfilled') {
