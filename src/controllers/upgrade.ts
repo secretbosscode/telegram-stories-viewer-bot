@@ -3,6 +3,7 @@ import { createInvoice } from 'services/btc-payment';
 import { getActiveInvoiceForUser } from 'db';
 import { bot } from 'index';
 import { sendTemporaryMessage } from 'lib';
+import { t } from 'lib/i18n';
 
 /**
  * Handle the `/upgrade` command. Creates a BTC invoice and stores
@@ -86,6 +87,7 @@ export async function handleUpgrade(ctx: IContextBot): Promise<void> {
     );
   } catch (e) {
     console.error('upgrade cmd error', e);
-    await ctx.reply('Failed to create invoice. Please try again later.');
+    const locale = ctx.from?.language_code || 'en';
+    await ctx.reply(t(locale, 'error.generic'));
   }
 }
