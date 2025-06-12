@@ -3,6 +3,5 @@ dist
 
 node_modules
 .env
-.yarn
 
 data/

@@ -3,7 +3,7 @@
 import { Userbot } from 'config/userbot';
 import { timeout } from 'lib';
 import { Api } from 'telegram';
-import pLimit from 'p-limit'; // Ensure: yarn add p-limit (if not already)
+import pLimit from 'p-limit'; // Ensure: npm install p-limit (if not already)
 
 // --- Configuration for Concurrency ---
 // If you get FLOOD_WAIT errors from Telegram, lower this.
