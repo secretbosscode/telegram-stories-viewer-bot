@@ -278,22 +278,28 @@ export function getNextQueueItem(): DownloadQueueItem | null {
 
 // CHANGE 4: Added this new function to make the queue resilient to restarts.
 /**
- * Finds any jobs that were stuck in a 'processing' state from a previous
- * run that crashed, and resets their status to 'pending'.
+ * Finds any jobs that were left in a 'processing' or 'error' state from a
+ * previous run that crashed, and resets their status to 'pending'.
  */
 export function resetStuckJobs(): void {
-    try {
-        console.log('[DB] Resetting any stuck "in-progress" jobs to "pending"...');
-        const stmt = db.prepare(`
-        UPDATE download_queue SET status = 'pending' WHERE status = 'processing'
-        `);
-        const info = stmt.run();
-        if (info.changes > 0) {
-            console.log(`[DB] Found and reset ${info.changes} stuck jobs.`);
-        }
-    } catch (error) {
-        console.error('[DB] Failed to reset stuck jobs:', error);
+  try {
+    console.log(
+      '[DB] Resetting any stuck or failed jobs back to "pending"...'
+    );
+
+    const stmt = db.prepare(
+      `UPDATE download_queue
+       SET status = 'pending', processed_ts = NULL
+       WHERE status IN ('processing', 'error')`
+    );
+
+    const info = stmt.run();
+    if (info.changes > 0) {
+      console.log(`[DB] Found and reset ${info.changes} stuck jobs.`);
     }
+  } catch (error) {
+    console.error('[DB] Failed to reset stuck jobs:', error);
+  }
 }
 
 
