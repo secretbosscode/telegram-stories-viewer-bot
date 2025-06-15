@@ -53,7 +53,9 @@ function normalizeXpub(xpub: string): string {
   return xpub;
 }
 
-let botInstance: Telegraf<IContextBot> | null = null;
+// Use var here to avoid temporal dead zone issues when this module
+// is required before initialization completes in certain tests.
+var botInstance: Telegraf<IContextBot> | null = null;
 export function setBotInstance(b: Telegraf<IContextBot>): void {
   botInstance = b;
 }
