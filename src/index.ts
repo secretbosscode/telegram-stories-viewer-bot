@@ -1,8 +1,18 @@
 // src/index.ts
 
 // Global error handlers must be at the absolute top.
-process.on('unhandledRejection', (reason, promise) => { console.error('CRITICAL_ERROR: Unhandled Rejection at:', promise, 'reason:', reason); });
-process.on('uncaughtException', (error, origin) => { console.error('CRITICAL_ERROR: Uncaught Exception:', error, 'origin:', origin); });
+import { recordTimeoutError } from './config/timeout-monitor';
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('CRITICAL_ERROR: Unhandled Rejection at:', promise, 'reason:', reason);
+  recordTimeoutError(reason);
+});
+
+process.on('uncaughtException', (error, origin) => {
+  console.error('CRITICAL_ERROR: Uncaught Exception:', error, 'origin:', origin);
+  recordTimeoutError(error);
+});
+
 console.log('Global error handlers have been attached.');
 
 // Redirect console output to a debug log file for easier troubleshooting
