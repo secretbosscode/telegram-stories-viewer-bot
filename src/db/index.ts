@@ -287,15 +287,26 @@ export function resetStuckJobs(): void {
       '[DB] Resetting any stuck or failed jobs back to "pending"...'
     );
 
-    const stmt = db.prepare(
+    const resetStmt = db.prepare(
       `UPDATE download_queue
        SET status = 'pending', processed_ts = NULL
-       WHERE status IN ('processing', 'error')`
+       WHERE status = 'processing'
+          OR (status = 'error' AND processed_ts > (strftime('%s','now') - 86400))`
     );
 
-    const info = stmt.run();
-    if (info.changes > 0) {
-      console.log(`[DB] Found and reset ${info.changes} stuck jobs.`);
+    const resetInfo = resetStmt.run();
+
+    const deleteStmt = db.prepare(
+      `DELETE FROM download_queue
+       WHERE status = 'error' AND processed_ts <= (strftime('%s','now') - 86400)`
+    );
+    const deleteInfo = deleteStmt.run();
+
+    const total = (resetInfo.changes as number) + (deleteInfo.changes as number);
+    if (total > 0) {
+      console.log(
+        `[DB] Found and reset ${resetInfo.changes} stuck jobs. Removed ${deleteInfo.changes} old errors.`
+      );
     }
   } catch (error) {
     console.error('[DB] Failed to reset stuck jobs:', error);
