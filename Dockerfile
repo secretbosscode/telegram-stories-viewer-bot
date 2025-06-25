@@ -59,6 +59,8 @@ RUN npm run build
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN chmod +x /usr/local/bin/healthcheck.sh
 RUN chown -R appuser:appgroup /app
 
 # Run the container as the non-root user by default
@@ -66,6 +68,8 @@ USER appuser
 
 # Set our script as the entrypoint for the container.
 ENTRYPOINT ["entrypoint.sh"]
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["/usr/local/bin/healthcheck.sh"]
 
 # =========================================================================
 # Define the default command
