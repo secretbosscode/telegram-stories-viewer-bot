@@ -3,6 +3,7 @@ import { StringSession } from 'telegram/sessions';
 import fs from 'fs';
 import readline from 'readline';
 import path from 'path';
+import { recordTimeoutError } from './timeout-monitor';
 
 import {
   USERBOT_API_HASH,
@@ -102,7 +103,10 @@ async function initClient() {
       if (!phoneCode) throw new Error('USERBOT_PHONE_CODE is required for first login!');
       return phoneCode;
     },
-    onError: (err) => console.log('error', err),
+    onError: (err) => {
+      console.log('error', err);
+      recordTimeoutError(err);
+    },
   });
 
   console.log('You should now be connected.');
