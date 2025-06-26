@@ -16,6 +16,7 @@ class FakeTelegramClient {
   async start(opts: any) {
     if (opts.onError) {
       opts.onError(new Error('TIMEOUT'));
+      opts.onError(new Error('Not connected'));
     }
   }
   async sendMessage() {}
@@ -28,6 +29,7 @@ import { initUserbot } from '../src/config/userbot';
 
 test('userbot onError forwards timeout errors', async () => {
   await initUserbot();
-  expect(recordTimeoutError).toHaveBeenCalledWith(expect.any(Error));
+  expect(recordTimeoutError).toHaveBeenCalledTimes(2);
   expect((recordTimeoutError.mock.calls[0][0] as Error).message).toBe('TIMEOUT');
+  expect((recordTimeoutError.mock.calls[1][0] as Error).message).toBe('Not connected');
 });
