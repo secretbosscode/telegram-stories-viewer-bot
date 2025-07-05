@@ -17,3 +17,16 @@ export function recordTimeoutError(err: unknown): void {
     process.exit(1);
   }
 }
+
+export function monitorConsoleErrors(): void {
+  const originalError = console.error.bind(console);
+  console.error = (...args: any[]) => {
+    originalError(...args);
+    for (const arg of args) {
+      if (typeof arg === 'string' && arg.includes('[TimeoutMonitor]')) continue;
+      try {
+        recordTimeoutError(arg);
+      } catch {}
+    }
+  };
+}
