@@ -73,6 +73,28 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
   return result;
 }
 
+// Split long text into multiple messages to stay under Telegram's 4096
+// character limit. Sends each chunk sequentially using ctx.reply.
+export async function replyChunks(
+  ctx: import('telegraf').Context,
+  text: string,
+  extra?: Parameters<typeof ctx.reply>[1],
+): Promise<void> {
+  const MAX_LEN = 4096;
+  const lines = text.split('\n');
+  let chunk = '';
+  for (const line of lines) {
+    if ((chunk + line + '\n').length > MAX_LEN) {
+      await ctx.reply(chunk, extra);
+      chunk = '';
+    }
+    chunk += line + '\n';
+  }
+  if (chunk) {
+    await ctx.reply(chunk, extra);
+  }
+}
+
 // Update or create a pinned message showing remaining Premium time
 
 export async function updatePremiumPinnedMessage(

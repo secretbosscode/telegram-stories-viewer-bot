@@ -84,6 +84,7 @@ import {
   sendTemporaryMessage,
   updatePremiumPinnedMessage,
   isValidStoryLink,
+  replyChunks,
 } from 'lib';
 import {
   recordProfileRequestFx,
@@ -738,7 +739,7 @@ bot.command('users', async (ctx) => {
       msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${premiumLabel}, ${type}]${lang}`;
       msg += '\n';
     });
-    await ctx.reply(msg);
+    await replyChunks(ctx, msg);
   } catch (e) { console.error("Error in /users:", e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
