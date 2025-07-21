@@ -20,7 +20,7 @@ import {
 import { UserInfo } from 'types';
 import { BOT_ADMIN_ID } from 'config/env-config';
 
-export const CHECK_INTERVAL_HOURS = 6;
+export const CHECK_INTERVAL_HOURS = 2;
 export const MAX_MONITORS_PER_USER = 5;
 
 const monitorTimers = new Map<number, NodeJS.Timeout>();
