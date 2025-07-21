@@ -1,4 +1,4 @@
-import { TelegramClient } from 'telegram';
+import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import fs from 'fs';
 import readline from 'readline';
@@ -16,6 +16,8 @@ import {
 export class Userbot {
   private static client: TelegramClient | null = null;
   private static initPromise: Promise<TelegramClient> | null = null;
+  private static monitor: NodeJS.Timeout | null = null;
+  private static readonly CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
 
   /**
    * Force reinitialization of the Telegram client. Useful when the session
@@ -56,6 +58,32 @@ export class Userbot {
     }
 
     return Userbot.initPromise;
+  }
+
+  private static async checkConnection(): Promise<void> {
+    if (!Userbot.client) return;
+    try {
+      await Userbot.client.invoke(new Api.updates.GetState());
+    } catch (err) {
+      console.error('[Userbot] Connection check failed:', err);
+      recordTimeoutError(err);
+      await Userbot.reset();
+      try {
+        await Userbot.getInstance();
+        console.log('[Userbot] Reconnected after connection failure.');
+      } catch (re) {
+        console.error('[Userbot] Reconnection attempt failed:', re);
+      }
+    }
+  }
+
+  public static startConnectionMonitor(): void {
+    if (Userbot.monitor) return;
+    Userbot.monitor = setInterval(() => {
+      Userbot.checkConnection().catch((e) =>
+        console.error('[Userbot] Connection monitor error:', e)
+      );
+    }, Userbot.CHECK_INTERVAL_MS);
   }
 }
 
@@ -123,5 +151,6 @@ async function initClient() {
 
 export async function initUserbot() {
   await Userbot.getInstance(); // init
+  Userbot.startConnectionMonitor();
   console.log('userbot initiated');
 }
