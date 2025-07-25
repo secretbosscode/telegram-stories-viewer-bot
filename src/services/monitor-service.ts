@@ -25,9 +25,17 @@ export const MAX_MONITORS_PER_USER = 5;
 
 const monitorTimers = new Map<number, NodeJS.Timeout>();
 
-export function addProfileMonitor(userId: string, username: string): void {
-  const row = addMonitor(userId, username);
+export function addProfileMonitor(userId: string, username: string): boolean {
+  let row = findMonitor(userId, username);
+  if (row) {
+    if (!monitorTimers.has(row.id)) {
+      scheduleMonitor(row);
+    }
+    return false; // already monitoring
+  }
+  row = addMonitor(userId, username);
   scheduleMonitor(row);
+  return true;
 }
 
 export function removeProfileMonitor(userId: string, username: string): void {

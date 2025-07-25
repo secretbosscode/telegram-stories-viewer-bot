@@ -80,6 +80,7 @@ db.exec(`
     created_at INTEGER DEFAULT (strftime('%s','now'))
   );
 `);
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_unique_idx ON monitors (telegram_id, target_username)');
 
 // Table storing which stories were already sent for each monitor
 db.exec(`
@@ -528,19 +529,12 @@ export function addMonitor(
   telegram_id: string,
   target_username: string
 ): MonitorRow {
-  const result = db
-    .prepare(
-      `INSERT INTO monitors (telegram_id, target_username)
-       VALUES (?, ?)`
-    )
-    .run(telegram_id, target_username);
-
-  const id = Number(result.lastInsertRowid);
-  return {
-    id,
-    telegram_id,
-    target_username,
-  };
+  db.prepare(
+    `INSERT OR IGNORE INTO monitors (telegram_id, target_username)
+     VALUES (?, ?)`
+  ).run(telegram_id, target_username);
+  const row = findMonitor(telegram_id, target_username)!;
+  return row;
 }
 
 export function removeMonitor(
