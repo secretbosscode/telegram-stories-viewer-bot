@@ -77,6 +77,8 @@ npm install --legacy-peer-deps
 npm test
 ```
 
+Alternatively you can run `scripts/ci_run.sh` to automate these steps in one command.
+
 ---
 
 This fork is a heavy rewrite of the original project and aims to provide a simple container-based deployment. See the [LICENSE](LICENSE) for copyright details.
