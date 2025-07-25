@@ -14,7 +14,7 @@ import {
   getMonitor,
   findMonitor,
   markStorySent,
-  listSentStoryIds,
+  listSentStoryKeys,
   cleanupExpiredSentStories,
 } from '../db';
 import { UserInfo } from 'types';
@@ -86,13 +86,17 @@ async function checkSingleMonitor(id: number) {
 
   const mapped = await fetchActiveStories(task.link);
   cleanupExpiredSentStories();
-  const sentIds = new Set(listSentStoryIds(m.id));
-  const newStories = mapped.filter((s) => !sentIds.has(s.id));
+  const sentKeys = new Set(listSentStoryKeys(m.id));
+  const newStories = mapped.filter((s) => {
+    const key = `${s.id}:${Math.floor(s.date.getTime() / 1000)}`;
+    return !sentKeys.has(key);
+  });
   if (newStories.length) {
     await sendActiveStories({ stories: newStories, task });
     for (const s of newStories) {
       const expiry = Math.floor(s.date.getTime() / 1000) + 24 * 3600;
-      markStorySent(m.id, s.id, expiry);
+      const ts = Math.floor(s.date.getTime() / 1000);
+      markStorySent(m.id, s.id, ts, expiry);
     }
   }
   updateMonitorChecked(m.id);
