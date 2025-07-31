@@ -32,6 +32,14 @@ export const MAX_MONITORS_PER_USER = 5;
 
 const monitorTimers = new Map<number, NodeJS.Timeout>();
 
+export function formatMonitorTarget(m: { target_username: string | null; target_id: string }): string {
+  const username = m.target_username;
+  if (username && !/^\+?\d+$/.test(username)) {
+    return `@${username}`;
+  }
+  return username || m.target_id;
+}
+
 export async function addProfileMonitor(
   userId: string,
   username: string,
@@ -225,14 +233,14 @@ async function checkSingleMonitor(id: number) {
         await bot.telegram.sendMessage(
           m.telegram_id,
           t('', 'monitor.photoChanged', {
-            user: m.target_username ? `@${m.target_username}` : m.target_id,
+            user: formatMonitorTarget(m),
           })
         );
       } else if (m.last_photo_id) {
         await bot.telegram.sendMessage(
           m.telegram_id,
           t('', 'monitor.photoRemoved', {
-            user: m.target_username ? `@${m.target_username}` : m.target_id,
+            user: formatMonitorTarget(m),
           })
         );
       }
@@ -241,12 +249,9 @@ async function checkSingleMonitor(id: number) {
     updateMonitorChecked(m.id);
     scheduleMonitor({ ...m, last_checked: Math.floor(Date.now() / 1000) });
   } catch (err: any) {
-    console.error(
-      `[Monitor] Error checking @${m.target_username || m.target_id}:`,
-      err,
-    );
+    console.error(`[Monitor] Error checking ${formatMonitorTarget(m)}:`, err);
     const msg = err?.errorMessage || err?.message || '';
-    const display = m.target_username ? `@${m.target_username}` : m.target_id;
+    const display = formatMonitorTarget(m);
     if (/ACCOUNT_DELETED|USER_DEACTIVATED/i.test(msg)) {
       if (monitorTimers.has(m.id)) {
         clearTimeout(monitorTimers.get(m.id)!);

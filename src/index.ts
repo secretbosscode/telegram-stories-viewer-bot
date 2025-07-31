@@ -67,6 +67,7 @@ import {
   startMonitorLoop,
   CHECK_INTERVAL_HOURS,
   MAX_MONITORS_PER_USER,
+  formatMonitorTarget,
 } from './services/monitor-service';
 import {
   resumePendingChecks,
@@ -507,10 +508,7 @@ bot.command('monitor', async (ctx) => {
       count: list.length,
       limit,
       list: list
-        .map(
-          (m, i) =>
-            `${i + 1}. ${m.target_username ? `@${m.target_username}` : m.target_id}`,
-        )
+        .map((m, i) => `${i + 1}. ${formatMonitorTarget(m)}`)
         .join('\n'),
       hours: CHECK_INTERVAL_HOURS,
     });
@@ -554,10 +552,7 @@ bot.command('unmonitor', async (ctx) => {
     }
     const msg = t(locale, 'monitor.current', {
       list: list
-        .map(
-          (m, i) =>
-            `${i + 1}. ${m.target_username ? `@${m.target_username}` : m.target_id}`,
-        )
+        .map((m, i) => `${i + 1}. ${formatMonitorTarget(m)}`)
         .join('\n'),
     });
     return ctx.reply(msg);
