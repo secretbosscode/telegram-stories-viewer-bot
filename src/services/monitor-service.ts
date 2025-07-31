@@ -13,7 +13,10 @@ import {
   updateMonitorPhoto,
   MonitorRow,
   getMonitor,
-  findMonitor,
+  findMonitorByTargetId,
+  findMonitorByUsername,
+  updateMonitorUsername,
+  updateMonitorTarget,
   markStorySent,
   listSentStoryKeys,
   cleanupExpiredSentStories,
@@ -30,26 +33,31 @@ export const MAX_MONITORS_PER_USER = 5;
 const monitorTimers = new Map<number, NodeJS.Timeout>();
 
 export async function addProfileMonitor(userId: string, username: string): Promise<boolean> {
-  let row = findMonitor(userId, username);
+  const client = await Userbot.getInstance();
+  const entity = await getEntityWithTempContact(username);
+  const targetId = String((entity as any).id);
+  let row = findMonitorByTargetId(userId, targetId);
   if (row) {
     if (!monitorTimers.has(row.id)) {
       scheduleMonitor(row);
     }
     return false; // already monitoring
   }
-  const latest = await fetchLatestProfilePhoto(username);
-  row = addMonitor(userId, username, latest?.id || null);
+  const latest = await fetchLatestProfilePhoto(entity);
+  row = addMonitor(userId, targetId, (entity as any).username || username, latest?.id || null);
   scheduleMonitor(row);
   return true;
 }
 
 export function removeProfileMonitor(userId: string, username: string): void {
-  const row = findMonitor(userId, username);
-  if (row && monitorTimers.has(row.id)) {
-    clearTimeout(monitorTimers.get(row.id)!);
-    monitorTimers.delete(row.id);
+  const row = findMonitorByUsername(userId, username);
+  if (row) {
+    if (monitorTimers.has(row.id)) {
+      clearTimeout(monitorTimers.get(row.id)!);
+      monitorTimers.delete(row.id);
+    }
+    removeMonitor(userId, row.target_id);
   }
-  removeMonitor(userId, username);
 }
 
 export function userMonitorCount(userId: string): number {
@@ -67,18 +75,26 @@ export function startMonitorLoop(): void {
   }
 }
 
-async function fetchActiveStories(username: string) {
+async function fetchActiveStories(entityOrUsername: any) {
   const client = await Userbot.getInstance();
-  const entity = await client.getEntity(username);
+  const entity =
+    typeof entityOrUsername === 'string'
+      ? await client.getEntity(entityOrUsername)
+      : entityOrUsername;
   const activeResult = await client.invoke(
     new Api.stories.GetPeerStories({ peer: entity }),
   );
   return mapStories(activeResult.stories?.stories || []);
 }
 
-async function fetchLatestProfilePhoto(username: string): Promise<{ photo: Api.Photo; id: string } | null> {
+async function fetchLatestProfilePhoto(
+  entityOrUsername: any
+): Promise<{ photo: Api.Photo; id: string } | null> {
   const client = await Userbot.getInstance();
-  const entity = await getEntityWithTempContact(username);
+  const entity =
+    typeof entityOrUsername === 'string'
+      ? await getEntityWithTempContact(entityOrUsername)
+      : entityOrUsername;
   const result = (await client.invoke(
     new Api.photos.GetUserPhotos({ userId: entity, limit: 1 })
   )) as Api.photos.Photos;
@@ -101,9 +117,22 @@ async function checkSingleMonitor(id: number) {
   const m = getMonitor(id);
   if (!m) return; // might have been removed
   try {
+    const client = await Userbot.getInstance();
+    const entity = await client.getEntity(m.target_id || m.target_username!);
+    const username = (entity as any).username || null;
+    const idStr = String((entity as any).id);
+    if (username && username !== m.target_username) {
+      updateMonitorUsername(m.id, username);
+      m.target_username = username;
+    }
+    if (idStr !== m.target_id) {
+      updateMonitorTarget(m.id, idStr);
+      m.target_id = idStr;
+    }
+
     const task: UserInfo = {
       chatId: m.telegram_id,
-      link: m.target_username,
+      link: m.target_username || m.target_id,
       linkType: 'username',
       locale: '',
       initTime: Date.now(),
@@ -111,7 +140,7 @@ async function checkSingleMonitor(id: number) {
         isUserPremium(m.telegram_id) || m.telegram_id === BOT_ADMIN_ID.toString(),
     };
 
-    const mapped = await fetchActiveStories(task.link);
+    const mapped = await fetchActiveStories(entity);
     cleanupExpiredSentStories();
     const sentKeys = new Set(listSentStoryKeys(m.id));
     const newStories = mapped.filter((s) => {
@@ -127,21 +156,24 @@ async function checkSingleMonitor(id: number) {
       }
     }
 
-    const latest = await fetchLatestProfilePhoto(task.link);
+    const latest = await fetchLatestProfilePhoto(entity);
     const latestId = latest?.id || null;
     if (latestId !== (m.last_photo_id || null)) {
       if (latest) {
-        const client = await Userbot.getInstance();
         const buffer = (await client.downloadMedia(latest.photo as any)) as Buffer;
         await bot.telegram.sendPhoto(m.telegram_id, { source: buffer });
         await bot.telegram.sendMessage(
           m.telegram_id,
-          t('', 'monitor.photoChanged', { user: `@${m.target_username}` })
+          t('', 'monitor.photoChanged', {
+            user: m.target_username ? `@${m.target_username}` : m.target_id,
+          })
         );
       } else if (m.last_photo_id) {
         await bot.telegram.sendMessage(
           m.telegram_id,
-          t('', 'monitor.photoRemoved', { user: `@${m.target_username}` })
+          t('', 'monitor.photoRemoved', {
+            user: m.target_username ? `@${m.target_username}` : m.target_id,
+          })
         );
       }
       updateMonitorPhoto(m.id, latestId);
@@ -149,13 +181,31 @@ async function checkSingleMonitor(id: number) {
     updateMonitorChecked(m.id);
     scheduleMonitor({ ...m, last_checked: Math.floor(Date.now() / 1000) });
   } catch (err: any) {
-    console.error(`[Monitor] Error checking @${m.target_username}:`, err);
+    console.error(
+      `[Monitor] Error checking @${m.target_username || m.target_id}:`,
+      err,
+    );
     const msg = err?.errorMessage || err?.message || '';
-    if (/USERNAME_INVALID|No user has|Cannot find any entity/i.test(msg)) {
-      removeProfileMonitor(m.telegram_id, m.target_username);
+    const display = m.target_username ? `@${m.target_username}` : m.target_id;
+    if (/ACCOUNT_DELETED|USER_DEACTIVATED/i.test(msg)) {
+      if (monitorTimers.has(m.id)) {
+        clearTimeout(monitorTimers.get(m.id)!);
+        monitorTimers.delete(m.id);
+      }
+      removeMonitor(m.telegram_id, m.target_id);
       await bot.telegram.sendMessage(
         m.telegram_id,
-        t('', 'monitor.stopped', { user: `@${m.target_username}` })
+        t('', 'monitor.deleted', { user: display })
+      );
+    } else if (/USERNAME_INVALID|No user has|Cannot find any entity/i.test(msg)) {
+      if (monitorTimers.has(m.id)) {
+        clearTimeout(monitorTimers.get(m.id)!);
+        monitorTimers.delete(m.id);
+      }
+      removeMonitor(m.telegram_id, m.target_id);
+      await bot.telegram.sendMessage(
+        m.telegram_id,
+        t('', 'monitor.stopped', { user: display })
       );
     } else {
       scheduleMonitor(m);

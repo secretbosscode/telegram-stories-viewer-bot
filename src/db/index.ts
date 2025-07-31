@@ -75,17 +75,22 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS monitors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     telegram_id TEXT NOT NULL,
-    target_username TEXT NOT NULL,
+    target_id TEXT,
+    target_username TEXT,
     last_checked INTEGER,
     last_photo_id TEXT,
     created_at INTEGER DEFAULT (strftime('%s','now'))
   );
 `);
-db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_unique_idx ON monitors (telegram_id, target_username)');
+db.exec('DROP INDEX IF EXISTS monitor_unique_idx');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_unique_idx ON monitors (telegram_id, target_id)');
 
 const monitorColumns = db.prepare("PRAGMA table_info(monitors)").all() as any[];
 if (!monitorColumns.some((c) => c.name === 'last_photo_id')) {
   db.exec('ALTER TABLE monitors ADD COLUMN last_photo_id TEXT');
+}
+if (!monitorColumns.some((c) => c.name === 'target_id')) {
+  db.exec('ALTER TABLE monitors ADD COLUMN target_id TEXT');
 }
 
 // Table storing which stories were already sent for each monitor
@@ -524,31 +529,33 @@ export function getQueueStats(jobId: number): { position: number; eta: number } 
 export interface MonitorRow {
   id: number;
   telegram_id: string;
-  target_username: string;
+  target_id: string;
+  target_username: string | null;
   last_checked?: number;
   last_photo_id?: string | null;
 }
 
 export function addMonitor(
   telegram_id: string,
-  target_username: string,
+  target_id: string,
+  target_username: string | null,
   last_photo_id?: string | null,
 ): MonitorRow {
   db.prepare(
-    `INSERT OR IGNORE INTO monitors (telegram_id, target_username, last_photo_id)
-     VALUES (?, ?, ?)`
-  ).run(telegram_id, target_username, last_photo_id ?? null);
-  const row = findMonitor(telegram_id, target_username)!;
+    `INSERT OR IGNORE INTO monitors (telegram_id, target_id, target_username, last_photo_id)
+     VALUES (?, ?, ?, ?)`
+  ).run(telegram_id, target_id, target_username, last_photo_id ?? null);
+  const row = findMonitorByTargetId(telegram_id, target_id)!;
   return row;
 }
 
 export function removeMonitor(
   telegram_id: string,
-  target_username: string
+  target_id: string
 ): void {
   db.prepare(
-    `DELETE FROM monitors WHERE telegram_id = ? AND target_username = ?`
-  ).run(telegram_id, target_username);
+    `DELETE FROM monitors WHERE telegram_id = ? AND target_id = ?`
+  ).run(telegram_id, target_id);
 }
 
 export function listMonitors(telegram_id: string): MonitorRow[] {
@@ -565,7 +572,18 @@ export function getMonitor(id: number): MonitorRow | undefined {
     .get(id) as MonitorRow | undefined;
 }
 
-export function findMonitor(
+export function findMonitorByTargetId(
+  telegram_id: string,
+  target_id: string
+): MonitorRow | undefined {
+  return db
+    .prepare(
+      `SELECT * FROM monitors WHERE telegram_id = ? AND target_id = ?`
+    )
+    .get(telegram_id, target_id) as MonitorRow | undefined;
+}
+
+export function findMonitorByUsername(
   telegram_id: string,
   target_username: string
 ): MonitorRow | undefined {
@@ -593,6 +611,14 @@ export function updateMonitorChecked(id: number): void {
 
 export function updateMonitorPhoto(id: number, last_photo_id: string | null): void {
   db.prepare(`UPDATE monitors SET last_photo_id = ? WHERE id = ?`).run(last_photo_id, id);
+}
+
+export function updateMonitorUsername(id: number, username: string | null): void {
+  db.prepare(`UPDATE monitors SET target_username = ? WHERE id = ?`).run(username, id);
+}
+
+export function updateMonitorTarget(id: number, target_id: string): void {
+  db.prepare(`UPDATE monitors SET target_id = ? WHERE id = ?`).run(target_id, id);
 }
 
 // ----- Monitor sent stories utils -----

@@ -61,6 +61,7 @@
   "monitor.none": "You are not monitoring any profiles.",
   "monitor.current": "👀 Currently monitoring:\n{{list}}",
   "monitor.stopped": "🔚 Stopped monitoring {{user}}.",
+  "monitor.deleted": "⚠️ {{user}} appears to have deleted their account. Monitoring stopped.",
   "admin.confirmRestart": "Are you sure you want to restart?",
   "admin.restarting": "⏳ Restarting server...",
   "invoice.expired": "❌ Invoice expired.",
