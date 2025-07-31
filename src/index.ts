@@ -518,7 +518,7 @@ bot.command('monitor', async (ctx) => {
       return ctx.reply(t(locale, 'monitor.limit', { max: MAX_MONITORS_PER_USER }));
     }
   }
-  const added = addProfileMonitor(userId, username);
+  const added = await addProfileMonitor(userId, username);
   if (!added) {
     return ctx.reply(t(locale, 'monitor.already'));
   }
