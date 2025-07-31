@@ -4,7 +4,7 @@ This project packages a Telegram bot for anonymously viewing stories. It is base
 
 ## Quick start
 
-1. Copy `.env.example` to `.env` and fill out the required values (see the
+1. Copy `.env.example` to `.env` and  (omit ' for phone numbers).ill out the required values (see the
    *Environment variables* section below for details):
    - `DEV_BOT_TOKEN` or `PROD_BOT_TOKEN` – your bot token from [BotFather](https://t.me/BotFather)
    - `USERBOT_API_ID` and `USERBOT_API_HASH` – obtain these from [my.telegram.org](https://my.telegram.org)
@@ -58,7 +58,7 @@ If a user sends more BTC than requested, the bot will credit additional Premium 
 
 ## Usage
 
-Send the bot a username, phone number or link to a story. The bot will fetch the available stories and return them to you. Premium users can monitor up to five profiles for new stories and profile photo changes with `/monitor <@username|+15555555555>` and `/unmonitor <@username>`.
+Send the bot a username, phone number or link to a story. The bot will fetch the available stories and return them to you. Premium users can monitor up to five profiles for new stories and profile photo changes with `/monitor <@username|+15555555555>` and `/unmonitor <@username|+15555555555>` (omit @ for phone numbers).
 Administrators browse stories with the same paginated interface to prevent large downloads from clogging the queue.
 
 After paying for Premium you can verify the transaction manually with:
