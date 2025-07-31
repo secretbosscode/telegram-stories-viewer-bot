@@ -32,26 +32,76 @@ export const MAX_MONITORS_PER_USER = 5;
 
 const monitorTimers = new Map<number, NodeJS.Timeout>();
 
-export async function addProfileMonitor(userId: string, username: string): Promise<boolean> {
-  const client = await Userbot.getInstance();
+export async function addProfileMonitor(
+  userId: string,
+  username: string,
+): Promise<boolean> {
   const entity = await getEntityWithTempContact(username);
   const targetId = String((entity as any).id);
-  let row = findMonitorByTargetId(userId, targetId);
+
+  let row =
+    findMonitorByTargetId(userId, targetId) ||
+    findMonitorByUsername(userId, username);
+
   if (row) {
+    if (row.target_id !== targetId) {
+      updateMonitorTarget(row.id, targetId);
+      row.target_id = targetId;
+    }
+    if ((entity as any).username && row.target_username !== (entity as any).username) {
+      updateMonitorUsername(row.id, (entity as any).username);
+      row.target_username = (entity as any).username;
+    }
+
+    const duplicates = listMonitors(userId).filter(
+      (m) =>
+        m.id !== row!.id &&
+        (m.target_id === targetId || m.target_username === username),
+    );
+    for (const dup of duplicates) {
+      if (monitorTimers.has(dup.id)) {
+        clearTimeout(monitorTimers.get(dup.id)!);
+        monitorTimers.delete(dup.id);
+      }
+      removeMonitor(userId, dup.target_id);
+    }
+
     if (!monitorTimers.has(row.id)) {
       scheduleMonitor(row);
     }
     return false; // already monitoring
   }
+
   const latest = await fetchLatestProfilePhoto(entity);
-  row = addMonitor(userId, targetId, (entity as any).username || username, latest?.id || null);
+  row = addMonitor(
+    userId,
+    targetId,
+    (entity as any).username || username,
+    latest?.id || null,
+  );
   scheduleMonitor(row);
   return true;
 }
 
-export function removeProfileMonitor(userId: string, username: string): void {
-  const row = findMonitorByUsername(userId, username);
-  if (row) {
+export async function removeProfileMonitor(
+  userId: string,
+  username: string,
+): Promise<void> {
+  let targetId: string | null = null;
+  try {
+    const entity = await getEntityWithTempContact(username);
+    targetId = String((entity as any).id);
+  } catch {
+    // ignore resolve errors; we'll fall back to username match
+  }
+
+  const rows = listMonitors(userId).filter(
+    (m) =>
+      m.target_username === username ||
+      (targetId !== null && m.target_id === targetId),
+  );
+
+  for (const row of rows) {
     if (monitorTimers.has(row.id)) {
       clearTimeout(monitorTimers.get(row.id)!);
       monitorTimers.delete(row.id);
@@ -118,7 +168,9 @@ async function checkSingleMonitor(id: number) {
   if (!m) return; // might have been removed
   try {
     const client = await Userbot.getInstance();
-    const entity = await client.getEntity(m.target_id || m.target_username!);
+    const entity = await getEntityWithTempContact(
+      m.target_username || m.target_id,
+    );
     const username = (entity as any).username || null;
     const idStr = String((entity as any).id);
     if (username && username !== m.target_username) {
