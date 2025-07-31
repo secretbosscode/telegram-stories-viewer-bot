@@ -301,15 +301,12 @@ export function getNextQueueItem(): DownloadQueueItem | null {
  */
 export function resetStuckJobs(): void {
   try {
-    console.log(
-      '[DB] Resetting any stuck or failed jobs back to "pending"...'
-    );
+    console.log('[DB] Resetting any stuck jobs back to "pending"...');
 
     const resetStmt = db.prepare(
       `UPDATE download_queue
        SET status = 'pending', processed_ts = NULL
-       WHERE status = 'processing'
-          OR (status = 'error' AND processed_ts > (strftime('%s','now') - 86400))`
+       WHERE status = 'processing'`
     );
 
     const resetInfo = resetStmt.run();
@@ -323,7 +320,7 @@ export function resetStuckJobs(): void {
     const total = (resetInfo.changes as number) + (deleteInfo.changes as number);
     if (total > 0) {
       console.log(
-        `[DB] Found and reset ${resetInfo.changes} stuck jobs. Removed ${deleteInfo.changes} old errors.`
+        `[DB] Reset ${resetInfo.changes} stuck jobs. Removed ${deleteInfo.changes} old errors.`
       );
     }
   } catch (error) {

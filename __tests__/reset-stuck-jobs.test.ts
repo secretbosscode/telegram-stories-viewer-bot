@@ -21,8 +21,7 @@ jest.mock('../src/db', () => {
       const resetStmt = db.prepare(
         `UPDATE download_queue
          SET status = 'pending', processed_ts = NULL
-         WHERE status = 'processing'
-           OR (status = 'error' AND processed_ts > (strftime('%s','now') - 86400))`
+         WHERE status = 'processing'`
       );
       const resetInfo = resetStmt.run();
 
@@ -64,7 +63,7 @@ describe('resetStuckJobs', () => {
     expect(row.status).toBe('pending');
   });
 
-  test('requeues recent error but removes old ones', () => {
+  test('keeps recent error but removes old ones', () => {
     const now = Math.floor(Date.now() / 1000);
     // recent error (1 hour old)
     db.prepare(
@@ -77,7 +76,7 @@ describe('resetStuckJobs', () => {
     resetStuckJobs();
     const rows = db.prepare('SELECT id, status FROM download_queue ORDER BY id').all() as any[];
     expect(rows.length).toBe(1);
-    expect(rows[0].status).toBe('pending');
+    expect(rows[0].status).toBe('error');
   });
 
   test('deletes errors older than 24 hours', () => {
