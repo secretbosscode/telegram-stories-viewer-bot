@@ -100,51 +100,65 @@ function scheduleMonitor(m: MonitorRow) {
 async function checkSingleMonitor(id: number) {
   const m = getMonitor(id);
   if (!m) return; // might have been removed
-  const task: UserInfo = {
-    chatId: m.telegram_id,
-    link: m.target_username,
-    linkType: 'username',
-    locale: '',
-    initTime: Date.now(),
-    isPremium:
-      isUserPremium(m.telegram_id) || m.telegram_id === BOT_ADMIN_ID.toString(),
-  };
+  try {
+    const task: UserInfo = {
+      chatId: m.telegram_id,
+      link: m.target_username,
+      linkType: 'username',
+      locale: '',
+      initTime: Date.now(),
+      isPremium:
+        isUserPremium(m.telegram_id) || m.telegram_id === BOT_ADMIN_ID.toString(),
+    };
 
-  const mapped = await fetchActiveStories(task.link);
-  cleanupExpiredSentStories();
-  const sentKeys = new Set(listSentStoryKeys(m.id));
-  const newStories = mapped.filter((s) => {
-    const key = `${s.id}:${Math.floor(s.date.getTime() / 1000)}`;
-    return !sentKeys.has(key);
-  });
-  if (newStories.length) {
-    await sendActiveStories({ stories: newStories, task });
-    for (const s of newStories) {
-      const expiry = Math.floor(s.date.getTime() / 1000) + 24 * 3600;
-      const ts = Math.floor(s.date.getTime() / 1000);
-      markStorySent(m.id, s.id, ts, expiry);
+    const mapped = await fetchActiveStories(task.link);
+    cleanupExpiredSentStories();
+    const sentKeys = new Set(listSentStoryKeys(m.id));
+    const newStories = mapped.filter((s) => {
+      const key = `${s.id}:${Math.floor(s.date.getTime() / 1000)}`;
+      return !sentKeys.has(key);
+    });
+    if (newStories.length) {
+      await sendActiveStories({ stories: newStories, task });
+      for (const s of newStories) {
+        const expiry = Math.floor(s.date.getTime() / 1000) + 24 * 3600;
+        const ts = Math.floor(s.date.getTime() / 1000);
+        markStorySent(m.id, s.id, ts, expiry);
+      }
     }
-  }
 
-  const latest = await fetchLatestProfilePhoto(task.link);
-  const latestId = latest?.id || null;
-  if (latestId !== (m.last_photo_id || null)) {
-    if (latest) {
-      const client = await Userbot.getInstance();
-      const buffer = (await client.downloadMedia(latest.photo as any)) as Buffer;
-      await bot.telegram.sendPhoto(m.telegram_id, { source: buffer });
+    const latest = await fetchLatestProfilePhoto(task.link);
+    const latestId = latest?.id || null;
+    if (latestId !== (m.last_photo_id || null)) {
+      if (latest) {
+        const client = await Userbot.getInstance();
+        const buffer = (await client.downloadMedia(latest.photo as any)) as Buffer;
+        await bot.telegram.sendPhoto(m.telegram_id, { source: buffer });
+        await bot.telegram.sendMessage(
+          m.telegram_id,
+          t('', 'monitor.photoChanged', { user: `@${m.target_username}` })
+        );
+      } else if (m.last_photo_id) {
+        await bot.telegram.sendMessage(
+          m.telegram_id,
+          t('', 'monitor.photoRemoved', { user: `@${m.target_username}` })
+        );
+      }
+      updateMonitorPhoto(m.id, latestId);
+    }
+    updateMonitorChecked(m.id);
+    scheduleMonitor({ ...m, last_checked: Math.floor(Date.now() / 1000) });
+  } catch (err: any) {
+    console.error(`[Monitor] Error checking @${m.target_username}:`, err);
+    const msg = err?.errorMessage || err?.message || '';
+    if (/USERNAME_INVALID|No user has|Cannot find any entity/i.test(msg)) {
+      removeProfileMonitor(m.telegram_id, m.target_username);
       await bot.telegram.sendMessage(
         m.telegram_id,
-        t('', 'monitor.photoChanged', { user: `@${m.target_username}` })
+        t('', 'monitor.stopped', { user: `@${m.target_username}` })
       );
-    } else if (m.last_photo_id) {
-      await bot.telegram.sendMessage(
-        m.telegram_id,
-        t('', 'monitor.photoRemoved', { user: `@${m.target_username}` })
-      );
+    } else {
+      scheduleMonitor(m);
     }
-    updateMonitorPhoto(m.id, latestId);
   }
-  updateMonitorChecked(m.id);
-  scheduleMonitor({ ...m, last_checked: Math.floor(Date.now() / 1000) });
 }
