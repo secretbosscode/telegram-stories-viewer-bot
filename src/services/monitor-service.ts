@@ -178,6 +178,14 @@ async function checkSingleMonitor(id: number) {
       m.target_username = username;
     }
     if (idStr !== m.target_id) {
+      const existing = findMonitorByTargetId(m.telegram_id, idStr);
+      if (existing && existing.id !== m.id) {
+        if (monitorTimers.has(existing.id)) {
+          clearTimeout(monitorTimers.get(existing.id)!);
+          monitorTimers.delete(existing.id);
+        }
+        removeMonitor(m.telegram_id, existing.target_id);
+      }
       updateMonitorTarget(m.id, idStr);
       m.target_id = idStr;
     }
