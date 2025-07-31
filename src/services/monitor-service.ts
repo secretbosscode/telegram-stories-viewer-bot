@@ -10,6 +10,7 @@ import {
   listMonitors,
   listAllMonitors,
   updateMonitorChecked,
+  updateMonitorPhoto,
   MonitorRow,
   getMonitor,
   findMonitor,
@@ -19,13 +20,16 @@ import {
 } from '../db';
 import { UserInfo } from 'types';
 import { BOT_ADMIN_ID } from 'config/env-config';
+import { bot } from 'index';
+import { getEntityWithTempContact } from 'lib';
+import { t } from 'lib/i18n';
 
 export const CHECK_INTERVAL_HOURS = 2;
 export const MAX_MONITORS_PER_USER = 5;
 
 const monitorTimers = new Map<number, NodeJS.Timeout>();
 
-export function addProfileMonitor(userId: string, username: string): boolean {
+export async function addProfileMonitor(userId: string, username: string): Promise<boolean> {
   let row = findMonitor(userId, username);
   if (row) {
     if (!monitorTimers.has(row.id)) {
@@ -33,7 +37,8 @@ export function addProfileMonitor(userId: string, username: string): boolean {
     }
     return false; // already monitoring
   }
-  row = addMonitor(userId, username);
+  const latest = await fetchLatestProfilePhoto(username);
+  row = addMonitor(userId, username, latest?.id || null);
   scheduleMonitor(row);
   return true;
 }
@@ -71,6 +76,19 @@ async function fetchActiveStories(username: string) {
   return mapStories(activeResult.stories?.stories || []);
 }
 
+async function fetchLatestProfilePhoto(username: string): Promise<{ photo: Api.Photo; id: string } | null> {
+  const client = await Userbot.getInstance();
+  const entity = await getEntityWithTempContact(username);
+  const result = (await client.invoke(
+    new Api.photos.GetUserPhotos({ userId: entity, limit: 1 })
+  )) as Api.photos.Photos;
+  const photo = 'photos' in result ? result.photos[0] : null;
+  if (photo instanceof Api.Photo) {
+    return { photo, id: String(photo.id) };
+  }
+  return null;
+}
+
 function scheduleMonitor(m: MonitorRow) {
   const last = m.last_checked ? m.last_checked * 1000 : 0;
   const next = last + CHECK_INTERVAL_HOURS * 3600 * 1000;
@@ -106,6 +124,26 @@ async function checkSingleMonitor(id: number) {
       const ts = Math.floor(s.date.getTime() / 1000);
       markStorySent(m.id, s.id, ts, expiry);
     }
+  }
+
+  const latest = await fetchLatestProfilePhoto(task.link);
+  const latestId = latest?.id || null;
+  if (latestId !== (m.last_photo_id || null)) {
+    if (latest) {
+      const client = await Userbot.getInstance();
+      const buffer = (await client.downloadMedia(latest.photo as any)) as Buffer;
+      await bot.telegram.sendPhoto(m.telegram_id, { source: buffer });
+      await bot.telegram.sendMessage(
+        m.telegram_id,
+        t('', 'monitor.photoChanged', { user: `@${m.target_username}` })
+      );
+    } else if (m.last_photo_id) {
+      await bot.telegram.sendMessage(
+        m.telegram_id,
+        t('', 'monitor.photoRemoved', { user: `@${m.target_username}` })
+      );
+    }
+    updateMonitorPhoto(m.id, latestId);
   }
   updateMonitorChecked(m.id);
   scheduleMonitor({ ...m, last_checked: Math.floor(Date.now() / 1000) });
