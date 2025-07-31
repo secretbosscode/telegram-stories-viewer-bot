@@ -82,9 +82,6 @@ db.exec(`
     created_at INTEGER DEFAULT (strftime('%s','now'))
   );
 `);
-db.exec('DROP INDEX IF EXISTS monitor_unique_idx');
-db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_unique_idx ON monitors (telegram_id, target_id)');
-
 const monitorColumns = db.prepare("PRAGMA table_info(monitors)").all() as any[];
 if (!monitorColumns.some((c) => c.name === 'last_photo_id')) {
   db.exec('ALTER TABLE monitors ADD COLUMN last_photo_id TEXT');
@@ -92,6 +89,8 @@ if (!monitorColumns.some((c) => c.name === 'last_photo_id')) {
 if (!monitorColumns.some((c) => c.name === 'target_id')) {
   db.exec('ALTER TABLE monitors ADD COLUMN target_id TEXT');
 }
+db.exec('DROP INDEX IF EXISTS monitor_unique_idx');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_unique_idx ON monitors (telegram_id, target_id)');
 
 // Table storing which stories were already sent for each monitor
 db.exec(`
