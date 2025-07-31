@@ -506,7 +506,12 @@ bot.command('monitor', async (ctx) => {
     const msg = t(locale, 'monitor.list', {
       count: list.length,
       limit,
-      list: list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n'),
+      list: list
+        .map(
+          (m, i) =>
+            `${i + 1}. ${m.target_username ? `@${m.target_username}` : m.target_id}`,
+        )
+        .join('\n'),
       hours: CHECK_INTERVAL_HOURS,
     });
     return ctx.reply(msg);
@@ -548,7 +553,12 @@ bot.command('unmonitor', async (ctx) => {
       return ctx.reply(t(locale, 'monitor.none'));
     }
     const msg = t(locale, 'monitor.current', {
-      list: list.map((m, i) => `${i + 1}. @${m.target_username}`).join('\n'),
+      list: list
+        .map(
+          (m, i) =>
+            `${i + 1}. ${m.target_username ? `@${m.target_username}` : m.target_id}`,
+        )
+        .join('\n'),
     });
     return ctx.reply(msg);
   }
