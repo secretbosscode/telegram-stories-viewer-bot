@@ -6,6 +6,13 @@ import bigInt, { BigInteger } from 'big-integer';
 export async function getEntityWithTempContact(input: string): Promise<any> {
   const client = await Userbot.getInstance();
   if (!isPhoneNumber(input)) {
+    if (/^\d+$/.test(input)) {
+      try {
+        return client.getEntity(bigInt(input));
+      } catch {
+        // fall back to treating as username below
+      }
+    }
     return client.getEntity(input);
   }
 
