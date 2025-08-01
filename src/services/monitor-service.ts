@@ -2,6 +2,7 @@ import { sendActiveStories } from 'controllers/send-active-stories';
 import { mapStories } from 'controllers/download-stories';
 import { Userbot } from 'config/userbot';
 import { Api } from 'telegram';
+import bigInt from 'big-integer';
 import { isUserPremium } from './premium-service';
 import {
   addMonitor,
@@ -17,6 +18,7 @@ import {
   findMonitorByUsername,
   updateMonitorUsername,
   updateMonitorTarget,
+  updateMonitorAccessHash,
   markStorySent,
   listSentStoryKeys,
   cleanupExpiredSentStories,
@@ -46,6 +48,9 @@ export async function addProfileMonitor(
 ): Promise<boolean> {
   const entity = await getEntityWithTempContact(username);
   const targetId = String((entity as any).id);
+  const accessHash = (entity as any).accessHash
+    ? String((entity as any).accessHash)
+    : null;
 
   let row =
     findMonitorByTargetId(userId, targetId) ||
@@ -59,6 +64,10 @@ export async function addProfileMonitor(
     if ((entity as any).username && row.target_username !== (entity as any).username) {
       updateMonitorUsername(row.id, (entity as any).username);
       row.target_username = (entity as any).username;
+    }
+    if (accessHash && row.target_access_hash !== accessHash) {
+      updateMonitorAccessHash(row.id, accessHash);
+      row.target_access_hash = accessHash;
     }
 
     const duplicates = listMonitors(userId).filter(
@@ -85,6 +94,7 @@ export async function addProfileMonitor(
     userId,
     targetId,
     (entity as any).username || username,
+    accessHash,
     latest?.id || null,
   );
   scheduleMonitor(row);
@@ -171,23 +181,45 @@ function scheduleMonitor(m: MonitorRow) {
   monitorTimers.set(m.id, timer);
 }
 
-async function checkSingleMonitor(id: number) {
+export async function checkSingleMonitor(id: number) {
   const m = getMonitor(id);
   if (!m) return; // might have been removed
   try {
     const client = await Userbot.getInstance();
-    let entity;
+    let entity: any;
     try {
       entity = await getEntityWithTempContact(m.target_id);
     } catch {
-      entity = await getEntityWithTempContact(
-        m.target_username || m.target_id,
-      );
+      try {
+        entity = await getEntityWithTempContact(
+          m.target_username || m.target_id,
+        );
+      } catch {
+        if (m.target_access_hash) {
+          try {
+            const res = await client.invoke(
+              new Api.users.GetUsers({
+                id: [
+                  new Api.InputUser({
+                    userId: bigInt(m.target_id),
+                    accessHash: bigInt(m.target_access_hash),
+                  }),
+                ],
+              }),
+            );
+            entity = Array.isArray(res) ? res[0] : null;
+          } catch {}
+        }
+      }
     }
+    if (!entity) throw new Error('Cannot find any entity');
     const oldUsername = m.target_username;
     const oldDisplay = formatMonitorTarget(m);
     const username = (entity as any).username || null;
     const idStr = String((entity as any).id);
+    const accessHash = (entity as any).accessHash
+      ? String((entity as any).accessHash)
+      : null;
     if (username && username !== m.target_username) {
       updateMonitorUsername(m.id, username);
       m.target_username = username;
@@ -203,6 +235,10 @@ async function checkSingleMonitor(id: number) {
       }
       updateMonitorTarget(m.id, idStr);
       m.target_id = idStr;
+    }
+    if (accessHash && accessHash !== m.target_access_hash) {
+      updateMonitorAccessHash(m.id, accessHash);
+      m.target_access_hash = accessHash;
     }
 
     if (username && username !== oldUsername) {

@@ -77,6 +77,7 @@ db.exec(`
     telegram_id TEXT NOT NULL,
     target_id TEXT,
     target_username TEXT,
+    target_access_hash TEXT,
     last_checked INTEGER,
     last_photo_id TEXT,
     created_at INTEGER DEFAULT (strftime('%s','now'))
@@ -88,6 +89,9 @@ if (!monitorColumns.some((c) => c.name === 'last_photo_id')) {
 }
 if (!monitorColumns.some((c) => c.name === 'target_id')) {
   db.exec('ALTER TABLE monitors ADD COLUMN target_id TEXT');
+}
+if (!monitorColumns.some((c) => c.name === 'target_access_hash')) {
+  db.exec('ALTER TABLE monitors ADD COLUMN target_access_hash TEXT');
 }
 db.exec('DROP INDEX IF EXISTS monitor_unique_idx');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_unique_idx ON monitors (telegram_id, target_id)');
@@ -530,6 +534,7 @@ export interface MonitorRow {
   telegram_id: string;
   target_id: string;
   target_username: string | null;
+  target_access_hash: string | null;
   last_checked?: number;
   last_photo_id?: string | null;
 }
@@ -538,12 +543,13 @@ export function addMonitor(
   telegram_id: string,
   target_id: string,
   target_username: string | null,
+  target_access_hash?: string | null,
   last_photo_id?: string | null,
 ): MonitorRow {
   db.prepare(
-    `INSERT OR IGNORE INTO monitors (telegram_id, target_id, target_username, last_photo_id)
-     VALUES (?, ?, ?, ?)`
-  ).run(telegram_id, target_id, target_username, last_photo_id ?? null);
+    `INSERT OR IGNORE INTO monitors (telegram_id, target_id, target_username, target_access_hash, last_photo_id)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(telegram_id, target_id, target_username, target_access_hash ?? null, last_photo_id ?? null);
   const row = findMonitorByTargetId(telegram_id, target_id)!;
   return row;
 }
@@ -618,6 +624,13 @@ export function updateMonitorUsername(id: number, username: string | null): void
 
 export function updateMonitorTarget(id: number, target_id: string): void {
   db.prepare(`UPDATE monitors SET target_id = ? WHERE id = ?`).run(target_id, id);
+}
+
+export function updateMonitorAccessHash(
+  id: number,
+  target_access_hash: string | null,
+): void {
+  db.prepare(`UPDATE monitors SET target_access_hash = ? WHERE id = ?`).run(target_access_hash, id);
 }
 
 // ----- Monitor sent stories utils -----
