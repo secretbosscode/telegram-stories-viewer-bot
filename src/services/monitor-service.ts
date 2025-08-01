@@ -176,9 +176,14 @@ async function checkSingleMonitor(id: number) {
   if (!m) return; // might have been removed
   try {
     const client = await Userbot.getInstance();
-    const entity = await getEntityWithTempContact(
-      m.target_username || m.target_id,
-    );
+    let entity;
+    try {
+      entity = await getEntityWithTempContact(m.target_id);
+    } catch {
+      entity = await getEntityWithTempContact(
+        m.target_username || m.target_id,
+      );
+    }
     const username = (entity as any).username || null;
     const idStr = String((entity as any).id);
     if (username && username !== m.target_username) {
