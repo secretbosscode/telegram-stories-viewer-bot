@@ -58,6 +58,7 @@
   "monitor.started": "✅ Now monitoring {{user}} for active stories and profile photo changes. {{remaining}}",
   "monitor.photoChanged": "🖼️ Profile photo of {{user}} changed.",
   "monitor.photoRemoved": "🖼️ Profile photo of {{user}} was removed.",
+  "monitor.usernameChanged": "✏️ {{old}} changed username to {{user}}.",
   "monitor.none": "You are not monitoring any profiles.",
   "monitor.current": "👀 Currently monitoring:\n{{list}}",
   "monitor.stopped": "🔚 Stopped monitoring {{user}}.",

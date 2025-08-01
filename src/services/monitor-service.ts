@@ -184,6 +184,8 @@ async function checkSingleMonitor(id: number) {
         m.target_username || m.target_id,
       );
     }
+    const oldUsername = m.target_username;
+    const oldDisplay = formatMonitorTarget(m);
     const username = (entity as any).username || null;
     const idStr = String((entity as any).id);
     if (username && username !== m.target_username) {
@@ -201,6 +203,16 @@ async function checkSingleMonitor(id: number) {
       }
       updateMonitorTarget(m.id, idStr);
       m.target_id = idStr;
+    }
+
+    if (username && username !== oldUsername) {
+      await bot.telegram.sendMessage(
+        m.telegram_id,
+        t('', 'monitor.usernameChanged', {
+          old: oldDisplay,
+          user: formatMonitorTarget(m),
+        }),
+      );
     }
 
     const task: UserInfo = {
