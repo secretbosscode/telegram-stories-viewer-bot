@@ -53,6 +53,7 @@
   "monitor.remaining": "You have {{count}} monitor{{count==1?'':'s'}} left.",
   "monitor.already": "⚠️ This profile is already being monitored.",
   "monitor.started": "✅ Kini memantau {{user}} untuk cerita aktif dan perubahan foto profil. {{remaining}}",
+  "monitor.usernameChanged": "✏️ {{old}} menukar nama pengguna kepada {{user}}.",
   "monitor.none": "You are not monitoring any profiles.",
   "monitor.current": "👀 Currently monitoring:\n{{list}}",
   "monitor.stopped": "🔚 Stopped monitoring {{user}}.",

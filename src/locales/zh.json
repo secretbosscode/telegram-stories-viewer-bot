@@ -53,6 +53,7 @@
   "monitor.remaining": "You have {{count}} monitor{{count==1?'':'s'}} left.",
   "monitor.already": "⚠️ This profile is already being monitored.",
   "monitor.started": "✅ 正在监控 {{user}} 的活跃故事和头像更改。{{remaining}}",
+  "monitor.usernameChanged": "✏️ {{old}} 的用户名已更改为 {{user}}。",
   "monitor.none": "You are not monitoring any profiles.",
   "monitor.current": "👀 Currently monitoring:\n{{list}}",
   "monitor.stopped": "🔚 Stopped monitoring {{user}}.",
