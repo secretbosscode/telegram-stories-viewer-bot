@@ -26,6 +26,7 @@ import { t } from './lib/i18n';
 import { session, Telegraf } from 'telegraf';
 import fs from 'fs';
 import path from 'path';
+import pLimit from 'p-limit';
 import {
   db,
   resetStuckJobs,
@@ -673,9 +674,14 @@ bot.command('listpremium', async (ctx) => {
       .prepare('SELECT telegram_id, username, is_bot FROM users WHERE is_premium = 1')
       .all() as any[];
     if (!rows.length) return ctx.reply(t(locale, 'premium.noneFound'));
-    for (const u of rows) {
-      u.username = await refreshUserUsername(ctx.telegram, u);
-    }
+    const limit = pLimit(5);
+    await Promise.all(
+      rows.map((u) =>
+        limit(async () => {
+          u.username = await refreshUserUsername(ctx.telegram, u);
+        }),
+      ),
+    );
     let msg = t(locale, 'premium.usersHeader', { count: rows.length }) + '\n';
     rows.forEach((u, i) => {
       const days = getPremiumDaysLeft(String(u.telegram_id));
@@ -753,9 +759,14 @@ bot.command('users', async (ctx) => {
       .prepare('SELECT telegram_id, username, is_premium, is_bot, language FROM users')
       .all() as any[];
     if (!rows.length) return ctx.reply(t(locale, 'users.none'));
-    for (const u of rows) {
-      u.username = await refreshUserUsername(ctx.telegram, u);
-    }
+    const limit = pLimit(5);
+    await Promise.all(
+      rows.map((u) =>
+        limit(async () => {
+          u.username = await refreshUserUsername(ctx.telegram, u);
+        }),
+      ),
+    );
     let msg = t(locale, 'users.listHeader', { count: rows.length }) + '\n';
     rows.forEach((u, i) => {
       const premiumLabel = u.is_premium ? t(locale, 'label.premium') : t(locale, 'label.free');
