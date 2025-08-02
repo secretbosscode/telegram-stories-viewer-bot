@@ -3,6 +3,7 @@
 import { notifyAdmin } from 'controllers/send-message';
 import { db } from 'db';
 import { t } from '../lib/i18n';
+import type { Telegram } from 'telegraf';
 import { User } from 'telegraf/typings/core/types/typegram';
 
 // Define a type for our user model that matches the database table.
@@ -87,6 +88,27 @@ export const findUserById = (telegram_id: string): UserModel | undefined => {
   } catch (error) {
     console.error(`[DB] Error finding user ${telegram_id}:`, error);
     return undefined;
+  }
+};
+
+export const refreshUserUsername = async (
+  telegram: Telegram,
+  user: { telegram_id: string; username?: string | null },
+): Promise<string | null> => {
+  try {
+    const chat = await telegram.getChat(user.telegram_id);
+    const username = (chat as any).username || null;
+    if (username !== user.username) {
+      db.prepare('UPDATE users SET username = ? WHERE telegram_id = ?').run(
+        username,
+        user.telegram_id,
+      );
+      return username;
+    }
+    return user.username ?? null;
+  } catch (error) {
+    console.error(`[DB] Error refreshing username for ${user.telegram_id}:`, error);
+    return user.username ?? null;
   }
 };
 
