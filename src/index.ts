@@ -48,7 +48,7 @@ import {
 } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
-import { saveUser, findUserById } from './repositories/user-repository';
+import { saveUser, findUserById, refreshUserUsername } from './repositories/user-repository';
 import {
   isUserPremium,
   addPremiumUser,
@@ -68,6 +68,7 @@ import {
   CHECK_INTERVAL_HOURS,
   MAX_MONITORS_PER_USER,
   formatMonitorTarget,
+  refreshMonitorUsername,
 } from './services/monitor-service';
 import {
   resumePendingChecks,
@@ -492,6 +493,9 @@ bot.command('monitor', async (ctx) => {
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
     const list = listUserMonitors(userId);
+    for (const m of list) {
+      await refreshMonitorUsername(m);
+    }
     if (list.length === 0) {
       const limitMsg = isAdmin
         ? t(locale, 'monitor.unlimited') + ' '
@@ -547,6 +551,9 @@ bot.command('unmonitor', async (ctx) => {
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
     const list = listUserMonitors(userId);
+    for (const m of list) {
+      await refreshMonitorUsername(m);
+    }
     if (list.length === 0) {
       return ctx.reply(t(locale, 'monitor.none'));
     }
@@ -662,8 +669,13 @@ bot.command('listpremium', async (ctx) => {
   const locale = ctx.from.language_code || 'en';
   if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
-    const rows = db.prepare('SELECT telegram_id, username, is_bot FROM users WHERE is_premium = 1').all() as any[];
+    const rows = db
+      .prepare('SELECT telegram_id, username, is_bot FROM users WHERE is_premium = 1')
+      .all() as any[];
     if (!rows.length) return ctx.reply(t(locale, 'premium.noneFound'));
+    for (const u of rows) {
+      u.username = await refreshUserUsername(ctx.telegram, u);
+    }
     let msg = t(locale, 'premium.usersHeader', { count: rows.length }) + '\n';
     rows.forEach((u, i) => {
       const days = getPremiumDaysLeft(String(u.telegram_id));
@@ -737,14 +749,19 @@ bot.command('users', async (ctx) => {
   const locale = ctx.from.language_code || 'en';
   if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
-    const rows = db.prepare('SELECT telegram_id, username, is_premium, is_bot, language FROM users').all() as any[];
+    const rows = db
+      .prepare('SELECT telegram_id, username, is_premium, is_bot, language FROM users')
+      .all() as any[];
     if (!rows.length) return ctx.reply(t(locale, 'users.none'));
+    for (const u of rows) {
+      u.username = await refreshUserUsername(ctx.telegram, u);
+    }
     let msg = t(locale, 'users.listHeader', { count: rows.length }) + '\n';
     rows.forEach((u, i) => {
       const premiumLabel = u.is_premium ? t(locale, 'label.premium') : t(locale, 'label.free');
       const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
       const lang = u.language ? ` (${u.language})` : '';
-      msg += `${i + 1}. ${u.username ? '@'+u.username : u.telegram_id} [${premiumLabel}, ${type}]${lang}`;
+      msg += `${i + 1}. ${u.username ? '@' + u.username : u.telegram_id} [${premiumLabel}, ${type}]${lang}`;
       msg += '\n';
     });
     await replyChunks(ctx, msg);

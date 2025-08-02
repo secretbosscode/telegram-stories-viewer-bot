@@ -136,6 +136,36 @@ export function listUserMonitors(userId: string): MonitorRow[] {
   return listMonitors(userId);
 }
 
+export async function refreshMonitorUsername(m: MonitorRow): Promise<void> {
+  try {
+    const entity = await getEntityWithTempContact(
+      m.target_username || m.target_id,
+    );
+    const username = (entity as any).username || null;
+    const idStr = String((entity as any).id);
+    const accessHash = (entity as any).accessHash
+      ? String((entity as any).accessHash)
+      : null;
+    if (username && username !== m.target_username) {
+      updateMonitorUsername(m.id, username);
+      m.target_username = username;
+    }
+    if (idStr !== m.target_id) {
+      updateMonitorTarget(m.id, idStr);
+      m.target_id = idStr;
+    }
+    if (accessHash && accessHash !== m.target_access_hash) {
+      updateMonitorAccessHash(m.id, accessHash);
+      m.target_access_hash = accessHash;
+    }
+  } catch (err) {
+    console.error(
+      `[Monitor] Error refreshing username for ${formatMonitorTarget(m)}:`,
+      err,
+    );
+  }
+}
+
 export function startMonitorLoop(): void {
   const all = listAllMonitors();
   for (const m of all) {

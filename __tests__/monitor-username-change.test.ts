@@ -25,7 +25,7 @@ jest.mock('../src/config/env-config', () => ({
 import { Userbot } from '../src/config/userbot';
 import { getEntityWithTempContact } from '../src/lib';
 import { addMonitor, getMonitor, removeMonitor } from '../src/db';
-import { checkSingleMonitor } from '../src/services/monitor-service';
+import { checkSingleMonitor, refreshMonitorUsername } from '../src/services/monitor-service';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
 
@@ -57,4 +57,20 @@ test('updates username using access hash when username changes', async () => {
   expect(invoke.mock.calls.some((c) => c[0] instanceof Api.users.GetUsers)).toBe(true);
 
   removeMonitor('tester', '100');
+});
+
+test('refreshMonitorUsername updates stored username when listing', async () => {
+  const row = addMonitor('tester', '200', 'oldname', '888', null);
+  (getEntityWithTempContact as any).mockResolvedValue({
+    id: 200,
+    accessHash: 888,
+    username: 'fresh',
+  });
+
+  await refreshMonitorUsername(row);
+
+  const updated = getMonitor(row.id)!;
+  expect(updated.target_username).toBe('fresh');
+
+  removeMonitor('tester', '200');
 });
