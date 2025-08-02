@@ -23,6 +23,7 @@ import { IContextBot } from 'config/context-interface';
 import { BOT_ADMIN_ID, BOT_TOKEN, LOG_FILE } from 'config/env-config';
 import { initUserbot } from 'config/userbot';
 import { t } from './lib/i18n';
+import { replyChunks } from './lib/helpers';
 import { session, Telegraf } from 'telegraf';
 import fs from 'fs';
 import path from 'path';
@@ -713,7 +714,7 @@ async function sendPremiumPage(ctx: any, page: number, edit = false) {
     reply_markup: buttons.length ? { inline_keyboard: [buttons] } : undefined,
   };
   if (edit) await ctx.editMessageText(msg, opts);
-  else await ctx.reply(msg, opts);
+  else await replyChunks(ctx, msg, opts);
 }
 
 bot.command('listpremium', async (ctx) => {
@@ -778,7 +779,7 @@ bot.command('blocklist', async (ctx) => {
       const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
       msg += `${i + 1}. ${u.telegram_id} [${type}] at ${new Date(u.blocked_at * 1000).toLocaleDateString()}\n`;
     });
-    await ctx.reply(msg);
+    await replyChunks(ctx, msg);
   } catch (e) { console.error('Error in /blocklist:', e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
@@ -825,9 +826,9 @@ async function sendUsersPage(ctx: any, page: number, edit = false) {
     ...extraOptions,
     reply_markup: buttons.length ? { inline_keyboard: [buttons] } : undefined,
   };
-  if (edit) await ctx.editMessageText(msg, opts);
-  else await ctx.reply(msg, opts);
-}
+    if (edit) await ctx.editMessageText(msg, opts);
+    else await replyChunks(ctx, msg, opts);
+  }
 
 bot.command('users', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
@@ -852,7 +853,7 @@ bot.command('history', async (ctx) => {
       const type = r.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
       msg += `${i + 1}. ${user} [${type}] -> ${r.target_username} [${r.status}] ${date}\n`;
     });
-    await ctx.reply(msg, { link_preview_options: { is_disabled: true } });
+    await replyChunks(ctx, msg, { link_preview_options: { is_disabled: true } });
   } catch (e) {
     console.error('Error in /history:', e);
     await ctx.reply(t(locale, 'error.generic'));

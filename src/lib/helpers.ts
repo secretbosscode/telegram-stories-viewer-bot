@@ -95,6 +95,30 @@ export async function replyChunks(
   }
 }
 
+// Send long text via bot.telegram.sendMessage by splitting it into chunks
+// that respect Telegram's 4096-character limit. Each chunk is sent
+// sequentially to preserve ordering.
+export async function sendMessageChunks(
+  bot: import('telegraf').Telegraf<any>,
+  chatId: number | string,
+  text: string,
+  options?: Parameters<typeof bot.telegram.sendMessage>[2],
+): Promise<void> {
+  const MAX_LEN = 4096;
+  const lines = text.split('\n');
+  let chunk = '';
+  for (const line of lines) {
+    if ((chunk + line + '\n').length > MAX_LEN) {
+      await bot.telegram.sendMessage(chatId, chunk, options);
+      chunk = '';
+    }
+    chunk += line + '\n';
+  }
+  if (chunk) {
+    await bot.telegram.sendMessage(chatId, chunk, options);
+  }
+}
+
 // Update or create a pinned message showing remaining Premium time
 
 export async function updatePremiumPinnedMessage(

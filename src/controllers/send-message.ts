@@ -2,6 +2,7 @@
 
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
+import { sendMessageChunks } from 'lib/helpers';
 // CORRECTED: Import UserInfo AND NotifyAdminParams from your central types.ts file
 import { UserInfo, NotifyAdminParams } from 'types'; // This is now correct!
 
@@ -28,13 +29,14 @@ export async function notifyAdmin({
 
   try {
     if (status === 'error' && errorInfo) {
-      await bot.telegram.sendMessage(
+      await sendMessageChunks(
+        bot,
         BOT_ADMIN_ID,
         '🛑 ERROR 🛑\n' +
           `🔗 Target link: ${task?.link}\n` +
           `reason: ${JSON.stringify(errorInfo.cause)}\n` +
           `author: ${userInfo}`,
-        msgOptions
+        msgOptions,
       );
       return;
     }
@@ -44,15 +46,17 @@ export async function notifyAdmin({
       if (task?.user) {
         text += '\n👤 user: ' + userInfo;
       }
-      await bot.telegram.sendMessage(BOT_ADMIN_ID, text, msgOptions);
+      await sendMessageChunks(bot, BOT_ADMIN_ID, text, msgOptions);
       return;
     }
 
     if (status === 'start') {
-      await bot.telegram.sendMessage(BOT_ADMIN_ID, `👤 Task started by: ${userInfo}`, {
-        ...msgOptions,
-        parse_mode: 'HTML',
-      });
+      await sendMessageChunks(
+        bot,
+        BOT_ADMIN_ID,
+        `👤 Task started by: ${userInfo}`,
+        { ...msgOptions, parse_mode: 'HTML' },
+      );
     }
   } catch (e) {
     // Avoid throwing in the background
@@ -78,7 +82,7 @@ export async function sendErrorMessage({
     errorInfo: { cause: message },
   } as NotifyAdminParams); // Added assertion for notifyAdmin call
   try {
-    await bot.telegram.sendMessage(task.chatId, message, {
+    await sendMessageChunks(bot, task.chatId, message, {
       parse_mode: 'Markdown',
       link_preview_options: { is_disabled: true },
     });
