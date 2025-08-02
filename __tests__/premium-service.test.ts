@@ -22,6 +22,9 @@ jest.mock('../src/db', () => {
       premium_until INTEGER,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE deleted_usernames (
+      username_hash TEXT PRIMARY KEY
+    );
   `);
   return { db };
 });
@@ -33,6 +36,7 @@ describe('premium-service', () => {
   beforeEach(() => {
     // Clean users table before each test
     db.prepare('DELETE FROM users').run();
+    db.prepare('DELETE FROM deleted_usernames').run();
   });
 
   test('addPremiumUser marks user premium with expiration', () => {
@@ -71,5 +75,12 @@ describe('premium-service', () => {
     expect(row.is_premium).toBe(1);
     expect(row.free_trial_used).toBe(1);
     expect(hasUsedFreeTrial('5')).toBe(true);
+  });
+
+  test('hasUsedFreeTrial checks deleted username hashes', () => {
+    const crypto = require('crypto');
+    const hash = crypto.createHash('sha256').update('foo').digest('hex');
+    db.prepare('INSERT INTO deleted_usernames (username_hash) VALUES (?)').run(hash);
+    expect(hasUsedFreeTrial('10', 'foo')).toBe(true);
   });
 });

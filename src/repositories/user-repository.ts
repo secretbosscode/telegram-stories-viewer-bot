@@ -5,6 +5,7 @@ import { db } from 'db';
 import { t } from '../lib/i18n';
 import type { Telegram } from 'telegraf';
 import { User } from 'telegraf/typings/core/types/typegram';
+import { createHash } from 'crypto';
 
 // Define a type for our user model that matches the database table.
 export interface UserModel {
@@ -94,7 +95,7 @@ export const findUserById = (telegram_id: string): UserModel | undefined => {
 export const refreshUserUsername = async (
   telegram: Telegram,
   user: { telegram_id: string; username?: string | null },
-): Promise<string | null> => {
+): Promise<string | null | undefined> => {
   try {
     const chat = await telegram.getChat(user.telegram_id);
     const username = (chat as any).username || null;
@@ -106,8 +107,27 @@ export const refreshUserUsername = async (
       return username;
     }
     return user.username ?? null;
-  } catch (error) {
-    console.error(`[DB] Error refreshing username for ${user.telegram_id}:`, error);
+  } catch (error: any) {
+    const errMsg = String(error?.description || error?.message || error);
+    if (errMsg.includes('chat not found') || errMsg.includes('user not found')) {
+      // User removed or no longer accessible
+      if (user.username) {
+        const hash = createHash('sha256')
+          .update(user.username.toLowerCase())
+          .digest('hex');
+        db.prepare(
+          'INSERT OR IGNORE INTO deleted_usernames (username_hash) VALUES (?)',
+        ).run(hash);
+      }
+      db.prepare('DELETE FROM users WHERE telegram_id = ?').run(
+        user.telegram_id,
+      );
+      return undefined;
+    }
+    console.error(
+      `[DB] Error refreshing username for ${user.telegram_id}:`,
+      error,
+    );
     return user.username ?? null;
   }
 };

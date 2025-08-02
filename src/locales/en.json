@@ -157,5 +157,7 @@
   "stories.completed": "🎉 Download for {{link}} completed!",
   "stories.noneFound": "🤷 No public stories found for {{link}}.",
   "queue.cooldown": "⏳ You can request stories for \"{{user}}\" once every {{hours}} hours.\nTry again in {{h}}h {{m}}m.",
-  "download.noStory": "❌ Could not retrieve the requested story."
+  "download.noStory": "❌ Could not retrieve the requested story.",
+  "pagination.next": "Next",
+  "pagination.prev": "Prev"
 }
