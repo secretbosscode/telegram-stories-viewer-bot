@@ -23,7 +23,12 @@ const USERNAME_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 const usernameRefreshTimes = new Map<number, number>();
 
 export function formatMonitorTarget(m: MonitorRow): string {
-  return m.target_username ? `@${m.target_username}` : m.target_id;
+  if (m.target_username) {
+    return m.target_username.startsWith('+')
+      ? m.target_username
+      : `@${m.target_username}`;
+  }
+  return m.target_id;
 }
 
 export async function addProfileMonitor(
