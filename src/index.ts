@@ -87,7 +87,6 @@ import {
   sendTemporaryMessage,
   updatePremiumPinnedMessage,
   isValidStoryLink,
-  replyChunks,
 } from 'lib';
 import {
   recordProfileRequestFx,
@@ -106,6 +105,7 @@ export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
 setBotInstance(bot);
 const RESTART_COMMAND = 'restart';
 const extraOptions: any = { link_preview_options: { is_disabled: true } };
+const LIST_PAGE_SIZE = 100;
 
 // =============================
 // Command definitions
@@ -282,7 +282,10 @@ bot.start(async (ctx) => {
   const isPremium = isUserPremium(String(ctx.from.id));
   const locale = ctx.from.language_code || 'en';
   let msg = t(locale, 'start.welcome') + '\n\n' + t(locale, 'start.instructions');
-  if (!isUserPremium(String(ctx.from.id)) && !hasUsedFreeTrial(String(ctx.from.id))) {
+  if (
+    !isUserPremium(String(ctx.from.id)) &&
+    !hasUsedFreeTrial(String(ctx.from.id), ctx.from.username)
+  ) {
     msg = t(locale, 'start.freeTrial') + msg;
   }
   const botUser = bot.botInfo?.username || 'this_bot';
@@ -356,7 +359,7 @@ bot.command('freetrial', async (ctx) => {
   if (isUserPremium(userId)) {
     return ctx.reply(t(locale, 'premium.already'));
   }
-  if (hasUsedFreeTrial(userId)) {
+  if (hasUsedFreeTrial(userId, ctx.from.username)) {
     return ctx.reply(t(locale, 'premium.freeTrialUsed'));
   }
   grantFreeTrial(userId);
@@ -665,32 +668,61 @@ bot.command('ispremium', async (ctx) => {
   } catch (e) { console.error("Error in /ispremium:", e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
+async function sendPremiumPage(ctx: any, page: number, edit = false) {
+  const locale = ctx.from.language_code || 'en';
+  const offset = page * LIST_PAGE_SIZE;
+  let rows = db
+    .prepare(
+      'SELECT telegram_id, username, is_bot FROM users WHERE is_premium = 1 ORDER BY telegram_id LIMIT ? OFFSET ?',
+    )
+    .all(LIST_PAGE_SIZE, offset) as any[];
+  const limit = pLimit(5);
+  const valid: any[] = [];
+  await Promise.all(
+    rows.map((u) =>
+      limit(async () => {
+        const name = await refreshUserUsername(ctx.telegram, u);
+        if (typeof name === 'undefined') return;
+        u.username = name;
+        valid.push(u);
+      }),
+    ),
+  );
+  rows = valid;
+  const total = db
+    .prepare('SELECT COUNT(*) as c FROM users WHERE is_premium = 1')
+    .get().c as number;
+  if (!rows.length && page === 0) {
+    return ctx.reply(t(locale, 'premium.noneFound'));
+  }
+  let msg = t(locale, 'premium.usersHeader', { count: total }) + '\n';
+  rows.forEach((u, i) => {
+    const days = getPremiumDaysLeft(String(u.telegram_id));
+    const daysText =
+      days === Infinity ? t(locale, 'premium.neverExpires') : `${days}d`;
+    const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
+    msg += `${offset + i + 1}. ${u.username ? '@' + u.username : u.telegram_id} [${type}] - ${daysText}\n`;
+  });
+  const buttons: any[] = [];
+  if (offset > 0)
+    buttons.push({ text: t(locale, 'pagination.prev'), callback_data: `premium:${page - 1}` });
+  if (offset + rows.length < total)
+    buttons.push({ text: t(locale, 'pagination.next'), callback_data: `premium:${page + 1}` });
+  const opts: any = {
+    ...extraOptions,
+    reply_markup: buttons.length ? { inline_keyboard: [buttons] } : undefined,
+  };
+  if (edit) await ctx.editMessageText(msg, opts);
+  else await ctx.reply(msg, opts);
+}
+
 bot.command('listpremium', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  const locale = ctx.from.language_code || 'en';
-  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
-  try {
-    const rows = db
-      .prepare('SELECT telegram_id, username, is_bot FROM users WHERE is_premium = 1')
-      .all() as any[];
-    if (!rows.length) return ctx.reply(t(locale, 'premium.noneFound'));
-    const limit = pLimit(5);
-    await Promise.all(
-      rows.map((u) =>
-        limit(async () => {
-          u.username = await refreshUserUsername(ctx.telegram, u);
-        }),
-      ),
-    );
-    let msg = t(locale, 'premium.usersHeader', { count: rows.length }) + '\n';
-    rows.forEach((u, i) => {
-      const days = getPremiumDaysLeft(String(u.telegram_id));
-      const daysText = days === Infinity ? t(locale, 'premium.neverExpires') : `${days}d`;
-      const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
-      msg += `${i + 1}. ${u.username ? '@' + u.username : u.telegram_id} [${type}] - ${daysText}\n`;
-    });
-    await ctx.reply(msg);
-  } catch (e) { console.error("Error in /listpremium:", e); await ctx.reply(t(locale, 'error.generic')); }
+  if (!isActivated(ctx.from.id)) {
+    const locale = ctx.from.language_code || 'en';
+    return ctx.reply(t(locale, 'msg.startFirst'));
+  }
+  await sendPremiumPage(ctx, 0);
 });
 
 bot.command('block', async (ctx) => {
@@ -750,33 +782,60 @@ bot.command('blocklist', async (ctx) => {
   } catch (e) { console.error('Error in /blocklist:', e); await ctx.reply(t(locale, 'error.generic')); }
 });
 
+async function sendUsersPage(ctx: any, page: number, edit = false) {
+  const locale = ctx.from.language_code || 'en';
+  const offset = page * LIST_PAGE_SIZE;
+  let rows = db
+    .prepare(
+      'SELECT telegram_id, username, is_premium, is_bot, language FROM users ORDER BY telegram_id LIMIT ? OFFSET ?',
+    )
+    .all(LIST_PAGE_SIZE, offset) as any[];
+  const limit = pLimit(5);
+  const valid: any[] = [];
+  await Promise.all(
+    rows.map((u) =>
+      limit(async () => {
+        const name = await refreshUserUsername(ctx.telegram, u);
+        if (typeof name === 'undefined') return;
+        u.username = name;
+        valid.push(u);
+      }),
+    ),
+  );
+  rows = valid;
+  const total = db.prepare('SELECT COUNT(*) as c FROM users').get().c as number;
+  if (!rows.length && page === 0) {
+    return ctx.reply(t(locale, 'users.none'));
+  }
+  let msg = t(locale, 'users.listHeader', { count: total }) + '\n';
+  rows.forEach((u, i) => {
+    const premiumLabel = u.is_premium
+      ? t(locale, 'label.premium')
+      : t(locale, 'label.free');
+    const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
+    const lang = u.language ? ` (${u.language})` : '';
+    msg += `${offset + i + 1}. ${u.username ? '@' + u.username : u.telegram_id} [${premiumLabel}, ${type}]${lang}\n`;
+  });
+  const buttons: any[] = [];
+  if (offset > 0)
+    buttons.push({ text: t(locale, 'pagination.prev'), callback_data: `users:${page - 1}` });
+  if (offset + rows.length < total)
+    buttons.push({ text: t(locale, 'pagination.next'), callback_data: `users:${page + 1}` });
+  const opts: any = {
+    ...extraOptions,
+    reply_markup: buttons.length ? { inline_keyboard: [buttons] } : undefined,
+  };
+  if (edit) await ctx.editMessageText(msg, opts);
+  else await ctx.reply(msg, opts);
+}
+
 bot.command('users', async (ctx) => {
   if (ctx.from.id != BOT_ADMIN_ID) return;
-  const locale = ctx.from.language_code || 'en';
-  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
-  try {
-    const rows = db
-      .prepare('SELECT telegram_id, username, is_premium, is_bot, language FROM users')
-      .all() as any[];
-    if (!rows.length) return ctx.reply(t(locale, 'users.none'));
-    const limit = pLimit(5);
-    await Promise.all(
-      rows.map((u) =>
-        limit(async () => {
-          u.username = await refreshUserUsername(ctx.telegram, u);
-        }),
-      ),
-    );
-    let msg = t(locale, 'users.listHeader', { count: rows.length }) + '\n';
-    rows.forEach((u, i) => {
-      const premiumLabel = u.is_premium ? t(locale, 'label.premium') : t(locale, 'label.free');
-      const type = u.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
-      const lang = u.language ? ` (${u.language})` : '';
-      msg += `${i + 1}. ${u.username ? '@' + u.username : u.telegram_id} [${premiumLabel}, ${type}]${lang}`;
-      msg += '\n';
-    });
-    await replyChunks(ctx, msg);
-  } catch (e) { console.error("Error in /users:", e); await ctx.reply(t(locale, 'error.generic')); }
+  if (!isActivated(ctx.from.id)) {
+    const locale = ctx.from.language_code || 'en';
+    return ctx.reply(t(locale, 'msg.startFirst'));
+  }
+  await sendUsersPage(ctx, 0);
 });
 
 bot.command('history', async (ctx) => {
@@ -904,6 +963,19 @@ export async function handleCallbackQuery(ctx: IContextBot) {
     } catch {}
     await ctx.telegram.sendMessage(BOT_ADMIN_ID, t(locale, 'admin.restarting'));
     process.exit();
+  }
+
+  if (data.startsWith('users:') && ctx.from?.id == BOT_ADMIN_ID) {
+    const page = Number(data.split(':')[1] || '0');
+    await sendUsersPage(ctx, page, true);
+    await ctx.answerCbQuery();
+    return;
+  }
+  if (data.startsWith('premium:') && ctx.from?.id == BOT_ADMIN_ID) {
+    const page = Number(data.split(':')[1] || '0');
+    await sendPremiumPage(ctx, page, true);
+    await ctx.answerCbQuery();
+    return;
   }
 
   if (data.includes('&')) {

@@ -1,4 +1,5 @@
 import { db } from '../db';
+import { createHash } from 'crypto';
 
 export const PREMIUM_BASE_DAYS = 30;
 
@@ -98,11 +99,24 @@ export const getPremiumDaysLeft = (telegramId: string): number => {
   return Math.ceil(secondsLeft / 86400);
 };
 
-export const hasUsedFreeTrial = (telegramId: string): boolean => {
+export const hasUsedFreeTrial = (
+  telegramId: string,
+  username?: string,
+): boolean => {
   const row = db
     .prepare('SELECT free_trial_used FROM users WHERE telegram_id = ?')
     .get(telegramId) as UserRow | undefined;
-  return !!row?.free_trial_used;
+  if (row?.free_trial_used) return true;
+  if (username) {
+    const hash = createHash('sha256')
+      .update(username.toLowerCase())
+      .digest('hex');
+    const exists = db
+      .prepare('SELECT 1 FROM deleted_usernames WHERE username_hash = ?')
+      .get(hash);
+    if (exists) return true;
+  }
+  return false;
 };
 
 export const grantFreeTrial = (telegramId: string): void => {

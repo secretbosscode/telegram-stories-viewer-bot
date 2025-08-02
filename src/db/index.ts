@@ -55,6 +55,14 @@ if (!userColumns.some((c) => c.name === 'language')) {
   db.exec('ALTER TABLE users ADD COLUMN language TEXT');
 }
 
+// Track hashes of usernames that belonged to deleted accounts to prevent
+// free-trial abuse by recreating accounts with the same username.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS deleted_usernames (
+    username_hash TEXT PRIMARY KEY
+  );
+`);
+
 // Download Queue Table
 // CHANGE 1: Added the `task_details` column to store the full UserInfo object as JSON text.
 db.exec(`
