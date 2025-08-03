@@ -28,7 +28,11 @@ jest.mock('../src/repositories/user-repository', () => ({
 import { Userbot } from '../src/config/userbot';
 import { getEntityWithTempContact } from '../src/lib';
 import { addMonitor, getMonitor, removeMonitor } from '../src/db';
-import { checkSingleMonitor, refreshMonitorUsername } from '../src/services/monitor-service';
+import {
+  checkSingleMonitor,
+  refreshMonitorUsername,
+  listUserMonitors,
+} from '../src/services/monitor-service';
 import { bot } from '../src/index';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
@@ -59,13 +63,15 @@ test('updates username using access hash when username changes', async () => {
 
   const updated = getMonitor(row.id)!;
   expect(updated.target_username).toBe('newname');
+  const list = listUserMonitors('tester');
+  expect(list[0].target_username).toBe('newname');
   expect(invoke.mock.calls.some((c) => c[0] instanceof Api.users.GetUsers)).toBe(true);
   expect(bot.telegram.sendMessage).toHaveBeenCalledWith('tester', 'translated');
 
   removeMonitor('tester', '100');
 });
 
-test('refreshMonitorUsername updates stored username when listing', async () => {
+test('refreshMonitorUsername keeps /monitor list in sync', async () => {
   (getEntityWithTempContact as any).mockReset();
 
   const row = addMonitor('tester', '200', 'oldname', '888', null);
@@ -81,8 +87,8 @@ test('refreshMonitorUsername updates stored username when listing', async () => 
 
   await refreshMonitorUsername(row);
 
-  const updated = getMonitor(row.id)!;
-  expect(updated.target_username).toBe('fresh');
+  const list = listUserMonitors('tester');
+  expect(list[0].target_username).toBe('fresh');
   expect(getEntityWithTempContact).not.toHaveBeenCalled();
 
   removeMonitor('tester', '200');

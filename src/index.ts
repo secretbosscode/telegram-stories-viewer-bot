@@ -499,10 +499,11 @@ bot.command('monitor', async (ctx) => {
   }
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
-    const list = listUserMonitors(userId);
+    let list = listUserMonitors(userId);
     for (const m of list) {
       await refreshMonitorUsername(m);
     }
+    list = listUserMonitors(userId);
     if (list.length === 0) {
       const limitMsg = isAdmin
         ? t(locale, 'monitor.unlimited') + ' '
@@ -559,10 +560,11 @@ bot.command('unmonitor', async (ctx) => {
   }
   const args = ctx.message.text.split(' ').slice(1);
   if (!args.length) {
-    const list = listUserMonitors(userId);
+    let list = listUserMonitors(userId);
     for (const m of list) {
       await refreshMonitorUsername(m);
     }
+    list = listUserMonitors(userId);
     if (list.length === 0) {
       return ctx.reply(t(locale, 'monitor.none'));
     }
