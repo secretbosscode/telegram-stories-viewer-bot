@@ -31,6 +31,26 @@ export const MAX_MONITORS_PER_USER = 5;
 const USERNAME_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 const usernameRefreshTimes = new Map<number, number>();
 
+// Track when the next monitor cycle is scheduled
+let nextMonitorCheckAt: number | null = null;
+
+function scheduleNextMonitorCheck() {
+  const intervalMs = CHECK_INTERVAL_HOURS * 60 * 60 * 1000;
+  nextMonitorCheckAt = Date.now() + intervalMs;
+  setTimeout(async () => {
+    try {
+      await forceCheckMonitors();
+    } catch (err) {
+      console.error('[Monitor] Scheduled check error:', err);
+    }
+    scheduleNextMonitorCheck();
+  }, intervalMs);
+}
+
+export function getNextMonitorCheck(): number | null {
+  return nextMonitorCheckAt;
+}
+
 export function formatMonitorTarget(m: MonitorRow): string {
   if (m.target_username) {
     return m.target_username.startsWith('+')
@@ -94,7 +114,7 @@ export function listUserMonitors(telegramId: string): MonitorRow[] {
 }
 
 export function startMonitorLoop(): void {
-  // Simplified no-op loop for testing environment
+  scheduleNextMonitorCheck();
 }
 
 export async function forceCheckMonitors(): Promise<number> {
