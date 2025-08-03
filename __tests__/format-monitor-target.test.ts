@@ -1,8 +1,10 @@
 import { jest } from '@jest/globals';
 
-jest.mock('../src/config/env-config', () => ({ BOT_ADMIN_ID: 0 }));
+jest.mock('../src/config/env-config', () => ({ BOT_ADMIN_ID: 0, LOG_FILE: '/tmp/test.log' }));
 jest.mock('../src/config/userbot', () => ({ Userbot: { getInstance: jest.fn() } }));
 jest.mock('../src/lib', () => ({ getEntityWithTempContact: jest.fn() }));
+jest.mock('controllers/send-active-stories', () => ({ sendActiveStories: jest.fn() }));
+jest.mock('controllers/download-stories', () => ({ mapStories: jest.fn(() => []) }));
 
 import { formatMonitorTarget } from '../src/services/monitor-service';
 
