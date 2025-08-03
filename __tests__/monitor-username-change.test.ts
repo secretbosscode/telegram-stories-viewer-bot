@@ -7,7 +7,7 @@ jest.mock('../src/index', () => ({
   bot: { telegram: { sendMessage: jest.fn(), sendPhoto: jest.fn() } },
 }));
 jest.mock('../src/lib/i18n', () => ({
-  t: () => '',
+  t: jest.fn(() => 'translated'),
 }));
 jest.mock('../src/controllers/send-active-stories', () => ({
   sendActiveStories: jest.fn(),
@@ -21,11 +21,15 @@ jest.mock('../src/lib', () => ({
 jest.mock('../src/config/env-config', () => ({
   BOT_ADMIN_ID: 0,
 }));
+jest.mock('../src/repositories/user-repository', () => ({
+  findUserById: jest.fn(() => ({ language: 'en' })),
+}));
 
 import { Userbot } from '../src/config/userbot';
 import { getEntityWithTempContact } from '../src/lib';
 import { addMonitor, getMonitor, removeMonitor } from '../src/db';
 import { checkSingleMonitor, refreshMonitorUsername } from '../src/services/monitor-service';
+import { bot } from '../src/index';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
 
@@ -49,12 +53,14 @@ test('updates username using access hash when username changes', async () => {
   });
 
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  (bot.telegram.sendMessage as jest.Mock).mockClear();
 
   await checkSingleMonitor(row.id);
 
   const updated = getMonitor(row.id)!;
   expect(updated.target_username).toBe('newname');
   expect(invoke.mock.calls.some((c) => c[0] instanceof Api.users.GetUsers)).toBe(true);
+  expect(bot.telegram.sendMessage).toHaveBeenCalledWith('tester', 'translated');
 
   removeMonitor('tester', '100');
 });
