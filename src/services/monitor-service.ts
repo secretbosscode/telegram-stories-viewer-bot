@@ -12,9 +12,15 @@ import {
   updateMonitorAccessHash,
   updateMonitorTarget,
   updateMonitorChecked,
+  updateMonitorPhoto,
+  listSentStoryKeys,
+  markStorySent,
   type MonitorRow,
 } from '../db';
+import { sendActiveStories } from 'controllers/send-active-stories';
+import { mapStories } from 'controllers/download-stories';
 import { getEntityWithTempContact } from 'lib';
+import { bot } from 'index';
 
 export const CHECK_INTERVAL_HOURS = 1;
 export const MAX_MONITORS_PER_USER = 5;
@@ -138,6 +144,95 @@ export async function checkSingleMonitor(id: number): Promise<void> {
   const m = getMonitor(id);
   if (!m) return;
   await refreshMonitorUsername(m);
+
+  try {
+    const client = await Userbot.getInstance();
+    const peer = new Api.InputUser({
+      userId: bigInt(m.target_id),
+      accessHash: m.target_access_hash
+        ? bigInt(m.target_access_hash)
+        : bigInt.zero,
+    });
+
+    const res = await client.invoke(
+      new Api.stories.GetPeerStories({ peer }),
+    );
+    const stories = (res as any)?.stories?.stories || [];
+
+    const sent = new Set(listSentStoryKeys(m.id));
+    const newStories: any[] = [];
+    for (const s of stories) {
+      const key = `${s.id}:${s.date}`;
+      if (sent.has(key)) continue;
+      markStorySent(m.id, s.id, s.date, s.expireDate);
+      sent.add(key);
+      newStories.push(s);
+    }
+
+    if (newStories.length > 0) {
+      await sendActiveStories({
+        stories: mapStories(newStories),
+        task: {
+          chatId: m.telegram_id,
+          link: formatMonitorTarget(m),
+          linkType: 'username',
+          locale: 'en',
+          initTime: Date.now(),
+        } as any,
+      });
+    }
+
+    try {
+      const photoRes = await client.invoke(
+        new Api.photos.GetUserPhotos({ userId: peer, limit: 1 }),
+      );
+      const photos = (photoRes as any)?.photos || [];
+      const latest = photos[0];
+      const latestId = latest ? String(latest.id) : null;
+      if (latestId !== m.last_photo_id) {
+        if (latest && latestId) {
+          try {
+            const buffer = (await client.downloadMedia(latest as any)) as Buffer;
+            const isVideo =
+              'videoSizes' in latest &&
+              Array.isArray((latest as any).videoSizes) &&
+              (latest as any).videoSizes.length > 0;
+            const caption = `New profile ${isVideo ? 'video' : 'photo'} from ${formatMonitorTarget(m)}`;
+            if (isVideo) {
+              await bot.telegram.sendVideo(
+                m.telegram_id,
+                { source: buffer },
+                { caption },
+              );
+            } else {
+              await bot.telegram.sendPhoto(
+                m.telegram_id,
+                { source: buffer },
+                { caption },
+              );
+            }
+          } catch (err) {
+            console.error(
+              `[Monitor] Error sending profile media for ${formatMonitorTarget(m)}:`,
+              err,
+            );
+          }
+        }
+        updateMonitorPhoto(m.id, latestId);
+      }
+    } catch (err) {
+      console.error(
+        `[Monitor] Error checking profile photo for ${formatMonitorTarget(m)}:`,
+        err,
+      );
+    }
+  } catch (err) {
+    console.error(
+      `[Monitor] Error checking ${formatMonitorTarget(m)}:`,
+      err,
+    );
+  }
+
   updateMonitorChecked(id);
 }
 
