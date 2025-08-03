@@ -22,6 +22,8 @@ import { sendActiveStories } from 'controllers/send-active-stories';
 import { mapStories } from 'controllers/download-stories';
 import { getEntityWithTempContact } from 'lib';
 import { bot } from 'index';
+import { t } from '../lib/i18n';
+import { findUserById } from '../repositories/user-repository';
 
 export const CHECK_INTERVAL_HOURS = 1;
 export const MAX_MONITORS_PER_USER = 5;
@@ -36,6 +38,25 @@ export function formatMonitorTarget(m: MonitorRow): string {
       : `@${m.target_username}`;
   }
   return m.target_id;
+}
+
+async function notifyUsernameChange(
+  m: MonitorRow,
+  newUsername: string,
+): Promise<void> {
+  const oldUsername = m.target_username;
+  updateMonitorUsername(m.id, newUsername);
+  m.target_username = newUsername;
+  if (!oldUsername) return;
+  const lang = findUserById(m.telegram_id)?.language;
+  const format = (u: string) => (u.startsWith('+') ? u : `@${u}`);
+  await bot.telegram.sendMessage(
+    m.telegram_id,
+    t(lang, 'monitor.usernameChanged', {
+      old: format(oldUsername),
+      user: format(newUsername),
+    }),
+  );
 }
 
 export async function addProfileMonitor(
@@ -109,8 +130,7 @@ export async function refreshMonitorUsername(m: MonitorRow): Promise<void> {
           ? String((user as any).accessHash)
           : null;
         if (username && username !== m.target_username) {
-          updateMonitorUsername(m.id, username);
-          m.target_username = username;
+          await notifyUsernameChange(m, username);
         }
         if (accessHash && accessHash !== m.target_access_hash) {
           updateMonitorAccessHash(m.id, accessHash);
@@ -130,8 +150,7 @@ export async function refreshMonitorUsername(m: MonitorRow): Promise<void> {
       : null;
 
     if (username && username !== m.target_username) {
-      updateMonitorUsername(m.id, username);
-      m.target_username = username;
+      await notifyUsernameChange(m, username);
     }
     if (idStr !== m.target_id) {
       updateMonitorTarget(m.id, idStr);
