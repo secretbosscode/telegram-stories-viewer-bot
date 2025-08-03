@@ -15,6 +15,7 @@ import {
   updateMonitorPhoto,
   listSentStoryKeys,
   markStorySent,
+  listAllMonitors,
   type MonitorRow,
 } from '../db';
 import { sendActiveStories } from 'controllers/send-active-stories';
@@ -73,6 +74,14 @@ export function listUserMonitors(telegramId: string): MonitorRow[] {
 
 export function startMonitorLoop(): void {
   // Simplified no-op loop for testing environment
+}
+
+export async function forceCheckMonitors(): Promise<number> {
+  const monitors = listAllMonitors();
+  for (const m of monitors) {
+    await checkSingleMonitor(m.id);
+  }
+  return monitors.length;
 }
 
 export async function refreshMonitorUsername(m: MonitorRow): Promise<void> {
