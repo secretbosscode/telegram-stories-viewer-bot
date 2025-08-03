@@ -3,6 +3,7 @@ import path from 'path';
 import { Telegraf } from 'telegraf';
 import { BOT_ADMIN_ID, LOG_FILE } from '../config/env-config';
 import { db, unblockUser } from '../db';
+import { getNextMonitorCheck } from './monitor-service';
 
 let startTimestamp = Math.floor(Date.now() / 1000);
 let statusMessageId: number | null = null;
@@ -92,13 +93,18 @@ export function getStatusText(): string {
     total === 0
       ? 'empty'
       : `${queue.pending} pending, ${queue.processing} processing`;
+  const next = getNextMonitorCheck();
+  const nextText = next
+    ? new Date(next).toISOString().replace('T', ' ').replace(/\..+/, ' UTC')
+    : 'n/a';
   return (
     `🕒 Uptime: ${formatUptime()}\n` +
     `New users: ${stats.newUsers}\n` +
     `Payments: ${stats.paidInvoices}\n` +
     `Invites redeemed: ${stats.invitesRedeemed}\n` +
     `Errors last 24h: ${stats.errors}\n` +
-    `Queue: ${queueText}`
+    `Queue: ${queueText}\n` +
+    `Next monitor check: ${nextText}`
   );
 }
 
