@@ -537,10 +537,12 @@ bot.command('monitor', async (ctx) => {
     return ctx.reply(t(locale, 'monitor.already'));
   }
   const currentCount = userMonitorCount(userId);
+  const remaining = Math.max(MAX_MONITORS_PER_USER - currentCount, 0);
   const remainingText = isAdmin
     ? t(locale, 'monitor.unlimited')
     : t(locale, 'monitor.remaining', {
-        count: Math.max(MAX_MONITORS_PER_USER - currentCount, 0),
+        count: remaining,
+        plural: remaining === 1 ? '' : 's',
       });
   await ctx.reply(
     t(locale, 'monitor.started', { user: input, remaining: remainingText })

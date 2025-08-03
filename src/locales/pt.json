@@ -51,7 +51,7 @@
   "monitor.usage": "Usage: /monitor <@username|+19875551234>\n{{limitMsg}}Checks run every {{hours}}h.",
   "monitor.list": "👀 Currently monitoring ({{count}}/{{limit}}):\n{{list}}\nChecks run every {{hours}}h. Use /unmonitor <@username|+19875551234> to remove. Phone numbers do not use @.",
   "monitor.limit": "🚫 You can monitor up to {{max}} profiles.",
-  "monitor.remaining": "You have {{count}} monitor{{count==1?'':'s'}} left.",
+  "monitor.remaining": "You have {{count}} monitor{{plural}} left.",
   "monitor.already": "⚠️ This profile is already being monitored.",
   "monitor.started": "✅ Agora monitorando {{user}} por stories ativos e mudanças na foto de perfil. {{remaining}}",
   "monitor.usernameChanged": "✏️ {{old}} mudou seu nome de usuário para {{user}}.",
