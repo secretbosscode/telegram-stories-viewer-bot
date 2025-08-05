@@ -79,19 +79,24 @@ async function notifyUsernameChange(
   );
 }
 
+function normalizeUsername(u: string): string {
+  return u.replace(/^@/, '').toLowerCase();
+}
+
 export async function addProfileMonitor(
   telegramId: string,
   username: string,
 ): Promise<MonitorRow | null> {
-  const existing = findMonitorByUsername(telegramId, username);
+  const norm = normalizeUsername(username);
+  const existing = findMonitorByUsername(telegramId, norm);
   if (existing) return null;
 
-  const entity = await getEntityWithTempContact(username);
+  const entity = await getEntityWithTempContact(norm);
   const targetId = String((entity as any).id);
   const accessHash = (entity as any).accessHash
     ? String((entity as any).accessHash)
     : null;
-  const targetUsername = (entity as any).username || username;
+  const targetUsername = ((entity as any).username || norm).toLowerCase();
   return addMonitor(telegramId, targetId, targetUsername, accessHash);
 }
 
@@ -99,7 +104,7 @@ export async function removeProfileMonitor(
   telegramId: string,
   username: string,
 ): Promise<void> {
-  const existing = findMonitorByUsername(telegramId, username);
+  const existing = findMonitorByUsername(telegramId, normalizeUsername(username));
   if (existing) {
     removeMonitor(telegramId, existing.target_id);
   }

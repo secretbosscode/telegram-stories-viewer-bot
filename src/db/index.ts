@@ -602,7 +602,7 @@ export function findMonitorByUsername(
 ): MonitorRow | undefined {
   return db
     .prepare(
-      `SELECT * FROM monitors WHERE telegram_id = ? AND target_username = ?`
+      `SELECT * FROM monitors WHERE telegram_id = ? AND LOWER(target_username) = LOWER(?)`
     )
     .get(telegram_id, target_username) as MonitorRow | undefined;
 }
