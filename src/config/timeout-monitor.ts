@@ -1,4 +1,6 @@
-export const MAX_TIMEOUT_ERRORS = 10;
+// Allow fewer consecutive failures before triggering a restart so the bot
+// recovers automatically when the Telegram client gets stuck.
+export const MAX_TIMEOUT_ERRORS = 5;
 export const TIME_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 let errorTimestamps: number[] = [];
 
