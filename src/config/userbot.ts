@@ -4,6 +4,11 @@ import fs from 'fs';
 import readline from 'readline';
 import path from 'path';
 import { recordTimeoutError } from './timeout-monitor';
+import {
+  withTelegramRetry,
+  wrapClientWithRetry,
+  isNoWorkersError,
+} from 'lib/telegram-retry';
 
 import {
   USERBOT_API_HASH,
@@ -47,9 +52,9 @@ export class Userbot {
     if (!Userbot.initPromise) {
       Userbot.initPromise = initClient()
         .then((client) => {
-          Userbot.client = client;
+          Userbot.client = wrapClientWithRetry(client);
           Userbot.initPromise = null;
-          return client;
+          return Userbot.client;
         })
         .catch((err) => {
           Userbot.initPromise = null;
@@ -65,6 +70,10 @@ export class Userbot {
     try {
       await Userbot.client.invoke(new Api.updates.GetState());
     } catch (err) {
+      if (isNoWorkersError(err)) {
+        console.warn('[Userbot] Connection check: No workers running. Retrying later.');
+        return;
+      }
       console.error('[Userbot] Connection check failed:', err);
       recordTimeoutError(err);
       await Userbot.reset();
@@ -145,7 +154,7 @@ async function initClient() {
   } catch (err) {
     console.error('[Userbot] Failed to write session', err);
   }
-  await client.sendMessage('me', { message: 'Hi!' });
+  await withTelegramRetry(() => client.sendMessage('me', { message: 'Hi!' }));
   return client;
 }
 
