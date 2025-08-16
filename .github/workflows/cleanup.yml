@@ -1,0 +1,17 @@
+name: Auto-delete merged branches
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref != 'main' && github.event.pull_request.head.ref != 'development'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete merged branch
+        uses: peter-evans/delete-branch@v3
+        with:
+          branch: ${{ github.event.pull_request.head.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
