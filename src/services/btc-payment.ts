@@ -155,6 +155,7 @@ function scheduleInvoiceCheck(
           userId,
           userId,
           days,
+          userLang,
           true,
         );
       }

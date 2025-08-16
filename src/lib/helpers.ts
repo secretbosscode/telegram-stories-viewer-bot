@@ -9,6 +9,7 @@ import {
   setPinnedMessageUpdatedAt,
 } from 'repositories/user-repository';
 import * as bitcoin from 'bitcoinjs-lib';
+import { t } from 'lib/i18n';
 
 const MAX_STORIES_SIZE = 45;
 
@@ -102,6 +103,7 @@ export async function updatePremiumPinnedMessage(
   chatId: number | string,
   telegramId: string,
   daysLeft: number,
+  locale: string | undefined,
   force = false,
 ): Promise<void> {
   const lastUpdated = getPinnedMessageUpdatedAt(telegramId);
@@ -109,8 +111,12 @@ export async function updatePremiumPinnedMessage(
   if (!force && lastUpdated && now - lastUpdated < 86400) {
     return;
   }
-  const daysText = daysLeft === Infinity ? 'unlimited' : daysLeft.toString();
-  const text = `🌟 Premium: ${daysText} day${daysLeft === 1 ? '' : 's'} remaining`;
+  const daysText =
+    daysLeft === Infinity ? t(locale, 'premium.unlimited') : daysLeft.toString();
+  const text = t(locale, 'premium.pinnedMessage', {
+    days: daysText,
+    plural: daysLeft === 1 ? '' : 's',
+  });
   const pinnedId = getPinnedMessageId(telegramId);
   if (pinnedId) {
     try {
