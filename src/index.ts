@@ -235,6 +235,7 @@ bot.use(async (ctx, next) => {
   try {
     const id = ctx.from?.id;
     if (!id) return;
+    const locale = ctx.from?.language_code;
     const text =
       ctx.updateType === 'message' && ctx.message && 'text' in ctx.message
         ? ctx.message.text
@@ -242,7 +243,13 @@ bot.use(async (ctx, next) => {
     if (text.startsWith('/premium')) return;
     if (isUserPremium(String(id))) {
       const days = getPremiumDaysLeft(String(id));
-      await updatePremiumPinnedMessage(bot, ctx.chat!.id, String(id), days);
+      await updatePremiumPinnedMessage(
+        bot,
+        ctx.chat!.id,
+        String(id),
+        days,
+        locale,
+      );
     }
   } catch (e) {
     console.error('premium middleware error', e);
@@ -421,6 +428,7 @@ bot.command('verify', async (ctx) => {
       ctx.chat!.id,
       String(ctx.from.id),
       days,
+      locale,
       true,
     );
     notifyAdmin({

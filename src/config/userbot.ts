@@ -9,6 +9,7 @@ import {
   wrapClientWithRetry,
   isNoWorkersError,
 } from 'lib/telegram-retry';
+import { t } from 'lib/i18n';
 
 import {
   USERBOT_API_HASH,
@@ -116,6 +117,7 @@ async function initClient() {
 
   const password = USERBOT_PASSWORD || '';
   let phoneCode = USERBOT_PHONE_CODE || '';
+  const locale = process.env.BOT_LOCALE || 'en';
 
   const promptInput = async (query: string): Promise<string> => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -131,11 +133,11 @@ async function initClient() {
     phoneNumber: USERBOT_PHONE_NUMBER,
     password: async () => {
       if (password) return password;
-      return promptInput('Please enter two-factor authentication password: ');
+      return promptInput(t(locale, 'userbot.prompt2fa'));
     },
     phoneCode: async (_isCodeViaApp?: boolean) => {
       if (!phoneCode) {
-        phoneCode = await promptInput('Please enter the Telegram login code: ');
+        phoneCode = await promptInput(t(locale, 'userbot.promptCode'));
       }
       if (!phoneCode) throw new Error('USERBOT_PHONE_CODE is required for first login!');
       return phoneCode;
