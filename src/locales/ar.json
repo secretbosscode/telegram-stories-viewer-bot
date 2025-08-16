@@ -101,6 +101,10 @@
   "admin.upgradePayment": "💰 Upgrade payment from {{user}} ({{amount}} BTC)",
   "premium.usersHeader": "🌟 Premium users ({{count}}):",
   "premium.neverExpires": "never expires",
+  "premium.unlimited": "غير محدود",
+  "premium.pinnedMessage": "🌟 بريميوم: تبقى {{days}} يومًا",
+  "userbot.prompt2fa": "الرجاء إدخال كلمة مرور التحقق بخطوتين: ",
+  "userbot.promptCode": "الرجاء إدخال رمز تسجيل الدخول في تيليجرام: ",
   "label.bot": "BOT",
   "label.user": "USER",
   "label.premium": "PREMIUM",
@@ -172,5 +176,11 @@
   "stories.fetchingGlobal": "⏳ Fetching global stories...",
   "archive.uploadedBatch": "Uploaded {{sent}}/{{total}} archived stories ✅",
   "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅",
-  "global.error": "An error occurred while processing global stories. The admin has been notified."
+  "global.error": "An error occurred while processing global stories. The admin has been notified.",
+  "global.label": "قصص عالمية",
+  "monitor.photoChanged": "🖼️ تم تغيير صورة الملف الشخصي لـ {{user}}.",
+  "monitor.photoRemoved": "🖼️ تمت إزالة صورة الملف الشخصي لـ {{user}}.",
+  "monitor.deleted": "⚠️ يبدو أن {{user}} قد حذف حسابه. تم إيقاف المراقبة.",
+  "pagination.next": "التالي",
+  "pagination.prev": "السابق"
 }

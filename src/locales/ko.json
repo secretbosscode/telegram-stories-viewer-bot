@@ -101,6 +101,10 @@
   "admin.upgradePayment": "💰 Upgrade payment from {{user}} ({{amount}} BTC)",
   "premium.usersHeader": "🌟 Premium users ({{count}}):",
   "premium.neverExpires": "never expires",
+  "premium.unlimited": "무제한",
+  "premium.pinnedMessage": "🌟 프리미엄: 남은 기간 {{days}}일",
+  "userbot.prompt2fa": "2단계 인증 비밀번호를 입력하세요: ",
+  "userbot.promptCode": "텔레그램 로그인 코드를 입력하세요: ",
   "label.bot": "BOT",
   "label.user": "USER",
   "label.premium": "PREMIUM",
@@ -152,7 +156,7 @@
   "active.none": "❌ Cannot download Active stories, most likely they are too large to send via bot.",
   "active.uploadedBatch": "Uploaded {{sent}}/{{total}} active stories from {{user}} ✅",
   "active.error": "An error occurred while sending stories. The admin has been notified.",
-  "global.label": "global stories",
+  "global.label": "글로벌 스토리",
   "global.downloading": "⏳ Downloading Global stories...",
   "global.uploading": "📥 {{count}} Global stories downloaded successfully!\n⏳ Uploading stories to Telegram...",
   "global.none": "❌ No Global stories could be sent. They might be too large or none were found.",
@@ -173,5 +177,10 @@
   "global.adminOnly": "🚫 이 명령은 관리자만 사용할 수 있습니다.",
   "stories.fetchingGlobal": "⏳ Fetching global stories...",
   "archive.uploadedBatch": "Uploaded {{sent}}/{{total}} archived stories ✅",
-  "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅"
+  "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅",
+  "monitor.photoChanged": "🖼️ {{user}} 님의 프로필 사진이 변경되었습니다.",
+  "monitor.photoRemoved": "🖼️ {{user}} 님의 프로필 사진이 삭제되었습니다.",
+  "monitor.deleted": "⚠️ {{user}} 님이 계정을 삭제한 것 같습니다. 모니터링이 중지되었습니다.",
+  "pagination.next": "다음",
+  "pagination.prev": "이전"
 }

@@ -101,6 +101,10 @@
   "admin.upgradePayment": "💰 Upgrade payment from {{user}} ({{amount}} BTC)",
   "premium.usersHeader": "🌟 Premium users ({{count}}):",
   "premium.neverExpires": "never expires",
+  "premium.unlimited": "без обмежень",
+  "premium.pinnedMessage": "🌟 Преміум: залишилось {{days}} днів",
+  "userbot.prompt2fa": "Будь ласка, введіть пароль двофакторної автентифікації: ",
+  "userbot.promptCode": "Будь ласка, введіть код входу Telegram: ",
   "label.bot": "BOT",
   "label.user": "USER",
   "label.premium": "PREMIUM",
@@ -152,7 +156,7 @@
   "active.none": "❌ Cannot download Active stories, most likely they are too large to send via bot.",
   "active.uploadedBatch": "Uploaded {{sent}}/{{total}} active stories from {{user}} ✅",
   "active.error": "An error occurred while sending stories. The admin has been notified.",
-  "global.label": "global stories",
+  "global.label": "глобальні історії",
   "global.downloading": "⏳ Downloading Global stories...",
   "global.uploading": "📥 {{count}} Global stories downloaded successfully!\n⏳ Uploading stories to Telegram...",
   "global.none": "❌ No Global stories could be sent. They might be too large or none were found.",
@@ -173,5 +177,10 @@
   "global.adminOnly": "🚫 Ця команда доступна лише адміністратору.",
   "stories.fetchingGlobal": "⏳ Fetching global stories...",
   "archive.uploadedBatch": "Uploaded {{sent}}/{{total}} archived stories ✅",
-  "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅"
+  "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅",
+  "monitor.photoChanged": "🖼️ Змінено фото профілю {{user}}.",
+  "monitor.photoRemoved": "🖼️ Фото профілю {{user}} видалено.",
+  "monitor.deleted": "⚠️ Схоже, {{user}} видалив свій акаунт. Моніторинг зупинено.",
+  "pagination.next": "Далі",
+  "pagination.prev": "Назад"
 }

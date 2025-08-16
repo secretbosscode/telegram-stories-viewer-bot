@@ -101,6 +101,10 @@
   "admin.upgradePayment": "💰 Upgrade payment from {{user}} ({{amount}} BTC)",
   "premium.usersHeader": "🌟 Premium users ({{count}}):",
   "premium.neverExpires": "never expires",
+  "premium.unlimited": "ilimitado",
+  "premium.pinnedMessage": "🌟 Premium: restam {{days}} dia{{plural}}",
+  "userbot.prompt2fa": "Por favor, insira a senha de autenticação de dois fatores: ",
+  "userbot.promptCode": "Por favor, insira o código de login do Telegram: ",
   "label.bot": "BOT",
   "label.user": "USER",
   "label.premium": "PREMIUM",
@@ -172,5 +176,11 @@
   "stories.fetchingGlobal": "⏳ Fetching global stories...",
   "archive.uploadedBatch": "Uploaded {{sent}}/{{total}} archived stories ✅",
   "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅",
-  "global.error": "An error occurred while processing global stories. The admin has been notified."
+  "global.error": "An error occurred while processing global stories. The admin has been notified.",
+  "global.label": "stories globais",
+  "monitor.photoChanged": "🖼️ A foto de perfil de {{user}} foi alterada.",
+  "monitor.photoRemoved": "🖼️ A foto de perfil de {{user}} foi removida.",
+  "monitor.deleted": "⚠️ {{user}} parece ter excluído sua conta. Monitoramento encerrado.",
+  "pagination.next": "Próximo",
+  "pagination.prev": "Anterior"
 }
