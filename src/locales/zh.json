@@ -172,5 +172,11 @@
   "stories.fetchingGlobal": "⏳ Fetching global stories...",
   "archive.uploadedBatch": "Uploaded {{sent}}/{{total}} archived stories ✅",
   "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅",
-  "global.error": "An error occurred while processing global stories. The admin has been notified."
+  "global.error": "An error occurred while processing global stories. The admin has been notified.",
+  "global.label": "全球故事",
+  "monitor.photoChanged": "🖼️ {{user}} 的头像已更改。",
+  "monitor.photoRemoved": "🖼️ {{user}} 的头像已被移除。",
+  "monitor.deleted": "⚠️ {{user}} 似乎已删除其账户。已停止监控。",
+  "pagination.next": "下一页",
+  "pagination.prev": "上一页"
 }
