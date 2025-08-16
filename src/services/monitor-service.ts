@@ -40,6 +40,9 @@ let nextMonitorCheckAt: number | null = null;
 let monitorTimer: NodeJS.Timeout | null = null;
 
 function scheduleNextMonitorCheck() {
+  if (monitorCheckTimer) {
+    clearTimeout(monitorCheckTimer);
+  }
   const intervalMs = CHECK_INTERVAL_HOURS * 60 * 60 * 1000;
   nextMonitorCheckAt = Date.now() + intervalMs;
   monitorTimer = setTimeout(async () => {
@@ -48,7 +51,6 @@ function scheduleNextMonitorCheck() {
     } catch (err) {
       console.error('[Monitor] Scheduled check error:', err);
     }
-    scheduleNextMonitorCheck();
   }, intervalMs);
 }
 
@@ -132,9 +134,17 @@ export function stopMonitorLoop(): void {
 }
 
 export async function forceCheckMonitors(): Promise<number> {
+  if (monitorCheckTimer) {
+    clearTimeout(monitorCheckTimer);
+    monitorCheckTimer = null;
+  }
   const monitors = listAllMonitors();
-  for (const m of monitors) {
-    await checkSingleMonitor(m.id);
+  try {
+    for (const m of monitors) {
+      await checkSingleMonitor(m.id);
+    }
+  } finally {
+    scheduleNextMonitorCheck();
   }
   return monitors.length;
 }
