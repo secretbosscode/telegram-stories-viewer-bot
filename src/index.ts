@@ -489,6 +489,25 @@ bot.command('profile', async (ctx) => {
   await sendProfileMedia(ctx.chat!.id, input, ctx.from);
 });
 
+bot.command('globalstories', async (ctx) => {
+  const locale = ctx.from.language_code || 'en';
+  if (ctx.from.id !== BOT_ADMIN_ID) {
+    return ctx.reply(t(locale, 'global.adminOnly'));
+  }
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
+  const user = ctx.from;
+  const task: UserInfo = {
+    chatId: String(ctx.chat.id),
+    link: 'global',
+    linkType: 'username',
+    locale: user.language_code || '',
+    user,
+    initTime: Date.now(),
+    storyRequestType: 'global',
+  };
+  handleNewTask(task);
+});
+
 bot.command('monitor', async (ctx) => {
   const locale = ctx.from.language_code || 'en';
   const userId = String(ctx.from.id);
