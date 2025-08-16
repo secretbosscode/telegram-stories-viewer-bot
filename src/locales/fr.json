@@ -172,5 +172,11 @@
   "stories.fetchingGlobal": "⏳ Fetching global stories...",
   "archive.uploadedBatch": "Uploaded {{sent}}/{{total}} archived stories ✅",
   "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅",
-  "global.error": "An error occurred while processing global stories. The admin has been notified."
+  "global.error": "An error occurred while processing global stories. The admin has been notified.",
+  "global.label": "stories globales",
+  "monitor.photoChanged": "🖼️ La photo de profil de {{user}} a changé.",
+  "monitor.photoRemoved": "🖼️ La photo de profil de {{user}} a été supprimée.",
+  "monitor.deleted": "⚠️ {{user}} semble avoir supprimé son compte. Surveillance arrêtée.",
+  "pagination.next": "Suivant",
+  "pagination.prev": "Précédent"
 }
