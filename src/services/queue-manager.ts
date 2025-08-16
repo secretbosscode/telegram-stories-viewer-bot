@@ -22,7 +22,7 @@ import { bot } from 'index';
 import { sendTemporaryMessage } from 'lib';
 import { UserInfo, DownloadQueueItem, SendStoriesFxParams } from 'types';
 import { t } from 'lib/i18n';
-import { getAllStoriesFx, getParticularStoryFx, getArchivedStoriesFx } from 'controllers/get-stories';
+import { getAllStoriesFx, getParticularStoryFx, getGlobalStoriesFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 import { sendGlobalStories } from 'controllers/send-global-stories';
 import { Userbot } from 'config/userbot';
