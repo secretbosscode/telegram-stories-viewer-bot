@@ -161,5 +161,10 @@
   "queue.cooldown": "⏳ You can request stories for \"{{user}}\" once every {{hours}} hours.\nTry again in {{h}}h {{m}}m.",
   "download.noStory": "❌ Could not retrieve the requested story.",
   "pagination.next": "Next",
-  "pagination.prev": "Prev"
+  "pagination.prev": "Prev",
+  "stories.fetchingArchive": "⏳ Fetching archived stories...",
+  "archive.downloading": "⏳ Downloading Archived stories...",
+  "archive.uploading": "📥 {{count}} Archived stories downloaded successfully!\\n⏳ Uploading stories to Telegram...",
+  "archive.none": "❌ No Archived stories could be sent.",
+  "archive.error": "An error occurred while sending archived stories. The admin has been notified."
 }

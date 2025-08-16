@@ -156,5 +156,10 @@
   "stories.completed": "🎉 Загрузка для {{link}} завершена!",
   "stories.noneFound": "🤷 Публичные истории для {{link}} не найдены.",
   "queue.cooldown": "⏳ Запрашивать истории у \"{{user}}\" можно раз в {{hours}} часов.\nПовторите через {{h}}ч {{m}}м.",
-  "download.noStory": "❌ Не удалось получить запрошенную историю."
+  "download.noStory": "❌ Не удалось получить запрошенную историю.",
+  "stories.fetchingArchive": "⏳ Fetching archived stories...",
+  "archive.downloading": "⏳ Downloading Archived stories...",
+  "archive.uploading": "📥 {{count}} Archived stories downloaded successfully!\\n⏳ Uploading stories to Telegram...",
+  "archive.none": "❌ No Archived stories could be sent.",
+  "archive.error": "An error occurred while sending archived stories. The admin has been notified."
 }

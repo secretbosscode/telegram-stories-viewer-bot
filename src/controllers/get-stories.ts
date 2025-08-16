@@ -117,6 +117,65 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
 
 
 // =========================================================================
+// Fetch a user's archived stories using pagination.
+// =========================================================================
+export const getArchivedStoriesFx = createEffect(async (task: UserInfo) => {
+  try {
+    await sendTemporaryMessage(
+      bot,
+      task.chatId,
+      t(task.locale, 'stories.fetchingArchive')
+    );
+
+    const client = await Userbot.getInstance();
+    const entity = await getEntityWithTempContact(task.link);
+    notifyAdmin({ task, status: 'start' });
+
+    const archivedStories: Api.TypeStoryItem[] = [];
+    let offsetId = 0;
+    let fetchedInLoop = 0;
+
+    while (true) {
+      const result = await client
+        .invoke(new Api.stories.GetStoriesArchive({ peer: entity, offsetId }))
+        .catch((err) => {
+          console.error(
+            `[getArchivedStoriesFx] Error fetching archived stories for ${task.link} (${task.chatId}):`,
+            err,
+          );
+          return null;
+        });
+
+      if (!result || result.stories.length === 0) break;
+
+      archivedStories.push(...result.stories);
+      offsetId = result.stories[result.stories.length - 1].id;
+      fetchedInLoop += result.stories.length;
+
+      if (result.stories.length < 100) break;
+      if (fetchedInLoop > 1000 && isDevEnv) {
+        console.warn('[getArchivedStoriesFx] DEV MODE: Safety break in pagination loop.');
+        break;
+      }
+      await timeout(1000);
+    }
+
+    return { archivedStories };
+  } catch (error: any) {
+    console.error(`[GetStories] Error in getArchivedStoriesFx for task ${task.link}:`, error);
+    if (error instanceof FloodWaitError) {
+      const seconds = error.seconds || 60;
+      return t(task.locale, 'stories.floodWait', { minutes: Math.ceil(seconds / 60) });
+    }
+    if (error.message?.includes('No user corresponding to')) {
+      return t(task.locale, 'stories.userNotFound', { user: task.link });
+    }
+    return t(task.locale, 'stories.errorGeneric', { user: task.link });
+  }
+});
+
+
+// =========================================================================
 // Fetch a particular story from a link like t.me/username/s/123
 // =========================================================================
 export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
