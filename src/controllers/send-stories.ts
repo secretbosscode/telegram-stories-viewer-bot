@@ -23,6 +23,7 @@ import { sendPaginatedStories } from 'controllers/send-paginated-stories';
 import { sendParticularStory } from 'controllers/send-particular-story';
 import { sendPinnedStories } from 'controllers/send-pinned-stories';
 import { sendGlobalStories } from 'controllers/send-global-stories';
+import { sendArchivedStories } from 'controllers/send-archived-stories';
 import { mapStories } from 'controllers/download-stories';
 
 /**
