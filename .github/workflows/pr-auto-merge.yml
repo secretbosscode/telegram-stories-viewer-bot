@@ -1,0 +1,26 @@
+name: Auto resolve PR conflicts
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  resolve:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Merge base branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git merge -X ours --no-edit origin/${{ github.event.pull_request.base.ref }} || true
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
