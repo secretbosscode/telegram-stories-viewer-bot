@@ -324,6 +324,7 @@ bot.command('help', async (ctx) => {
         cmdMonitor: t(locale, 'cmd.monitor'),
         cmdUnmonitor: t(locale, 'cmd.unmonitor'),
         cmdArchive: t(locale, 'cmd.archive'),
+        cmdGlobalstories: t(locale, 'cmd.globalstories'),
       });
   }
 
