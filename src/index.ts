@@ -323,6 +323,7 @@ bot.command('help', async (ctx) => {
         cmdMonitor: t(locale, 'cmd.monitor'),
         cmdUnmonitor: t(locale, 'cmd.unmonitor'),
         cmdArchive: t(locale, 'cmd.archive'),
+        cmdGlobalstories: t(locale, 'cmd.globalstories'),
       });
   }
 
@@ -490,6 +491,33 @@ bot.command('profile', async (ctx) => {
 
   await recordProfileRequestFx({ telegram_id: userId, target_username: input });
   await sendProfileMedia(ctx.chat!.id, input, ctx.from);
+});
+
+bot.command('archive', async (ctx) => {
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
+  const userId = String(ctx.from.id);
+  const isAdmin = ctx.from.id === BOT_ADMIN_ID;
+  const isPremium = isUserPremium(userId);
+  if (!isAdmin && !isPremium) {
+    return ctx.reply(t(locale, 'monitor.premiumOnly'));
+  }
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length < 1) {
+    return ctx.reply(t(locale, 'archive.usage'));
+  }
+  const username = args[0].replace(/^@/, '');
+  const task: UserInfo = {
+    chatId: String(ctx.chat.id),
+    link: username,
+    linkType: 'username',
+    locale: ctx.from.language_code || '',
+    user: ctx.from,
+    initTime: Date.now(),
+    isPremium: isPremium,
+    storyRequestType: 'archived',
+  };
+  handleNewTask(task);
 });
 
 bot.command('globalstories', async (ctx) => {
