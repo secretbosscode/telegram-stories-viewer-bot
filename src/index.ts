@@ -306,6 +306,7 @@ bot.command('help', async (ctx) => {
     cmdStart: t(locale, 'cmd.start'),
     cmdHelp: t(locale, 'cmd.help'),
     cmdPremium: t(locale, 'cmd.premium'),
+    cmdUpgrade: t(locale, 'cmd.upgrade'),
     cmdFreetrial: t(locale, 'cmd.freetrial'),
     cmdQueue: t(locale, 'cmd.queue'),
     cmdInvite: t(locale, 'cmd.invite'),
