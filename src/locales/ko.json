@@ -156,5 +156,19 @@
   "stories.completed": "🎉 Download for {{link}} completed!",
   "stories.noneFound": "🤷 No public stories found for {{link}}.",
   "queue.cooldown": "⏳ You can request stories for \"{{user}}\" once every {{hours}} hours.\nTry again in {{h}}h {{m}}m.",
-  "download.noStory": "❌ Could not retrieve the requested story."
+  "download.noStory": "❌ Could not retrieve the requested story.",
+  "cmd.archive": "보관된 스토리 다운로드",
+  "cmd.globalstories": "글로벌 스토리 탐색",
+  "stories.fetchingArchive": "⏳ 보관된 스토리를 가져오는 중...",
+  "stories.fetchingGlobal": "⏳ 글로벌 스토리를 가져오는 중...",
+  "archive.downloading": "⏳ 보관된 스토리 다운로드 중...",
+  "archive.uploading": "📥 보관된 스토리 {{count}}개를 성공적으로 다운로드했습니다!\n⏳ Telegram에 업로드 중...",
+  "archive.none": "❌ 보관된 스토리를 보낼 수 없습니다. 너무 크거나 찾을 수 없습니다.",
+  "archive.uploadedBatch": "보관된 스토리 {{sent}}/{{total}}개 업로드 완료 ✅",
+  "archive.error": "보관된 스토리를 처리하는 중 오류가 발생했습니다. 관리자에게 알렸습니다.",
+  "global.downloading": "⏳ 글로벌 스토리 다운로드 중...",
+  "global.uploading": "📥 글로벌 스토리 {{count}}개를 성공적으로 다운로드했습니다!\n⏳ Telegram에 업로드 중...",
+  "global.none": "❌ 글로벌 스토리를 보낼 수 없습니다. 너무 크거나 찾을 수 없습니다.",
+  "global.uploadedBatch": "글로벌 스토리 {{sent}}/{{total}}개 업로드 완료 ✅",
+  "global.error": "글로벌 스토리를 처리하는 중 오류가 발생했습니다. 관리자에게 알렸습니다."
 }

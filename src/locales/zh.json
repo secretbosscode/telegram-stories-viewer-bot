@@ -156,5 +156,19 @@
   "stories.completed": "🎉 {{link}} 的下载已完成！",
   "stories.noneFound": "🤷 未找到 {{link}} 的公开故事。",
   "queue.cooldown": "⏳ 你只能每 {{hours}} 小时请求一次 \"{{user}}\" 的故事。\n请在 {{h}} 小时 {{m}} 分后再试。",
-  "download.noStory": "❌ 无法获取所请求的故事。"
+  "download.noStory": "❌ 无法获取所请求的故事。",
+  "cmd.archive": "下载已归档的故事",
+  "cmd.globalstories": "浏览全球故事",
+  "stories.fetchingArchive": "⏳ 正在获取归档故事...",
+  "stories.fetchingGlobal": "⏳ 正在获取全球故事...",
+  "archive.downloading": "⏳ 正在下载归档故事...",
+  "archive.uploading": "📥 已成功下载 {{count}} 个归档故事！\n⏳ 正在上传到 Telegram...",
+  "archive.none": "❌ 无法发送归档故事。可能过大或未找到。",
+  "archive.uploadedBatch": "已上传 {{sent}}/{{total}} 个归档故事 ✅",
+  "archive.error": "处理归档故事时发生错误。管理员已收到通知。",
+  "global.downloading": "⏳ 正在下载全球故事...",
+  "global.uploading": "📥 已成功下载 {{count}} 个全球故事！\n⏳ 正在上传到 Telegram...",
+  "global.none": "❌ 无法发送全球故事。可能过大或未找到。",
+  "global.uploadedBatch": "已上传 {{sent}}/{{total}} 个全球故事 ✅",
+  "global.error": "处理全球故事时发生错误。管理员已收到通知。"
 }

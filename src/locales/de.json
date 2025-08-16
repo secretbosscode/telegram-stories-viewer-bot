@@ -156,5 +156,19 @@
   "stories.completed": "🎉 Download für {{link}} abgeschlossen!",
   "stories.noneFound": "🤷 Keine öffentlichen Stories für {{link}} gefunden.",
   "queue.cooldown": "⏳ Du kannst Geschichten von \"{{user}}\" nur alle {{hours}} Stunden anfordern.\nVersuche es in {{h}}h {{m}}m erneut.",
-  "download.noStory": "❌ Die angeforderte Story konnte nicht abgerufen werden."
+  "download.noStory": "❌ Die angeforderte Story konnte nicht abgerufen werden.",
+  "cmd.archive": "Archivierte Stories herunterladen",
+  "cmd.globalstories": "Globale Stories durchsuchen",
+  "stories.fetchingArchive": "⏳ Archivierte Stories werden abgerufen...",
+  "stories.fetchingGlobal": "⏳ Globale Stories werden abgerufen...",
+  "archive.downloading": "⏳ Archivierte Stories werden heruntergeladen...",
+  "archive.uploading": "📥 {{count}} archivierte Stories erfolgreich heruntergeladen!\n⏳ Lade Stories zu Telegram hoch...",
+  "archive.none": "❌ Keine archivierten Stories konnten gesendet werden. Sie sind möglicherweise zu groß oder wurden nicht gefunden.",
+  "archive.uploadedBatch": "{{sent}}/{{total}} archivierte Stories hochgeladen ✅",
+  "archive.error": "Beim Verarbeiten der archivierten Stories ist ein Fehler aufgetreten. Der Administrator wurde benachrichtigt.",
+  "global.downloading": "⏳ Globale Stories werden heruntergeladen...",
+  "global.uploading": "📥 {{count}} globale Stories erfolgreich heruntergeladen!\n⏳ Lade Stories zu Telegram hoch...",
+  "global.none": "❌ Keine globalen Stories konnten gesendet werden. Sie sind möglicherweise zu groß oder wurden nicht gefunden.",
+  "global.uploadedBatch": "{{sent}}/{{total}} globale Stories hochgeladen ✅",
+  "global.error": "Beim Verarbeiten der globalen Stories ist ein Fehler aufgetreten. Der Administrator wurde benachrichtigt."
 }

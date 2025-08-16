@@ -156,5 +156,19 @@
   "stories.completed": "🎉 Descarga de {{link}} completada!",
   "stories.noneFound": "🤷 No se encontraron historias públicas para {{link}}.",
   "queue.cooldown": "⏳ Puedes solicitar historias de \"{{user}}\" solo cada {{hours}} horas.\nInténtalo de nuevo en {{h}}h {{m}}m.",
-  "download.noStory": "❌ No se pudo obtener la historia solicitada."
+  "download.noStory": "❌ No se pudo obtener la historia solicitada.",
+  "cmd.archive": "Descargar historias archivadas",
+  "cmd.globalstories": "Explorar historias globales",
+  "stories.fetchingArchive": "⏳ Obteniendo historias archivadas...",
+  "stories.fetchingGlobal": "⏳ Obteniendo historias globales...",
+  "archive.downloading": "⏳ Descargando historias archivadas...",
+  "archive.uploading": "📥 ¡{{count}} historias archivadas descargadas con éxito!\n⏳ Subiendo historias a Telegram...",
+  "archive.none": "❌ No se pudieron enviar historias archivadas. Podrían ser demasiado grandes o no se encontraron.",
+  "archive.uploadedBatch": "Se subieron {{sent}}/{{total}} historias archivadas ✅",
+  "archive.error": "Ocurrió un error al procesar historias archivadas. El administrador ha sido notificado.",
+  "global.downloading": "⏳ Descargando historias globales...",
+  "global.uploading": "📥 ¡{{count}} historias globales descargadas con éxito!\n⏳ Subiendo historias a Telegram...",
+  "global.none": "❌ No se pudieron enviar historias globales. Podrían ser demasiado grandes o no se encontraron.",
+  "global.uploadedBatch": "Se subieron {{sent}}/{{total}} historias globales ✅",
+  "global.error": "Ocurrió un error al procesar historias globales. El administrador ha sido notificado."
 }

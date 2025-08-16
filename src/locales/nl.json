@@ -156,5 +156,19 @@
   "stories.completed": "🎉 Download for {{link}} completed!",
   "stories.noneFound": "🤷 No public stories found for {{link}}.",
   "queue.cooldown": "⏳ You can request stories for \"{{user}}\" once every {{hours}} hours.\nTry again in {{h}}h {{m}}m.",
-  "download.noStory": "❌ Could not retrieve the requested story."
+  "download.noStory": "❌ Could not retrieve the requested story.",
+  "cmd.archive": "Gearchiveerde verhalen downloaden",
+  "cmd.globalstories": "Wereldwijde verhalen bekijken",
+  "stories.fetchingArchive": "⏳ Gearchiveerde verhalen ophalen...",
+  "stories.fetchingGlobal": "⏳ Wereldwijde verhalen ophalen...",
+  "archive.downloading": "⏳ Gearchiveerde verhalen downloaden...",
+  "archive.uploading": "📥 {{count}} gearchiveerde verhalen succesvol gedownload!\n⏳ Verhalen uploaden naar Telegram...",
+  "archive.none": "❌ Geen gearchiveerde verhalen konden worden verzonden. Ze zijn mogelijk te groot of niet gevonden.",
+  "archive.uploadedBatch": "{{sent}}/{{total}} gearchiveerde verhalen geüpload ✅",
+  "archive.error": "Er is een fout opgetreden bij het verwerken van gearchiveerde verhalen. De beheerder is geïnformeerd.",
+  "global.downloading": "⏳ Wereldwijde verhalen downloaden...",
+  "global.uploading": "📥 {{count}} wereldwijde verhalen succesvol gedownload!\n⏳ Verhalen uploaden naar Telegram...",
+  "global.none": "❌ Geen wereldwijde verhalen konden worden verzonden. Ze zijn mogelijk te groot of niet gevonden.",
+  "global.uploadedBatch": "{{sent}}/{{total}} wereldwijde verhalen geüpload ✅",
+  "global.error": "Er is een fout opgetreden bij het verwerken van wereldwijde verhalen. De beheerder is geïnformeerd."
 }
