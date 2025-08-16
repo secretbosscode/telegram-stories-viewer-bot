@@ -22,7 +22,7 @@ import { bot } from 'index';
 import { sendTemporaryMessage } from 'lib';
 import { UserInfo, DownloadQueueItem, SendStoriesFxParams } from 'types';
 import { t } from 'lib/i18n';
-import { getAllStoriesFx, getParticularStoryFx } from 'controllers/get-stories';
+import { getAllStoriesFx, getParticularStoryFx, getArchivedStoriesFx } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
 
 // How long we allow a job to run before considering it failed
@@ -176,9 +176,11 @@ export async function processQueue() {
   try {
     console.log(`[QueueManager] Starting processing for ${currentTask.link} (Job ID: ${job.id})`);
     
-    const storiesResult = currentTask.linkType === 'username'
-      ? await getAllStoriesFx(currentTask)
-      : await getParticularStoryFx(currentTask);
+    const storiesResult = currentTask.storyRequestType === 'archived'
+      ? await getArchivedStoriesFx(currentTask)
+      : currentTask.linkType === 'username'
+        ? await getAllStoriesFx(currentTask)
+        : await getParticularStoryFx(currentTask);
 
     if (typeof storiesResult === 'string') {
       throw new Error(storiesResult);
