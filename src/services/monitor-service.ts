@@ -36,11 +36,13 @@ const usernameRefreshTimes = new Map<number, number>();
 
 // Track when the next monitor cycle is scheduled
 let nextMonitorCheckAt: number | null = null;
+// Store the timeout handle for the monitor loop
+let monitorTimer: NodeJS.Timeout | null = null;
 
 function scheduleNextMonitorCheck() {
   const intervalMs = CHECK_INTERVAL_HOURS * 60 * 60 * 1000;
   nextMonitorCheckAt = Date.now() + intervalMs;
-  setTimeout(async () => {
+  monitorTimer = setTimeout(async () => {
     try {
       await forceCheckMonitors();
     } catch (err) {
@@ -117,7 +119,16 @@ export function listUserMonitors(telegramId: string): MonitorRow[] {
 }
 
 export function startMonitorLoop(): void {
+  stopMonitorLoop();
   scheduleNextMonitorCheck();
+}
+
+export function stopMonitorLoop(): void {
+  if (monitorTimer) {
+    clearTimeout(monitorTimer);
+    monitorTimer = null;
+    nextMonitorCheckAt = null;
+  }
 }
 
 export async function forceCheckMonitors(): Promise<number> {
