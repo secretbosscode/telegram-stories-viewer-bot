@@ -15,7 +15,7 @@ export interface UserInfo {
   initTime: number;
   isPremium?: boolean;
   instanceId?: string;
-  storyRequestType?: 'active' | 'pinned' | 'particular' | 'paginated';
+  storyRequestType?: 'active' | 'pinned' | 'archived' | 'particular' | 'paginated';
   isPaginated?: boolean;
 }
 
@@ -51,6 +51,7 @@ export type StoriesModel = MappedStoryItem[]; // Alias for consistency
 export interface SendStoriesFxParams {
   activeStories?: Api.TypeStoryItem[];
   pinnedStories?: Api.TypeStoryItem[]; // **FIXED:** Changed 'Api.TypeTypeItem' to 'Api.TypeStoryItem'
+  archivedStories?: Api.TypeStoryItem[];
   paginatedStories?: Api.TypeStoryItem[];
   particularStory?: Api.TypeStoryItem;
   task: UserInfo;

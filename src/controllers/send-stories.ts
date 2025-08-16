@@ -22,6 +22,7 @@ import { sendActiveStories } from 'controllers/send-active-stories';
 import { sendPaginatedStories } from 'controllers/send-paginated-stories';
 import { sendParticularStory } from 'controllers/send-particular-story';
 import { sendPinnedStories } from 'controllers/send-pinned-stories';
+import { sendArchivedStories } from 'controllers/send-archived-stories';
 import { mapStories } from 'controllers/download-stories';
 
 /**
@@ -35,6 +36,7 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
     const {
       activeStories = [],
       pinnedStories = [],
+      archivedStories = [],
       paginatedStories,
       particularStory,
       task,
@@ -54,7 +56,7 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
         await sendPaginatedStories({ stories: paginatedStories, task });
         storiesWereSent = true;
       } 
-      // 3. Handle the general case of active and pinned stories.
+      // 3. Handle the general case of active, pinned, and archived stories.
       else {
         if (activeStories.length > 0) {
           // PROCESS COMMENT: This is a critical fix from your new version. The raw
@@ -68,6 +70,13 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
         if (pinnedStories.length > 0) {
           const mappedPinnedStories: MappedStoryItem[] = mapStories(pinnedStories);
           await sendPinnedStories({ stories: mappedPinnedStories, task });
+          storiesWereSent = true;
+          await timeout(2000);
+        }
+
+        if (archivedStories.length > 0) {
+          const mappedArchivedStories: MappedStoryItem[] = mapStories(archivedStories);
+          await sendArchivedStories({ stories: mappedArchivedStories, task });
           storiesWereSent = true;
         }
       }
