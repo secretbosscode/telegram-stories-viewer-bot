@@ -152,7 +152,6 @@ function getAdminCommands(locale: string) {
     { command: 'globalstories', description: t(locale, 'cmd.globalstories') },
     { command: 'welcome', description: t(locale, 'cmd.welcome') },
     { command: 'bugreport', description: t(locale, 'cmd.listbugs') },
-    { command: 'bugs', description: t(locale, 'cmd.bugs') },
   ];
 }
 
