@@ -83,7 +83,6 @@ import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
 import { notifyAdmin } from 'controllers/send-message';
-import { handleGlobalStories } from 'controllers/global-stories';
 import { UserInfo } from 'types';
 import {
   sendTemporaryMessage,
@@ -131,7 +130,6 @@ function getPremiumCommands(locale: string) {
   return [
     { command: 'monitor', description: t(locale, 'cmd.monitor') },
     { command: 'unmonitor', description: t(locale, 'cmd.unmonitor') },
-    { command: 'globalstories', description: t(locale, 'cmd.globalstories') },
   ];
 }
 
@@ -150,6 +148,7 @@ function getAdminCommands(locale: string) {
     { command: 'restart', description: t(locale, 'cmd.restart') },
     { command: 'flush', description: t(locale, 'cmd.flush') },
     { command: 'forcemonitor', description: t(locale, 'cmd.forcemonitor') },
+    { command: 'globalstories', description: t(locale, 'cmd.globalstories') },
     { command: 'welcome', description: t(locale, 'cmd.welcome') },
     { command: 'bugreport', description: t(locale, 'cmd.listbugs') },
     { command: 'bugs', description: t(locale, 'cmd.bugs') },
@@ -342,21 +341,18 @@ bot.command('help', async (ctx) => {
         cmdBlocklist: t(locale, 'cmd.blocklist'),
         cmdStatus: t(locale, 'cmd.status'),
         cmdRestart: t(locale, 'cmd.restart'),
-        cmdFlush: t(locale, 'cmd.flush'),
-        cmdForcemonitor: t(locale, 'cmd.forcemonitor'),
-        cmdListbugs: t(locale, 'cmd.listbugs'),
-        neverExpires: t(locale, 'premium.neverExpires'),
-      });
-  }
+          cmdFlush: t(locale, 'cmd.flush'),
+          cmdForcemonitor: t(locale, 'cmd.forcemonitor'),
+          cmdGlobalstories: t(locale, 'cmd.globalstories'),
+          cmdListbugs: t(locale, 'cmd.listbugs'),
+          neverExpires: t(locale, 'premium.neverExpires'),
+        });
+    }
   await ctx.reply(finalHelpText, { parse_mode: 'Markdown' });
   await updateUserCommands(ctx, isAdmin, isPremium);
 });
 
 bot.command('premium', handlePremium);
-
-bot.command('globalstories', async (ctx) => {
-  await handleGlobalStories(ctx);
-});
 
 bot.command('upgrade', async (ctx) => {
   await handleUpgrade(ctx);
