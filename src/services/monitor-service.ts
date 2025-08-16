@@ -19,6 +19,9 @@ import {
   type MonitorRow,
 } from '../db';
 import { sendActiveStories } from 'controllers/send-active-stories';
+import { sendPinnedStories } from 'controllers/send-pinned-stories';
+import { sendArchivedStories } from 'controllers/send-archived-stories';
+import { sendGlobalStories } from 'controllers/send-global-stories';
 import { mapStories } from 'controllers/download-stories';
 import { getEntityWithTempContact } from 'lib';
 import { bot } from 'index';
@@ -194,7 +197,7 @@ export async function checkSingleMonitor(id: number): Promise<void> {
   await refreshMonitorUsername(m);
 
   try {
-    const client = await Userbot.getInstance();
+        const client = await Userbot.getInstance();
     const peer = new Api.InputUser({
       userId: bigInt(m.target_id),
       accessHash: m.target_access_hash
@@ -205,26 +208,108 @@ export async function checkSingleMonitor(id: number): Promise<void> {
     const res = await client.invoke(
       new Api.stories.GetPeerStories({ peer }),
     );
-    const stories = (res as any)?.stories?.stories || [];
+    const pinnedRes = await client.invoke(
+      new Api.stories.GetPinnedStories({ peer }),
+    ).catch(() => ({ stories: [] } as any));
+    const archivedRes = await client.invoke(
+      new Api.stories.GetStoriesArchive({ peer, offsetId: 0 }),
+    ).catch(() => ({ stories: [] } as any));
+    const globalRes = await client.invoke(
+      new Api.stories.GetAllStories({}),
+    ).catch(() => ({ stories: [] } as any));
 
-    const sent = new Set(listSentStoryKeys(m.id));
-    const newStories: any[] = [];
-    for (const s of stories) {
+    const activeStories = (res as any)?.stories?.stories || [];
+    const pinnedStories = (pinnedRes as any)?.stories || [];
+    const archivedStories = (archivedRes as any)?.stories || [];
+    const globalStories = (globalRes as any)?.stories || [];
+
+    const activeSent = new Set(listSentStoryKeys(m.id, 'active'));
+    const pinnedSent = new Set(listSentStoryKeys(m.id, 'pinned'));
+    const archivedSent = new Set(listSentStoryKeys(m.id, 'archived'));
+    const globalSent = new Set(listSentStoryKeys(m.id, 'global'));
+
+    const newActive: any[] = [];
+    for (const s of activeStories) {
       const key = `${s.id}:${s.date}`;
-      if (sent.has(key)) continue;
-      markStorySent(m.id, s.id, s.date, s.expireDate);
-      sent.add(key);
-      newStories.push(s);
+      if (activeSent.has(key)) continue;
+      markStorySent(m.id, s.id, s.date, s.expireDate, 'active');
+      activeSent.add(key);
+      newActive.push(s);
     }
 
-    if (newStories.length > 0) {
+    const newPinned: any[] = [];
+    for (const s of pinnedStories) {
+      const key = `${s.id}:${s.date}`;
+      if (pinnedSent.has(key)) continue;
+      markStorySent(m.id, s.id, s.date, s.expireDate, 'pinned');
+      pinnedSent.add(key);
+      newPinned.push(s);
+    }
+
+    const newArchived: any[] = [];
+    for (const s of archivedStories) {
+      const key = `${s.id}:${s.date}`;
+      if (archivedSent.has(key)) continue;
+      markStorySent(m.id, s.id, s.date, s.expireDate, 'archived');
+      archivedSent.add(key);
+      newArchived.push(s);
+    }
+
+    const newGlobal: any[] = [];
+    for (const s of globalStories) {
+      const key = `${s.id}:${s.date}`;
+      if (globalSent.has(key)) continue;
+      markStorySent(m.id, s.id, s.date, s.expireDate, 'global');
+      globalSent.add(key);
+      newGlobal.push(s);
+    }
+
+    const lang = findUserById(m.telegram_id)?.language || 'en';
+
+    if (newActive.length > 0) {
       await sendActiveStories({
-        stories: mapStories(newStories),
+        stories: mapStories(newActive),
         task: {
           chatId: m.telegram_id,
           link: formatMonitorTarget(m),
           linkType: 'username',
-          locale: 'en',
+          locale: lang,
+          initTime: Date.now(),
+        } as any,
+      });
+    }
+    if (newPinned.length > 0) {
+      await sendPinnedStories({
+        stories: mapStories(newPinned),
+        task: {
+          chatId: m.telegram_id,
+          link: formatMonitorTarget(m),
+          linkType: 'username',
+          locale: lang,
+          initTime: Date.now(),
+        } as any,
+      });
+    }
+    if (newArchived.length > 0) {
+      await sendArchivedStories({
+        stories: mapStories(newArchived),
+        task: {
+          chatId: m.telegram_id,
+          link: formatMonitorTarget(m),
+          linkType: 'username',
+          locale: lang,
+          initTime: Date.now(),
+        } as any,
+      });
+    }
+    if (newGlobal.length > 0) {
+      await sendGlobalStories({
+        stories: mapStories(newGlobal),
+        task: {
+          chatId: m.telegram_id,
+          link: formatMonitorTarget(m),
+          linkType: 'username',
+          locale: lang,
           initTime: Date.now(),
         } as any,
       });

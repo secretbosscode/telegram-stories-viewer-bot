@@ -111,8 +111,9 @@ db.exec(`
     story_id INTEGER NOT NULL,
     story_date INTEGER NOT NULL,
     story_key TEXT NOT NULL,
+    story_type TEXT NOT NULL DEFAULT 'active',
     expires_at INTEGER NOT NULL,
-    PRIMARY KEY (monitor_id, story_key)
+    PRIMARY KEY (monitor_id, story_key, story_type)
   );
 `);
 
@@ -123,8 +124,11 @@ if (!sentColumns.some((c) => c.name === 'story_date')) {
 if (!sentColumns.some((c) => c.name === 'story_key')) {
   db.exec('ALTER TABLE monitor_sent_stories ADD COLUMN story_key TEXT');
 }
-db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_sent_idx ON monitor_sent_stories (monitor_id, story_key)');
-
+if (!sentColumns.some((c) => c.name === 'story_type')) {
+  db.exec("ALTER TABLE monitor_sent_stories ADD COLUMN story_type TEXT DEFAULT 'active'");
+}
+db.exec('DROP INDEX IF EXISTS monitor_sent_idx');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_sent_idx ON monitor_sent_stories (monitor_id, story_key, story_type)');
 // Payments table for BTC invoices
 db.exec(`
   CREATE TABLE IF NOT EXISTS payments (
@@ -647,20 +651,21 @@ export function markStorySent(
   story_id: number,
   story_date: number,
   expires_at: number,
+  story_type = 'active',
 ): void {
   const story_key = `${story_id}:${story_date}`;
   db.prepare(
-    `INSERT OR REPLACE INTO monitor_sent_stories (monitor_id, story_id, story_date, story_key, expires_at) VALUES (?, ?, ?, ?, ?)`,
-  ).run(monitor_id, story_id, story_date, story_key, expires_at);
+    `INSERT OR REPLACE INTO monitor_sent_stories (monitor_id, story_id, story_date, story_key, story_type, expires_at) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(monitor_id, story_id, story_date, story_key, story_type, expires_at);
 }
 
-export function listSentStoryKeys(monitor_id: number): string[] {
+export function listSentStoryKeys(monitor_id: number, story_type = 'active'): string[] {
   const now = Math.floor(Date.now() / 1000);
   const rows = db
     .prepare(
-      `SELECT story_key FROM monitor_sent_stories WHERE monitor_id = ? AND expires_at > ?`,
+      `SELECT story_key FROM monitor_sent_stories WHERE monitor_id = ? AND story_type = ? AND expires_at > ?`,
     )
-    .all(monitor_id, now) as { story_key: string }[];
+    .all(monitor_id, story_type, now) as { story_key: string }[];
   return rows.map((r) => r.story_key);
 }
 

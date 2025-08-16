@@ -36,6 +36,7 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
     const {
       activeStories = [],
       pinnedStories = [],
+      archivedStories = [],
       paginatedStories,
       particularStory,
       globalStories,
@@ -75,6 +76,13 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
         if (pinnedStories.length > 0) {
           const mappedPinnedStories: MappedStoryItem[] = mapStories(pinnedStories);
           await sendPinnedStories({ stories: mappedPinnedStories, task });
+          storiesWereSent = true;
+          await timeout(2000);
+        }
+
+        if (archivedStories.length > 0) {
+          const mappedArchivedStories: MappedStoryItem[] = mapStories(archivedStories);
+          await sendArchivedStories({ stories: mappedArchivedStories, task });
           storiesWereSent = true;
         }
       }

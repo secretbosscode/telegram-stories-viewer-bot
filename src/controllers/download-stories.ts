@@ -29,7 +29,7 @@ import { MappedStoryItem, StoriesModel } from 'types'; // <--- This import is co
  */
 export async function downloadStories(
   stories: StoriesModel, // Already MappedStoryItem[]
-  storiesType: 'active' | 'pinned',
+  storiesType: 'active' | 'pinned' | 'archived',
   onProgress?: (story: MappedStoryItem) => void,
   signal?: AbortSignal,
 ): Promise<number> {
