@@ -152,7 +152,7 @@
   "active.none": "❌ Cannot download Active stories, most likely they are too large to send via bot.",
   "active.uploadedBatch": "Uploaded {{sent}}/{{total}} active stories from {{user}} ✅",
   "active.error": "An error occurred while sending stories. The admin has been notified.",
-  "global.label": "global stories",
+  "global.label": "storie globali",
   "global.downloading": "⏳ Downloading Global stories...",
   "global.uploading": "📥 {{count}} Global stories downloaded successfully!\n⏳ Uploading stories to Telegram...",
   "global.none": "❌ No Global stories could be sent. They might be too large or none were found.",
@@ -173,5 +173,10 @@
   "global.adminOnly": "🚫 Questo comando è riservato solo all'amministratore.",
   "stories.fetchingGlobal": "⏳ Fetching global stories...",
   "archive.uploadedBatch": "Uploaded {{sent}}/{{total}} archived stories ✅",
-  "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅"
+  "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅",
+  "monitor.photoChanged": "🖼️ La foto profilo di {{user}} è stata cambiata.",
+  "monitor.photoRemoved": "🖼️ La foto profilo di {{user}} è stata rimossa.",
+  "monitor.deleted": "⚠️ Sembra che {{user}} abbia eliminato il suo account. Monitoraggio interrotto.",
+  "pagination.next": "Successivo",
+  "pagination.prev": "Precedente"
 }

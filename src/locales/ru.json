@@ -172,5 +172,11 @@
   "stories.fetchingGlobal": "⏳ Fetching global stories...",
   "archive.uploadedBatch": "Uploaded {{sent}}/{{total}} archived stories ✅",
   "global.uploadedBatch": "Uploaded {{sent}}/{{total}} global stories ✅",
-  "global.error": "An error occurred while processing global stories. The admin has been notified."
+  "global.error": "An error occurred while processing global stories. The admin has been notified.",
+  "global.label": "глобальные истории",
+  "monitor.photoChanged": "🖼️ У {{user}} изменена фотография профиля.",
+  "monitor.photoRemoved": "🖼️ У {{user}} удалена фотография профиля.",
+  "monitor.deleted": "⚠️ Похоже, {{user}} удалил свой аккаунт. Мониторинг остановлен.",
+  "pagination.next": "Далее",
+  "pagination.prev": "Назад"
 }
