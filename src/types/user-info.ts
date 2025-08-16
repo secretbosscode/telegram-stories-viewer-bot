@@ -9,6 +9,8 @@ export interface UserInfo {
   initTime: number;
   isPremium?: boolean;
   instanceId?: string;
-  storyRequestType?: 'active' | 'pinned' | 'particular' | 'paginated' | 'archived';
+  storyRequestType?: 'active' | 'pinned' | 'particular' | 'paginated' | 'global';
   isPaginated?: boolean;
+  includeHiddenStories?: boolean;
+  offset?: number;
 }
