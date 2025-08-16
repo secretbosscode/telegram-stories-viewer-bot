@@ -348,12 +348,13 @@ bot.command('help', async (ctx) => {
         cmdUnblock: t(locale, 'cmd.unblock'),
         cmdBlocklist: t(locale, 'cmd.blocklist'),
         cmdStatus: t(locale, 'cmd.status'),
+        cmdWelcome: t(locale, 'cmd.welcome'),
         cmdRestart: t(locale, 'cmd.restart'),
-          cmdFlush: t(locale, 'cmd.flush'),
-          cmdForcemonitor: t(locale, 'cmd.forcemonitor'),
-          cmdGlobalstories: t(locale, 'cmd.globalstories'),
-          cmdListbugs: t(locale, 'cmd.listbugs'),
-          neverExpires: t(locale, 'premium.neverExpires'),
+        cmdFlush: t(locale, 'cmd.flush'),
+        cmdForcemonitor: t(locale, 'cmd.forcemonitor'),
+        cmdGlobalstories: t(locale, 'cmd.globalstories'),
+        cmdListbugs: t(locale, 'cmd.listbugs'),
+        neverExpires: t(locale, 'premium.neverExpires'),
         });
     }
   await ctx.reply(finalHelpText, { parse_mode: 'Markdown' });
