@@ -160,9 +160,13 @@
   "stories.noneFound": "🤷 Nenhuma história pública encontrada para {{link}}.",
   "queue.cooldown": "⏳ Você pode solicitar histórias de \"{{user}}\" a cada {{hours}} horas.\nTente novamente em {{h}}h {{m}}m.",
   "download.noStory": "❌ Não foi possível obter a história solicitada.",
-  "global.label": "global stories",
-  "global.downloading": "⏳ Downloading global stories...",
-  "global.uploading": "📥 {{count}} global stories downloaded successfully!\n⏳ Uploading stories to Telegram...",
-  "global.none": "❌ No global stories could be sent.",
-  "global.error": "An error occurred while processing global stories. The admin has been notified."
+  "stories.fetchingArchive": "⏳ Fetching archived stories...",
+  "archive.downloading": "⏳ Downloading Archived stories...",
+  "archive.uploading": "📥 {{count}} Archived stories downloaded successfully!\\n⏳ Uploading stories to Telegram...",
+  "archive.none": "❌ No Archived stories could be sent.",
+  "archive.error": "An error occurred while sending archived stories. The admin has been notified.",
+  "global.downloading": "⏳ Downloading Global stories...",
+  "global.uploading": "📥 {{count}} Global stories downloaded successfully!\n⏳ Uploading stories to Telegram...",
+  "global.none": "❌ No Global stories could be sent. They might be too large or none were found.",
+  "global.adminOnly": "🚫 Este comando é apenas para o administrador."
 }

@@ -164,5 +164,14 @@
   "stories.completed": "🎉 Download for {{link}} completed!",
   "stories.noneFound": "🤷 No public stories found for {{link}}.",
   "queue.cooldown": "⏳ You can request stories for \"{{user}}\" once every {{hours}} hours.\nTry again in {{h}}h {{m}}m.",
-  "download.noStory": "❌ Could not retrieve the requested story."
+  "download.noStory": "❌ Could not retrieve the requested story.",
+  "stories.fetchingArchive": "⏳ Fetching archived stories...",
+  "archive.downloading": "⏳ Downloading Archived stories...",
+  "archive.uploading": "📥 {{count}} Archived stories downloaded successfully!\\n⏳ Uploading stories to Telegram...",
+  "archive.none": "❌ No Archived stories could be sent.",
+  "archive.error": "An error occurred while sending archived stories. The admin has been notified.",
+  "global.downloading": "⏳ Downloading Global stories...",
+  "global.uploading": "📥 {{count}} Global stories downloaded successfully!\n⏳ Uploading stories to Telegram...",
+  "global.none": "❌ No Global stories could be sent. They might be too large or none were found.",
+  "global.adminOnly": "🚫 이 명령은 관리자만 사용할 수 있습니다."
 }

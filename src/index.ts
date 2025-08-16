@@ -496,30 +496,21 @@ bot.command('profile', async (ctx) => {
   await sendProfileMedia(ctx.chat!.id, input, ctx.from);
 });
 
-bot.command('archive', async (ctx) => {
+bot.command('globalstories', async (ctx) => {
   const locale = ctx.from.language_code || 'en';
+  if (ctx.from.id !== BOT_ADMIN_ID) {
+    return ctx.reply(t(locale, 'global.adminOnly'));
+  }
   if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
-  const userId = String(ctx.from.id);
-  const isAdmin = ctx.from.id === BOT_ADMIN_ID;
-  const isPremium = isUserPremium(userId);
-  if (!isAdmin && !isPremium) {
-    return ctx.reply(t(locale, 'feature.requiresPremium'));
-  }
-  const args = ctx.message.text.split(' ').slice(1);
-  if (!args.length) {
-    return ctx.reply(t(locale, 'archive.usage'));
-  }
-  const input = args[0];
   const user = ctx.from;
   const task: UserInfo = {
     chatId: String(ctx.chat.id),
-    link: input,
+    link: 'global',
     linkType: 'username',
     locale: user.language_code || '',
     user,
     initTime: Date.now(),
-    isPremium,
-    storyRequestType: 'archived',
+    storyRequestType: 'global',
   };
   handleNewTask(task);
 });
