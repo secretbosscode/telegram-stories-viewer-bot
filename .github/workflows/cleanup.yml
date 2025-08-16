@@ -5,6 +5,9 @@ on:
     types: [closed]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   cleanup:
     if: github.event.pull_request.merged == true && github.event.pull_request.head.ref != 'main' && github.event.pull_request.head.ref != 'development'
@@ -18,8 +21,15 @@ jobs:
             const branch = context.payload.pull_request.head.ref;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            await github.rest.git.deleteRef({
-              owner,
-              repo,
-              ref: `heads/${branch}`,
-            });
+            const headRepoFullName = context.payload.pull_request.head.repo.full_name;
+            const baseRepoFullName = `${owner}/${repo}`;
+
+            if (headRepoFullName === baseRepoFullName) {
+              await github.rest.git.deleteRef({
+                owner,
+                repo,
+                ref: `heads/${branch}`,
+              });
+            } else {
+              core.info('Skipping branch deletion; head repository differs from base repository.');
+            }
