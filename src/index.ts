@@ -66,6 +66,7 @@ import {
   userMonitorCount,
   listUserMonitors,
   startMonitorLoop,
+  stopMonitorLoop,
   CHECK_INTERVAL_HOURS,
   MAX_MONITORS_PER_USER,
   formatMonitorTarget,
@@ -149,6 +150,7 @@ function getAdminCommands(locale: string) {
     { command: 'restart', description: t(locale, 'cmd.restart') },
     { command: 'flush', description: t(locale, 'cmd.flush') },
     { command: 'forcemonitor', description: t(locale, 'cmd.forcemonitor') },
+    { command: 'stopmonitor', description: t(locale, 'cmd.stopmonitor') },
     { command: 'globalstories', description: t(locale, 'cmd.globalstories') },
     { command: 'welcome', description: t(locale, 'cmd.welcome') },
     { command: 'bugreport', description: t(locale, 'cmd.listbugs') },
@@ -352,6 +354,7 @@ bot.command('help', async (ctx) => {
         cmdRestart: t(locale, 'cmd.restart'),
         cmdFlush: t(locale, 'cmd.flush'),
         cmdForcemonitor: t(locale, 'cmd.forcemonitor'),
+        cmdStopmonitor: t(locale, 'cmd.stopmonitor'),
         cmdGlobalstories: t(locale, 'cmd.globalstories'),
         cmdListbugs: t(locale, 'cmd.listbugs'),
         neverExpires: t(locale, 'premium.neverExpires'),
@@ -1013,6 +1016,19 @@ bot.command('forcemonitor', async (ctx) => {
     await ctx.reply(t(locale, 'monitor.forceRun', { count }));
   } catch (e) {
     console.error('Error in /forcemonitor:', e);
+    await ctx.reply(t(locale, 'error.generic'));
+  }
+});
+
+bot.command('stopmonitor', async (ctx) => {
+  if (ctx.from.id != BOT_ADMIN_ID) return;
+  const locale = ctx.from.language_code || 'en';
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
+  try {
+    stopMonitorLoop();
+    await ctx.reply(t(locale, 'monitor.loopStopped'));
+  } catch (e) {
+    console.error('Error in /stopmonitor:', e);
     await ctx.reply(t(locale, 'error.generic'));
   }
 });
