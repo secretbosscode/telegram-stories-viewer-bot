@@ -11,7 +11,15 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Delete merged branch
-        uses: peter-evans/delete-branch@v3
+        uses: actions/github-script@v6
         with:
-          branch: ${{ github.event.pull_request.head.ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            await github.rest.git.deleteRef({
+              owner,
+              repo,
+              ref: `heads/${branch}`,
+            });
