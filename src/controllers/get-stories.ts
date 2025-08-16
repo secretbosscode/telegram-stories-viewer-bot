@@ -13,6 +13,45 @@ import { t } from 'lib/i18n';
 
 
 // =========================================================================
+// Fetch stories from the global feed
+// =========================================================================
+export const getGlobalStoriesFx = createEffect(async (task: UserInfo) => {
+  try {
+    await sendTemporaryMessage(
+      bot,
+      task.chatId,
+      t(task.locale, 'stories.fetchingList')
+    );
+
+    const client = await Userbot.getInstance();
+    notifyAdmin({ task, status: 'start' });
+
+    const params: any = {
+      limit: 50,
+      offset: BigInt(task.offset || 0),
+      state: '',
+    };
+    if (task.includeHiddenStories) {
+      params.hidden = true;
+    }
+
+    const result: any = await client.invoke(
+      new Api.stories.GetAllStories(params)
+    );
+
+    const stories: Api.TypeStoryItem[] = result.stories?.stories || [];
+    return { globalStories: stories };
+  } catch (error: any) {
+    console.error('[GetStories] Error in getGlobalStoriesFx:', error);
+    if (error instanceof FloodWaitError) {
+      const seconds = error.seconds || 60;
+      return t(task.locale, 'stories.floodWait', { minutes: Math.ceil(seconds / 60) });
+    }
+    return t(task.locale, 'stories.errorGeneric', { user: task.link });
+  }
+});
+
+// =========================================================================
 // This effect fetches all stories for a given user.
 // =========================================================================
 export const getAllStoriesFx = createEffect(async (task: UserInfo) => {

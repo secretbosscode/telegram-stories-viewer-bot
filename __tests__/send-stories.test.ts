@@ -16,6 +16,8 @@ const sendActiveStories = jest.fn();
 jest.mock('../src/controllers/send-active-stories', () => ({ sendActiveStories }));
 const sendPinnedStories = jest.fn();
 jest.mock('../src/controllers/send-pinned-stories', () => ({ sendPinnedStories }));
+const sendGlobalStories = jest.fn();
+jest.mock('../src/controllers/send-global-stories', () => ({ sendGlobalStories }));
 jest.mock('../src/controllers/download-stories', () => ({ mapStories: jest.fn((s: any) => s) }));
 
 const sendTemporaryMessage = jest.fn();

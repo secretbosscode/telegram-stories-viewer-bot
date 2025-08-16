@@ -83,6 +83,7 @@ import { handleUpgrade } from 'controllers/upgrade';
 import { handlePremium } from 'controllers/premium';
 import { sendProfileMedia } from 'controllers/send-profile-media';
 import { notifyAdmin } from 'controllers/send-message';
+import { handleGlobalStories } from 'controllers/global-stories';
 import { UserInfo } from 'types';
 import {
   sendTemporaryMessage,
@@ -130,6 +131,7 @@ function getPremiumCommands(locale: string) {
   return [
     { command: 'monitor', description: t(locale, 'cmd.monitor') },
     { command: 'unmonitor', description: t(locale, 'cmd.unmonitor') },
+    { command: 'globalstories', description: t(locale, 'cmd.globalstories') },
   ];
 }
 
@@ -350,6 +352,10 @@ bot.command('help', async (ctx) => {
 });
 
 bot.command('premium', handlePremium);
+
+bot.command('globalstories', async (ctx) => {
+  await handleGlobalStories(ctx);
+});
 
 bot.command('upgrade', async (ctx) => {
   await handleUpgrade(ctx);

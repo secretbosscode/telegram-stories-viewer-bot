@@ -15,8 +15,10 @@ export interface UserInfo {
   initTime: number;
   isPremium?: boolean;
   instanceId?: string;
-  storyRequestType?: 'active' | 'pinned' | 'particular' | 'paginated';
+  storyRequestType?: 'active' | 'pinned' | 'particular' | 'paginated' | 'global';
   isPaginated?: boolean;
+  includeHiddenStories?: boolean;
+  offset?: number;
 }
 
 // DownloadQueueItem: An item in the download queue (DB structure)
@@ -52,6 +54,7 @@ export interface SendStoriesFxParams {
   activeStories?: Api.TypeStoryItem[];
   pinnedStories?: Api.TypeStoryItem[]; // **FIXED:** Changed 'Api.TypeTypeItem' to 'Api.TypeStoryItem'
   paginatedStories?: Api.TypeStoryItem[];
+  globalStories?: Api.TypeStoryItem[];
   particularStory?: Api.TypeStoryItem;
   task: UserInfo;
 }

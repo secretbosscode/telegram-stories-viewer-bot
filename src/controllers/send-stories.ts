@@ -22,6 +22,7 @@ import { sendActiveStories } from 'controllers/send-active-stories';
 import { sendPaginatedStories } from 'controllers/send-paginated-stories';
 import { sendParticularStory } from 'controllers/send-particular-story';
 import { sendPinnedStories } from 'controllers/send-pinned-stories';
+import { sendGlobalStories } from 'controllers/send-global-stories';
 import { mapStories } from 'controllers/download-stories';
 
 /**
@@ -37,6 +38,7 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       pinnedStories = [],
       paginatedStories,
       particularStory,
+      globalStories,
       task,
     } = params;
 
@@ -53,7 +55,12 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       else if (paginatedStories && paginatedStories.length > 0) {
         await sendPaginatedStories({ stories: paginatedStories, task });
         storiesWereSent = true;
-      } 
+      }
+      else if (globalStories && globalStories.length > 0) {
+        const mappedGlobalStories: MappedStoryItem[] = mapStories(globalStories);
+        await sendGlobalStories({ stories: mappedGlobalStories, task });
+        storiesWereSent = true;
+      }
       // 3. Handle the general case of active and pinned stories.
       else {
         if (activeStories.length > 0) {
