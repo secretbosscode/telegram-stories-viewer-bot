@@ -166,5 +166,8 @@
   "archive.downloading": "⏳ Downloading Archived stories...",
   "archive.uploading": "📥 {{count}} Archived stories downloaded successfully!\\n⏳ Uploading stories to Telegram...",
   "archive.none": "❌ No Archived stories could be sent.",
-  "archive.error": "An error occurred while sending archived stories. The admin has been notified."
+  "archive.error": "An error occurred while sending archived stories. The admin has been notified.",
+  "global.downloading": "⏳ Downloading Global stories...",
+  "global.uploading": "📥 {{count}} Global stories downloaded successfully!\n⏳ Uploading stories to Telegram...",
+  "global.none": "❌ No Global stories could be sent. They might be too large or none were found."
 }
