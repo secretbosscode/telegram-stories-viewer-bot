@@ -130,6 +130,7 @@ function getPremiumCommands(locale: string) {
   return [
     { command: 'monitor', description: t(locale, 'cmd.monitor') },
     { command: 'unmonitor', description: t(locale, 'cmd.unmonitor') },
+    { command: 'archive', description: t(locale, 'cmd.archive') },
   ];
 }
 
