@@ -158,5 +158,13 @@
   "stories.completed": "🎉 {{link}} 的下载已完成！",
   "stories.noneFound": "🤷 未找到 {{link}} 的公开故事。",
   "queue.cooldown": "⏳ 你只能每 {{hours}} 小时请求一次 \"{{user}}\" 的故事。\n请在 {{h}} 小时 {{m}} 分后再试。",
-  "download.noStory": "❌ 无法获取所请求的故事。"
+  "download.noStory": "❌ 无法获取所请求的故事。",
+  "stories.fetchingArchive": "⏳ Fetching archived stories...",
+  "archive.downloading": "⏳ Downloading Archived stories...",
+  "archive.uploading": "📥 {{count}} Archived stories downloaded successfully!\\n⏳ Uploading stories to Telegram...",
+  "archive.none": "❌ No Archived stories could be sent.",
+  "archive.error": "An error occurred while sending archived stories. The admin has been notified.",
+  "global.downloading": "⏳ Downloading Global stories...",
+  "global.uploading": "📥 {{count}} Global stories downloaded successfully!\n⏳ Uploading stories to Telegram...",
+  "global.none": "❌ No Global stories could be sent. They might be too large or none were found."
 }

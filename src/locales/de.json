@@ -158,5 +158,13 @@
   "stories.completed": "🎉 Download für {{link}} abgeschlossen!",
   "stories.noneFound": "🤷 Keine öffentlichen Stories für {{link}} gefunden.",
   "queue.cooldown": "⏳ Du kannst Geschichten von \"{{user}}\" nur alle {{hours}} Stunden anfordern.\nVersuche es in {{h}}h {{m}}m erneut.",
-  "download.noStory": "❌ Die angeforderte Story konnte nicht abgerufen werden."
+  "download.noStory": "❌ Die angeforderte Story konnte nicht abgerufen werden.",
+  "stories.fetchingArchive": "⏳ Fetching archived stories...",
+  "archive.downloading": "⏳ Downloading Archived stories...",
+  "archive.uploading": "📥 {{count}} Archived stories downloaded successfully!\\n⏳ Uploading stories to Telegram...",
+  "archive.none": "❌ No Archived stories could be sent.",
+  "archive.error": "An error occurred while sending archived stories. The admin has been notified.",
+  "global.downloading": "⏳ Downloading Global stories...",
+  "global.uploading": "📥 {{count}} Global stories downloaded successfully!\n⏳ Uploading stories to Telegram...",
+  "global.none": "❌ No Global stories could be sent. They might be too large or none were found."
 }
