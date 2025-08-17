@@ -24,6 +24,8 @@ import { getEntityWithTempContact } from 'lib';
 import { bot } from 'index';
 import { t } from '../lib/i18n';
 import { findUserById } from '../repositories/user-repository';
+import { isUserPremium } from 'services/premium-service';
+import { BOT_ADMIN_ID } from 'config/env-config';
 
 export const CHECK_INTERVAL_HOURS = 1;
 export const MAX_MONITORS_PER_USER = 5;
@@ -136,8 +138,18 @@ export async function forceCheckMonitors(): Promise<number> {
     monitorTimer = null;
   }
   const monitors = listAllMonitors();
+  const premiumCache = new Map<string, boolean>();
   try {
     for (const m of monitors) {
+      let premium = premiumCache.get(m.telegram_id);
+      if (premium === undefined) {
+        premium = isUserPremium(m.telegram_id);
+        premiumCache.set(m.telegram_id, premium);
+      }
+      if (!premium && Number(m.telegram_id) !== BOT_ADMIN_ID) {
+        removeMonitor(m.telegram_id, m.target_id);
+        continue;
+      }
       await checkSingleMonitor(m.id);
     }
   } finally {
