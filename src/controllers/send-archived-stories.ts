@@ -65,24 +65,14 @@ export async function sendArchivedStories({ stories, task }: SendStoriesArgs) {
 
       const chunkedList = chunkMediafiles(uploadableStories);
       for (const album of chunkedList) {
-        const isSingle = album.length === 1;
         await bot.telegram.sendMediaGroup(
           task.chatId,
           album.map((x: MappedStoryItem) => ({
             media: { source: x.buffer! },
             type: x.mediaType,
-            caption: isSingle ? undefined : x.caption ?? undefined,
+            caption: [x.caption, task.link].filter(Boolean).join('\n'),
           }))
         );
-        if (isSingle) {
-          const caption = album[0].caption ?? `Archived story from ${task.link}`;
-          await sendTemporaryMessage(bot, task.chatId, caption).catch((err) => {
-            console.error(
-              `[sendArchivedStories] Failed to send temporary caption to ${task.chatId}:`,
-              err,
-            );
-          });
-        }
       }
     } else {
       await bot.telegram.sendMessage(
