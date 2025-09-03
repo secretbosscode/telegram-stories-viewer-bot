@@ -4,7 +4,13 @@ jest.mock('../src/config/userbot', () => ({
   Userbot: { getInstance: jest.fn() },
 }));
 jest.mock('../src/index', () => ({
-  bot: { telegram: { sendPhoto: jest.fn(), sendVideo: jest.fn() } },
+  bot: {
+    telegram: {
+      sendPhoto: jest.fn(),
+      sendVideo: jest.fn(),
+      sendMessage: jest.fn(),
+    },
+  },
 }));
 jest.mock('controllers/send-active-stories', () => ({
   sendActiveStories: jest.fn(),
@@ -25,7 +31,7 @@ import bigInt from 'big-integer';
 
 test('sends profile photo when changed', async () => {
   const row = addMonitor('user', '123', 'tester', '999', null);
-  let photoId = 1;
+  let photoId: number | null = 1;
   const invoke = jest.fn(async (query: any) => {
     if (query instanceof Api.users.GetUsers) {
       return [{ id: bigInt(123), accessHash: bigInt(999), username: 'tester' }];
@@ -35,7 +41,7 @@ test('sends profile photo when changed', async () => {
     }
     if (query instanceof Api.photos.GetUserPhotos) {
       return {
-        photos: [{ id: photoId, videoSizes: [] }],
+        photos: photoId ? [{ id: photoId, videoSizes: [] }] : [],
       } as any;
     }
     return null;
@@ -56,6 +62,14 @@ test('sends profile photo when changed', async () => {
   photoId = 2;
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(2);
+
+  photoId = null;
+  await checkSingleMonitor(row.id);
+  expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
+  expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(2);
+
+  await checkSingleMonitor(row.id);
+  expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
 
   removeMonitor('user', '123');
 });

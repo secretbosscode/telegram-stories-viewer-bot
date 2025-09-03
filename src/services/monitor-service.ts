@@ -274,7 +274,13 @@ export async function checkSingleMonitor(id: number): Promise<void> {
       const photos = (photoRes as any)?.photos || [];
       const latest = photos[0];
       const latestId = latest ? String(latest.id) : null;
-      if (latestId !== m.last_photo_id) {
+      if (!latestId && m.last_photo_id) {
+        await bot.telegram.sendMessage(
+          m.telegram_id,
+          t(lang, 'monitor.photoRemoved', { user: formatMonitorTarget(m) }),
+        );
+        updateMonitorPhoto(m.id, null);
+      } else if (latestId !== m.last_photo_id) {
         if (latest && latestId) {
           try {
             const buffer = (await client.downloadMedia(latest as any)) as Buffer;
