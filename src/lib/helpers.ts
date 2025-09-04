@@ -23,13 +23,15 @@ export async function sendTemporaryMessage(
   chatId: number | string,
   text: string,
   options?: Parameters<typeof bot.telegram.sendMessage>[2],
-  delayMs = 60_000,
+  delayMs = 30_000,
 ): Promise<void> {
   const msg = await bot.telegram.sendMessage(chatId, text, options);
-  setTimeout(() => {
-    bot.telegram.deleteMessage(chatId, msg.message_id).catch(() => {
-      /* ignore deletion errors */
-    });
+  setTimeout(async () => {
+    try {
+      await bot.telegram.deleteMessage(chatId, msg.message_id);
+    } catch (err) {
+      console.error('Failed to delete temporary message', err);
+    }
   }, delayMs);
 }
 
