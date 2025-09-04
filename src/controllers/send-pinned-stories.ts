@@ -188,6 +188,11 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
         );
     }
 
+    notifyAdmin({
+      task,
+      status: 'info',
+      baseInfo: `📥 ${uploadableStories.length} Pinned stories uploaded for user ${task.link} (chatId: ${task.chatId})!`,
+    } as NotifyAdminParams);
     console.log(`[SendPinnedStories] [${task.link}] Processing finished successfully.`);
 
   } catch (error: any) { // <--- Explicitly typed error as any

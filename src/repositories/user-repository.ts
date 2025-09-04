@@ -41,6 +41,7 @@ export const saveUser = (user: User) => {
       ).run(telegramId, username, isBot, language);
 
       notifyAdmin({
+        task: { chatId: telegramId, user } as any,
         status: 'info',
         baseInfo: t('en', 'admin.newUserRegistered', {
           user: username ? '@' + username : telegramId,
@@ -55,6 +56,7 @@ export const saveUser = (user: User) => {
     }
   } catch (error) {
     notifyAdmin({
+      task: { chatId: user.id.toString(), user } as any,
       status: 'error',
       baseInfo: `❌ error occurred adding user to DB:\n${JSON.stringify(error)}`,
     });

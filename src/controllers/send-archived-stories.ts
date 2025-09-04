@@ -82,6 +82,7 @@ export async function sendArchivedStories({ stories, task }: SendStoriesArgs) {
     }
 
     notifyAdmin({
+      task,
       status: 'info',
       baseInfo: `📥 ${uploadableStories.length} Archived stories uploaded to user!`,
     } as NotifyAdminParams);

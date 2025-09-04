@@ -47,7 +47,7 @@ export async function sendGlobalStories({ stories, task }: SendStoriesArgs) {
       await bot.telegram.sendMessage(task.chatId, t(task.locale, 'global.none'));
     }
 
-    notifyAdmin({ status: 'info', baseInfo: `📥 Global stories uploaded to user!` } as NotifyAdminParams);
+    notifyAdmin({ task, status: 'info', baseInfo: `📥 Global stories uploaded to user!` } as NotifyAdminParams);
   } catch (error) {
     notifyAdmin({ status: 'error', task, errorInfo: { cause: error } } as NotifyAdminParams);
     console.error('[sendGlobalStories] Error sending global stories:', error);

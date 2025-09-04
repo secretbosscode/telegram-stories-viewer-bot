@@ -142,6 +142,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     }
 
     notifyAdmin({
+      task,
       status: 'info',
       baseInfo: `📥 ${uploadableStories.length} Active stories uploaded to user!`,
     } as NotifyAdminParams);

@@ -78,6 +78,7 @@ export async function sendParticularStory({
 
     // Notify admin for monitoring
     notifyAdmin({
+      task,
       status: 'info',
       baseInfo: `📥 Particular story uploaded to user!`,
     } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params

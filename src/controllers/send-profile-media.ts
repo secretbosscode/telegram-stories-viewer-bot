@@ -82,7 +82,7 @@ export async function sendProfileMedia(
     }
   } catch (e) {
     console.error('[sendProfileMedia] Error:', e);
-    notifyAdmin({ status: 'error', errorInfo: { cause: e } });
+    notifyAdmin({ status: 'error', task: { chatId: String(chatId), user } as any, errorInfo: { cause: e } });
     await bot.telegram.sendMessage(chatId, t(user?.language_code || '', 'profile.error'));
   }
 }

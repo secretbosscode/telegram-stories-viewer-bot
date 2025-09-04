@@ -120,7 +120,12 @@ export async function sendPaginatedStories({
         });
     }
 
-  } catch (error) {
+  } catch (error) { // <--- Error can be 'unknown' or 'any' if not specified
+    notifyAdmin({
+      status: 'error',
+      task,
+      errorInfo: { cause: error },
+    } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
     console.error('[sendPaginatedStories] Error occurred while sending paginated stories:', error);
     try {
       await bot.telegram
