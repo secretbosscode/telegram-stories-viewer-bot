@@ -93,21 +93,38 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
           err
         );
       });
-
-      // --- Send in chunks (albums) ---
-      const chunkedList = chunkMediafiles(uploadableStories);
-      for (const album of chunkedList) {
-        await bot.telegram.sendMediaGroup(
-          task.chatId,
-          album.map((x: MappedStoryItem) => {
-            const captionText = `${x.caption ? `${x.caption}\n\n` : ''}Active story from ${task.link}`;
-            return {
-              media: { source: x.buffer! },
-              type: x.mediaType,
-              caption: captionText.slice(0, 1024),
-            };
-          })
+      if (uploadableStories.length === 1) {
+        await sendTemporaryMessage(bot, task.chatId, `Active story from ${task.link}`).catch(
+          (err) => {
+            console.error(
+              `[sendActiveStories] Failed to send 'Active story from' message to ${task.chatId}:`,
+              err
+            );
+          }
         );
+
+        const single = uploadableStories[0];
+        const media: any = { media: { source: single.buffer! }, type: single.mediaType };
+        if (single.caption) {
+          media.caption = single.caption.slice(0, 1024);
+        }
+        await bot.telegram.sendMediaGroup(task.chatId, [media]);
+      } else {
+        // --- Send in chunks (albums) ---
+        const chunkedList = chunkMediafiles(uploadableStories);
+        for (const album of chunkedList) {
+          await bot.telegram.sendMediaGroup(
+            task.chatId,
+            album.map((x: MappedStoryItem) => {
+              const captionText = `${x.caption ? `${x.caption}\n\n` : ''}Active story from ${task.link}`;
+              return {
+                media: { source: x.buffer! },
+                type: x.mediaType,
+                caption: captionText.slice(0, 1024),
+              };
+            })
+          );
+        }
       }
     } else {
       await bot.telegram.sendMessage(
