@@ -16,6 +16,8 @@ import { SendStoriesArgs, StoriesModel, MappedStoryItem } from 'types';
 
 // Corrected import path for downloadStories and mapStories
 import { downloadStories, mapStories } from 'controllers/download-stories';
+import { notifyAdmin } from 'controllers/send-message';
+import { NotifyAdminParams } from 'types';
 
 // =========================================================================
 // CRITICAL FUNCTION: This function handles downloading and sending stories.

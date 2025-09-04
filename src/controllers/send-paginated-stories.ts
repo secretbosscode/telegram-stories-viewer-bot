@@ -9,6 +9,8 @@ import { SendPaginatedStoriesArgs, MappedStoryItem } from 'types';
 
 // Corrected import path for downloadStories and mapStories
 import { downloadStories, mapStories } from 'controllers/download-stories';
+import { notifyAdmin } from 'controllers/send-message';
+import { NotifyAdminParams } from 'types';
 
 
 /**
