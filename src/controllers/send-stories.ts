@@ -3,18 +3,15 @@
 import { createEffect } from 'effector';
 import { timeout } from 'lib';
 import { sendTemporaryMessage } from 'lib/helpers';
-import { Api } from 'telegram';
 import { t } from "lib/i18n";
 import { bot } from 'index'; // Import the bot instance for sending messages
+import { notifyAdmin } from 'controllers/send-message';
 
 // Types are correctly imported from a central file.
 import {
-  UserInfo,
   SendStoriesFxParams,
-  SendStoriesArgs,
-  SendPaginatedStoriesArgs,
-  SendParticularStoryArgs,
-  MappedStoryItem
+  MappedStoryItem,
+  NotifyAdminParams,
 } from 'types';
 
 // Downstream controller functions are imported.
@@ -99,16 +96,31 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
           task.chatId,
           t(task.locale, 'stories.completed', { link: task.link })
         );
+        notifyAdmin({
+          status: 'info',
+          task,
+          baseInfo: `📥 Stories sent for ${task.link} (chatId: ${task.chatId})`,
+        } as NotifyAdminParams);
       } else {
         // If we went through all the logic and sent nothing, inform the user.
         await bot.telegram.sendMessage(
           task.chatId,
           t(task.locale, 'stories.noneFound', { link: task.link })
         );
+        notifyAdmin({
+          status: 'info',
+          task,
+          baseInfo: `ℹ️ No stories found for ${task.link} (chatId: ${task.chatId})`,
+        } as NotifyAdminParams);
       }
 
     } catch (error: any) {
       console.error(`[sendStoriesFx] Unhandled error during task for link "${params.task.link}" (User: ${params.task.chatId}):`, error);
+      notifyAdmin({
+        status: 'error',
+        task,
+        errorInfo: { cause: error },
+      } as NotifyAdminParams);
       // Re-throw the error so the main service can catch it with .fail.watch()
       // and mark the task as failed in the database.
       throw error;
