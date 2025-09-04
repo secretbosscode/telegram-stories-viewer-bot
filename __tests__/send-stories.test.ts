@@ -33,7 +33,11 @@ import { sendStoriesFx } from '../src/controllers/send-stories';
 import { SendStoriesFxParams } from '../src/types';
 
 describe('sendStoriesFx', () => {
-  test('uses sendTemporaryMessage on success', async () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('sends persistent completion message', async () => {
     const params: SendStoriesFxParams = {
       particularStory: {} as any,
       task: {
@@ -48,14 +52,41 @@ describe('sendStoriesFx', () => {
     await sendStoriesFx(params);
 
     expect(sendParticularStory).toHaveBeenCalled();
+    expect(bot.telegram.sendMessage).toHaveBeenCalledWith(
+      '1',
+      '🎉 Download for user completed!',
+      { link_preview_options: { is_disabled: true } }
+    );
+    expect(sendTemporaryMessage).not.toHaveBeenCalledWith(
+      bot,
+      '1',
+      expect.any(String),
+      expect.anything()
+    );
+  });
+
+  test('uses temporary message when no stories found', async () => {
+    const params: SendStoriesFxParams = {
+      task: {
+        chatId: '1',
+        link: 'user',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+      },
+    } as any;
+
+    await sendStoriesFx(params);
+
+    expect(bot.telegram.sendMessage).not.toHaveBeenCalledWith(
+      '1',
+      expect.any(String)
+    );
     expect(sendTemporaryMessage).toHaveBeenCalledWith(
       bot,
       '1',
-      '🎉 Download for user completed!'
-    );
-    expect(bot.telegram.sendMessage).not.toHaveBeenCalledWith(
-      '1',
-      expect.stringContaining('No public stories')
+      '🤷 No public stories found for user.',
+      { link_preview_options: { is_disabled: true } }
     );
   });
 });

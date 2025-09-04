@@ -91,10 +91,10 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       // =========================================================================
       if (storiesWereSent) {
         // If we actually sent one or more stories, send the completion message.
-        await sendTemporaryMessage(
-          bot,
+        await bot.telegram.sendMessage(
           task.chatId,
-          t(task.locale, 'stories.completed', { link: task.link })
+          t(task.locale, 'stories.completed', { link: task.link }),
+          { link_preview_options: { is_disabled: true } }
         );
         notifyAdmin({
           status: 'info',
@@ -103,9 +103,11 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
         } as NotifyAdminParams);
       } else {
         // If we went through all the logic and sent nothing, inform the user.
-        await bot.telegram.sendMessage(
+        await sendTemporaryMessage(
+          bot,
           task.chatId,
-          t(task.locale, 'stories.noneFound', { link: task.link })
+          t(task.locale, 'stories.noneFound', { link: task.link }),
+          { link_preview_options: { is_disabled: true } }
         );
         notifyAdmin({
           status: 'info',
