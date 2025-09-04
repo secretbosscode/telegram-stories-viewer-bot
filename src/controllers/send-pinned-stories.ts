@@ -12,11 +12,10 @@ import { Api } from 'telegram';
 import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram'; // <--- ADDED: For InlineKeyboardButton
 
 // CORRECTED: Import types from your central types.ts file
-import { UserInfo, SendStoriesArgs, StoriesModel, MappedStoryItem, NotifyAdminParams } from 'types'; // <--- Added MappedStoryItem for explicit typing
+import { SendStoriesArgs, StoriesModel, MappedStoryItem } from 'types';
 
 // Corrected import path for downloadStories and mapStories
 import { downloadStories, mapStories } from 'controllers/download-stories';
-import { notifyAdmin } from 'controllers/send-message';
 
 // =========================================================================
 // CRITICAL FUNCTION: This function handles downloading and sending stories.
@@ -166,11 +165,6 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
           },
           [] as InlineKeyboardButton[][]
         );
-        await sendTemporaryMessage(
-          bot,
-          task.chatId!,
-          `Uploaded ${PER_PAGE}/${stories.length} pinned stories ✅`,
-        );
         await bot.telegram.sendMessage(
           task.chatId!,
           t(task.locale, 'pinned.selectNext'),
@@ -202,16 +196,10 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     console.log(`[SendPinnedStories] [${task.link}] Processing finished successfully.`);
 
   } catch (error: any) { // <--- Explicitly typed error as any
-    notifyAdmin({
-      status: 'error',
-      task,
-      errorInfo: { cause: error },
-    } as NotifyAdminParams);
     console.error(`[SendPinnedStories] [${task.link}] CRITICAL error occurred:`, error);
     try {
         await bot.telegram.sendMessage(task.chatId, t(task.locale, 'pinned.error'));
     } catch (e) { /* ignore */}
     throw error;
-    console.log(`[SendPinnedStories] [${task.link}] Function execution complete.`);
   }
 }

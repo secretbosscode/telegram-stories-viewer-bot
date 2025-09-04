@@ -1,16 +1,14 @@
 // src/controllers/send-paginated-stories.ts
 
 import { bot } from 'index'; // Corrected path to use tsconfig alias
-import { Api } from 'telegram';
 import { sendTemporaryMessage } from 'lib';
 import { t } from "lib/i18n";
 
 // CORRECTED: Import types from your central types.ts file
-import { SendPaginatedStoriesArgs, MappedStoryItem, NotifyAdminParams } from 'types'; // <--- Corrected import path & added MappedStoryItem, NotifyAdminParams
+import { SendPaginatedStoriesArgs, MappedStoryItem } from 'types';
 
 // Corrected import path for downloadStories and mapStories
-import { downloadStories, mapStories } from 'controllers/download-stories'; // <--- Corrected import path
-import { notifyAdmin } from 'controllers/send-message'; // <--- Corrected import path
+import { downloadStories, mapStories } from 'controllers/download-stories';
 
 
 /**
