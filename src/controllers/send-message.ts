@@ -4,6 +4,7 @@ import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
 // CORRECTED: Import UserInfo AND NotifyAdminParams from your central types.ts file
 import { UserInfo, NotifyAdminParams } from 'types'; // This is now correct!
+import { sendTemporaryMessage } from 'lib';
 
 /**
  * Notify the bot admin of important events (errors, info, start).
@@ -44,7 +45,7 @@ export async function notifyAdmin({
       if (task?.user) {
         text += '\n👤 user: ' + userInfo;
       }
-      await bot.telegram.sendMessage(BOT_ADMIN_ID, text, msgOptions);
+      await sendTemporaryMessage(bot, BOT_ADMIN_ID, text, msgOptions);
       return;
     }
 

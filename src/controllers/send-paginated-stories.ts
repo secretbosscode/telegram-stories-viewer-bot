@@ -122,12 +122,6 @@ export async function sendPaginatedStories({
         });
     }
 
-    // Notify admin for logging and monitoring
-    notifyAdmin({
-      status: 'info',
-      baseInfo: `📥 Paginated stories uploaded to user!`,
-    } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
-
   } catch (error) { // <--- Error can be 'unknown' or 'any' if not specified
     notifyAdmin({
       status: 'error',

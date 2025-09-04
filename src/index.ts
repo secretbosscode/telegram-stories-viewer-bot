@@ -382,6 +382,7 @@ bot.command('freetrial', async (ctx) => {
   }
   grantFreeTrial(userId);
   notifyAdmin({
+    task: { chatId: userId, user: ctx.from } as any,
     status: 'info',
     baseInfo: t('en', 'admin.freeTrialRedeemed', {
       user: ctx.from.username ? '@' + ctx.from.username : userId,
@@ -436,6 +437,7 @@ bot.command('verify', async (ctx) => {
       true,
     );
     notifyAdmin({
+      task: { chatId: String(ctx.from.id), user: ctx.from } as any,
       status: 'info',
       baseInfo: t('en', 'admin.upgradePayment', {
         user: ctx.from.username ? '@' + ctx.from.username : ctx.from.id,
