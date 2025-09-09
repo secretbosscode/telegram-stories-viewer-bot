@@ -94,20 +94,13 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
         );
       });
       if (uploadableStories.length === 1) {
-        await sendTemporaryMessage(bot, task.chatId, `Active story from ${task.link}`).catch(
-          (err) => {
-            console.error(
-              `[sendActiveStories] Failed to send 'Active story from' message to ${task.chatId}:`,
-              err
-            );
-          }
-        );
-
         const single = uploadableStories[0];
-        const media: any = { media: { source: single.buffer! }, type: single.mediaType };
-        if (single.caption) {
-          media.caption = single.caption.slice(0, 1024);
-        }
+        const captionText = `${single.caption ? single.caption + '\n\n' : ''}Active story from ${task.link}`;
+        const media: any = {
+          media: { source: single.buffer! },
+          type: single.mediaType,
+          caption: captionText.slice(0, 1024),
+        };
         await bot.telegram.sendMediaGroup(task.chatId, [media]);
       } else {
         // --- Send in chunks (albums) ---

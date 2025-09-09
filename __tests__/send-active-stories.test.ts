@@ -39,7 +39,7 @@ describe('sendActiveStories single story caption', () => {
     jest.clearAllMocks();
   });
 
-  test('does not append persistent caption for single story', async () => {
+  test('includes active story info in caption for single story', async () => {
     const story: MappedStoryItem = {
       id: 1,
       media: {} as any,
@@ -64,8 +64,8 @@ describe('sendActiveStories single story caption', () => {
 
     expect(bot.telegram.sendMediaGroup).toHaveBeenCalledTimes(1);
     const media = (bot.telegram.sendMediaGroup as jest.Mock).mock.calls[0][1] as any[];
-    expect(media[0].caption).toBe('Original');
-    expect(sendTemporaryMessage).toHaveBeenCalledWith(bot, '1', 'Active story from user');
+    expect(media[0].caption).toBe('Original\n\nActive story from user');
+    expect(sendTemporaryMessage).toHaveBeenCalledTimes(2);
   });
 });
 
