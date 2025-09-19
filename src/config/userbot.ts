@@ -1,5 +1,6 @@
 import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
+import { Raw } from 'telegram/events';
 import fs from 'fs';
 import readline from 'readline';
 import path from 'path';
@@ -18,6 +19,7 @@ import {
   USERBOT_PASSWORD,
   USERBOT_PHONE_CODE
 } from './env-config';
+import { handleHiddenStoryUpdate } from 'services/hidden-story-cache';
 
 export class Userbot {
   private static client: TelegramClient | null = null;
@@ -157,6 +159,18 @@ async function initClient() {
     console.error('[Userbot] Failed to write session', err);
   }
   await withTelegramRetry(() => client.sendMessage('me', { message: 'Hi!' }));
+
+  const storyUpdateHandler = async (update: Api.TypeUpdate) => {
+    if (update instanceof Api.UpdateStory || update instanceof Api.UpdateStoryID) {
+      try {
+        await handleHiddenStoryUpdate(client, update);
+      } catch (err) {
+        console.error('[Userbot] Hidden story cache handler error:', err);
+      }
+    }
+  };
+
+  client.addEventHandler(storyUpdateHandler, new Raw({ types: [Api.UpdateStory, Api.UpdateStoryID] }));
   return client;
 }
 
