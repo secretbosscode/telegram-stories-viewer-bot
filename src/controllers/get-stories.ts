@@ -10,6 +10,7 @@ import { FloodWaitError } from 'telegram/errors';
 import { isDevEnv } from 'config/env-config';
 import { notifyAdmin } from 'controllers/send-message';
 import { t } from 'lib/i18n';
+import { collectStoriesFromAllStories, mergeStoriesWithHiddenCache } from 'services/hidden-story-cache';
 
 
 function resolvePeerEntity(
@@ -147,20 +148,17 @@ export const getGlobalStoriesFx = createEffect(async (task: UserInfo) => {
       new Api.stories.GetAllStories(params)
     );
 
-    const storiesContainer: any = result?.stories ?? result;
-    const stories: Api.TypeStoryItem[] = Array.isArray(storiesContainer?.stories)
-      ? storiesContainer.stories
-      : [];
-
-    let globalStoryOwnersById: Record<number, Api.TypeEntityLike> | undefined;
-    if (task.includeHiddenStories) {
-      const ownersById = buildStoryOwnersById(result);
-      if (Object.keys(ownersById).length > 0) {
-        globalStoryOwnersById = ownersById;
-      }
+    let stories: Api.TypeStoryItem[] = [];
+    if (result instanceof Api.stories.AllStories) {
+      const collected = collectStoriesFromAllStories(result);
+      stories = mergeStoriesWithHiddenCache(collected, {
+        includeHidden: Boolean(task.includeHiddenStories),
+      });
+    } else if (task.includeHiddenStories) {
+      stories = mergeStoriesWithHiddenCache([], { includeHidden: true });
     }
 
-    return { globalStories: stories, globalStoryOwnersById };
+    return { globalStories: stories };
   } catch (error: any) {
     console.error('[GetStories] Error in getGlobalStoriesFx:', error);
     if (error instanceof FloodWaitError) {
