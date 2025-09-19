@@ -46,6 +46,7 @@ export interface MappedStoryItem {
   buffer?: Buffer;
   bufferSize?: number; // Size in MB
   noforwards?: boolean;
+  owner?: Api.TypeEntityLike;
 }
 
 export type StoriesModel = MappedStoryItem[]; // Alias for consistency
@@ -57,6 +58,7 @@ export interface SendStoriesFxParams {
   archivedStories?: Api.TypeStoryItem[];
   paginatedStories?: Api.TypeStoryItem[];
   globalStories?: Api.TypeStoryItem[];
+  globalStoryOwnersById?: Record<number, Api.TypeEntityLike>;
   particularStory?: Api.TypeStoryItem;
   task: UserInfo;
 }
@@ -65,6 +67,7 @@ export interface SendStoriesFxParams {
 export interface SendStoriesArgs {
   stories: MappedStoryItem[];
   task: UserInfo;
+  storyOwnersById?: Record<number, Api.TypeEntityLike>;
 }
 
 // Arguments specific to sendPaginatedStories

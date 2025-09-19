@@ -1,9 +1,28 @@
 import { bot, GLOBAL_STORIES_PAGE_SIZE, GLOBAL_STORIES_CALLBACK_PREFIX } from 'index';
 import { chunkMediafiles, sendTemporaryMessage } from 'lib';
 import { t } from 'lib/i18n';
-import { downloadStories } from 'controllers/download-stories';
+import { downloadStories, mapStories } from 'controllers/download-stories';
 import { SendStoriesArgs, MappedStoryItem, NotifyAdminParams, UserInfo } from 'types';
 import { notifyAdmin } from 'controllers/send-message';
+import { withPeerStoriesTemporarilyVisible } from 'services/hidden-stories';
+import { Userbot } from 'config/userbot';
+import { Api } from 'telegram';
+
+function extractStoryItems(result: any): Api.TypeStoryItem[] {
+  if (!result) {
+    return [];
+  }
+
+  if (Array.isArray(result.stories)) {
+    return result.stories;
+  }
+
+  if (Array.isArray(result?.stories?.stories)) {
+    return result.stories.stories;
+  }
+
+  return [];
+}
 
 // =========================================================================
 // Sends stories from the global feed.
@@ -41,13 +60,65 @@ async function updatePaginationControls(task: UserInfo, batchSize: number) {
   }
 }
 
-export async function sendGlobalStories({ stories, task }: SendStoriesArgs) {
+export async function sendGlobalStories({ stories, task, storyOwnersById }: SendStoriesArgs) {
   let mapped: MappedStoryItem[] = stories;
 
   try {
     await sendTemporaryMessage(bot, task.chatId, t(task.locale, 'global.downloading')).catch(() => {});
 
     await downloadStories(mapped, 'active');
+
+    const storiesNeedingRefresh = mapped.filter(
+      (story: MappedStoryItem) => !story.buffer && !!story.owner
+    );
+
+    if (storiesNeedingRefresh.length > 0) {
+      const client = await Userbot.getInstance();
+
+      for (const story of storiesNeedingRefresh) {
+        const peer = story.owner;
+        if (!peer) {
+          continue;
+        }
+
+        try {
+          await withPeerStoriesTemporarilyVisible(peer, async () => {
+            const response = await client.invoke(
+              new Api.stories.GetStoriesByID({ peer, id: [story.id] })
+            );
+
+            const refreshedItems = extractStoryItems(response);
+            if (refreshedItems.length === 0) {
+              console.warn(`[sendGlobalStories] Hidden story ${story.id} returned no media after refresh.`);
+              return;
+            }
+
+            const ownersLookup = story.owner
+              ? { [story.id]: story.owner }
+              : storyOwnersById;
+            const remapped = mapStories(refreshedItems, ownersLookup);
+            const refreshedStory = remapped.find((item) => item.id === story.id);
+
+            if (!refreshedStory) {
+              console.warn(`[sendGlobalStories] Hidden story ${story.id} missing from refreshed response.`);
+              return;
+            }
+
+            story.caption = refreshedStory.caption;
+            story.media = refreshedStory.media;
+            story.mediaType = refreshedStory.mediaType;
+            story.date = refreshedStory.date;
+            story.noforwards = refreshedStory.noforwards;
+            story.buffer = undefined;
+            story.bufferSize = undefined;
+          });
+        } catch (error) {
+          console.error(`[sendGlobalStories] Failed to re-fetch hidden story ${story.id}:`, error);
+        }
+      }
+
+      await downloadStories(storiesNeedingRefresh, 'active');
+    }
 
     const uploadableStories = mapped.filter(
       (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 50

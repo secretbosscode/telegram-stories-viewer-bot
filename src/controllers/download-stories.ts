@@ -104,8 +104,18 @@ export async function downloadStories(
  * Maps Telegram API stories to the internal MappedStoryItem type.
  * Skips stories with no media, no valid date, or unknown media type.
  */
-export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
+export function mapStories(
+  stories: Api.TypeStoryItem[],
+  storyOwnersById?: Map<number, Api.TypeEntityLike> | Record<number, Api.TypeEntityLike>
+): StoriesModel {
   const mappedStories: MappedStoryItem[] = [];
+
+  const resolveOwner: ((id: number) => Api.TypeEntityLike | undefined) | undefined =
+    storyOwnersById
+      ? storyOwnersById instanceof Map
+        ? (id: number) => storyOwnersById.get(id)
+        : (id: number) => storyOwnersById[id]
+      : undefined;
 
   stories.forEach((x: Api.TypeStoryItem) => { // Explicitly type x
     if (!x || !('id' in x)) return;
@@ -139,6 +149,13 @@ export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
     }
 
     story.noforwards = 'noforwards' in x && typeof x.noforwards === 'boolean' ? x.noforwards : false;
+
+    if (resolveOwner) {
+      const owner = resolveOwner(x.id);
+      if (owner) {
+        story.owner = owner;
+      }
+    }
 
     if (story.id && story.media && story.mediaType && story.date) {
       mappedStories.push(story as MappedStoryItem);
