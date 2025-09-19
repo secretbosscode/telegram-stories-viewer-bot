@@ -650,28 +650,42 @@ export function markStorySent(
   monitor_id: number,
   story_id: number,
   story_date: number,
-  expires_at: number,
-  story_type = 'active',
+  expires_at: number | null,
+  story_type: 'active' | 'pinned' = 'active',
 ): void {
   const story_key = `${story_id}:${story_date}`;
+  const normalizedExpiresAt =
+    story_type === 'pinned'
+      ? 0
+      : expires_at ?? 0;
   db.prepare(
     `INSERT OR REPLACE INTO monitor_sent_stories (monitor_id, story_id, story_date, story_key, story_type, expires_at) VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(monitor_id, story_id, story_date, story_key, story_type, expires_at);
+  ).run(monitor_id, story_id, story_date, story_key, story_type, normalizedExpiresAt);
 }
 
-export function listSentStoryKeys(monitor_id: number, story_type = 'active'): string[] {
+export function listSentStoryKeys(
+  monitor_id: number,
+  story_type: 'active' | 'pinned' = 'active',
+): string[] {
   const now = Math.floor(Date.now() / 1000);
-  const rows = db
-    .prepare(
-      `SELECT story_key FROM monitor_sent_stories WHERE monitor_id = ? AND story_type = ? AND expires_at > ?`,
-    )
-    .all(monitor_id, story_type, now) as { story_key: string }[];
+  const rows =
+    story_type === 'pinned'
+      ? (db
+          .prepare(
+            `SELECT story_key FROM monitor_sent_stories WHERE monitor_id = ? AND story_type = ?`,
+          )
+          .all(monitor_id, story_type) as { story_key: string }[])
+      : (db
+          .prepare(
+            `SELECT story_key FROM monitor_sent_stories WHERE monitor_id = ? AND story_type = ? AND expires_at > ?`,
+          )
+          .all(monitor_id, story_type, now) as { story_key: string }[]);
   return rows.map((r) => r.story_key);
 }
 
 export function cleanupExpiredSentStories(): void {
   const now = Math.floor(Date.now() / 1000);
-  db.prepare(`DELETE FROM monitor_sent_stories WHERE expires_at <= ?`).run(now);
+  db.prepare(`DELETE FROM monitor_sent_stories WHERE story_type != 'pinned' AND expires_at <= ?`).run(now);
 }
 
 // ----- Payment utils -----

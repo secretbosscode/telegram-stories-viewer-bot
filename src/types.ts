@@ -19,6 +19,7 @@ export interface UserInfo {
   isPaginated?: boolean;
   includeHiddenStories?: boolean;
   offset?: number;
+  globalStoriesMessageId?: number;
 }
 
 // DownloadQueueItem: An item in the download queue (DB structure)

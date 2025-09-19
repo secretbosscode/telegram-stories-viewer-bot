@@ -108,6 +108,8 @@ setBotInstance(bot);
 const RESTART_COMMAND = 'restart';
 const extraOptions: any = { link_preview_options: { is_disabled: true } };
 const LIST_PAGE_SIZE = 100;
+export const GLOBAL_STORIES_PAGE_SIZE = 50;
+export const GLOBAL_STORIES_CALLBACK_PREFIX = 'globalstories:';
 
 // =============================
 // Command definitions
@@ -1136,6 +1138,33 @@ export async function handleCallbackQuery(ctx: IContextBot) {
   if (data.startsWith('premium:') && ctx.from?.id == BOT_ADMIN_ID) {
     const page = Number(data.split(':')[1] || '0');
     await sendPremiumPage(ctx, page, true);
+    await ctx.answerCbQuery();
+    return;
+  }
+
+  if (data.startsWith(GLOBAL_STORIES_CALLBACK_PREFIX) && ctx.from?.id === BOT_ADMIN_ID) {
+    const offsetStr = data.slice(GLOBAL_STORIES_CALLBACK_PREFIX.length);
+    const offset = Number.parseInt(offsetStr, 10);
+    if (Number.isNaN(offset)) {
+      await ctx.answerCbQuery();
+      return;
+    }
+
+    const message = ctx.callbackQuery.message as any;
+    const chatId = String(message?.chat?.id ?? ctx.chat?.id ?? ctx.from.id);
+    const user = ctx.from!;
+    const task: UserInfo = {
+      chatId,
+      link: 'global',
+      linkType: 'username',
+      locale: user.language_code || 'en',
+      user,
+      initTime: Date.now(),
+      storyRequestType: 'global',
+      offset,
+      globalStoriesMessageId: message?.message_id,
+    };
+    handleNewTask(task);
     await ctx.answerCbQuery();
     return;
   }

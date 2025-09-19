@@ -13,4 +13,5 @@ export interface UserInfo {
   isPaginated?: boolean;
   includeHiddenStories?: boolean;
   offset?: number;
+  globalStoriesMessageId?: number;
 }
