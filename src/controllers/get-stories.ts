@@ -11,6 +11,7 @@ import { isDevEnv } from 'config/env-config';
 import { notifyAdmin } from 'controllers/send-message';
 import { t } from 'lib/i18n';
 import { ensureStealthMode } from 'services/stealth-mode';
+import { collectStoriesFromAllStories, mergeStoriesWithHiddenCache } from 'services/hidden-story-cache';
 
 
 // =========================================================================
