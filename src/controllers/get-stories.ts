@@ -10,105 +10,7 @@ import { FloodWaitError } from 'telegram/errors';
 import { isDevEnv } from 'config/env-config';
 import { notifyAdmin } from 'controllers/send-message';
 import { t } from 'lib/i18n';
-import { collectStoriesFromAllStories, mergeStoriesWithHiddenCache } from 'services/hidden-story-cache';
-
-
-function resolvePeerEntity(
-  peer: Api.TypePeer,
-  users: Map<string, Api.User>,
-  chats: Map<string, Api.TypeChat>,
-): Api.TypeEntityLike | null {
-  if (peer instanceof Api.PeerUser) {
-    const user = users.get(peer.userId.toString());
-    if (user instanceof Api.User && typeof user.accessHash !== 'undefined') {
-      return new Api.InputPeerUser({ userId: user.id, accessHash: user.accessHash });
-    }
-    return null;
-  }
-
-  if (peer instanceof Api.PeerChannel) {
-    const chat = chats.get(peer.channelId.toString());
-    if (chat instanceof Api.Channel || chat instanceof Api.ChannelForbidden) {
-      if (typeof chat.accessHash !== 'undefined') {
-        return new Api.InputPeerChannel({ channelId: chat.id, accessHash: chat.accessHash });
-      }
-      return null;
-    }
-    return null;
-  }
-
-  if (peer instanceof Api.PeerChat) {
-    const chat = chats.get(peer.chatId.toString());
-    if (chat instanceof Api.Chat || chat instanceof Api.ChatForbidden) {
-      return new Api.InputPeerChat({ chatId: chat.id });
-    }
-    return null;
-  }
-
-  return null;
-}
-
-function buildStoryOwnersById(result: any): Record<number, Api.TypeEntityLike> {
-  const ownersById: Record<number, Api.TypeEntityLike> = {};
-
-  const peerStories: Api.TypePeerStories[] = Array.isArray(result?.peerStories)
-    ? result.peerStories
-    : Array.isArray(result?.stories?.peerStories)
-      ? result.stories.peerStories
-      : [];
-
-  if (peerStories.length === 0) {
-    return ownersById;
-  }
-
-  const usersList: Api.TypeUser[] = Array.isArray(result?.users)
-    ? result.users
-    : Array.isArray(result?.stories?.users)
-      ? result.stories.users
-      : [];
-
-  const chatsList: Api.TypeChat[] = Array.isArray(result?.chats)
-    ? result.chats
-    : Array.isArray(result?.stories?.chats)
-      ? result.stories.chats
-      : [];
-
-  const userMap = new Map<string, Api.User>();
-  usersList.forEach((user) => {
-    if (user instanceof Api.User) {
-      userMap.set(user.id.toString(), user);
-    }
-  });
-
-  const chatMap = new Map<string, Api.TypeChat>();
-  chatsList.forEach((chat) => {
-    if (chat && 'id' in chat) {
-      const chatId = (chat as { id: any }).id;
-      if (typeof chatId !== 'undefined') {
-        chatMap.set(chatId.toString(), chat);
-      }
-    }
-  });
-
-  peerStories.forEach((peerStoriesEntry) => {
-    if (!(peerStoriesEntry instanceof Api.PeerStories)) {
-      return;
-    }
-
-    const owner = resolvePeerEntity(peerStoriesEntry.peer, userMap, chatMap);
-    if (!owner) {
-      return;
-    }
-
-    peerStoriesEntry.stories?.forEach((storyItem) => {
-      if (storyItem && 'id' in storyItem) {
-        ownersById[storyItem.id] = owner;
-      }
-    });
-  });
-
-  return ownersById;
-}
+import { ensureStealthMode } from 'services/stealth-mode';
 
 
 // =========================================================================
@@ -123,6 +25,7 @@ export const getGlobalStoriesFx = createEffect(async (task: UserInfo) => {
     );
 
     const client = await Userbot.getInstance();
+    await ensureStealthMode();
     notifyAdmin({ task, status: 'start' });
 
     const params: Record<string, any> = {
@@ -182,6 +85,7 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
 
     const client = await Userbot.getInstance();
     const entity = await getEntityWithTempContact(task.link);
+    await ensureStealthMode();
     notifyAdmin({ task, status: 'start' });
 
     // This path handles pagination clicks from inline buttons.
@@ -286,6 +190,7 @@ export const getArchivedStoriesFx = createEffect(async (task: UserInfo) => {
 
     const client = await Userbot.getInstance();
     const entity = await getEntityWithTempContact(task.link);
+    await ensureStealthMode();
     notifyAdmin({ task, status: 'start' });
 
     const archivedStories: Api.TypeStoryItem[] = [];
@@ -363,6 +268,8 @@ export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
     console.log(`[GetStories] Fetching particular story for ${usernameOrChannelId}, story ID: ${storyId}`);
     const entity = await client.getEntity(usernameOrChannelId);
     notifyAdmin({ task, status: 'start' });
+
+    await ensureStealthMode();
 
     const storyData = await client.invoke(
       new Api.stories.GetStoriesByID({ id: [storyId], peer: entity })

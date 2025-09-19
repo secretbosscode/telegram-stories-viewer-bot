@@ -26,6 +26,7 @@ import { t } from '../lib/i18n';
 import { findUserById } from '../repositories/user-repository';
 import { isUserPremium } from 'services/premium-service';
 import { BOT_ADMIN_ID } from 'config/env-config';
+import { ensureStealthMode } from 'services/stealth-mode';
 
 export const CHECK_INTERVAL_HOURS = 1;
 export const MAX_MONITORS_PER_USER = 5;
@@ -227,7 +228,8 @@ export async function checkSingleMonitor(id: number): Promise<void> {
   await refreshMonitorUsername(m);
 
   try {
-        const client = await Userbot.getInstance();
+    const client = await Userbot.getInstance();
+    await ensureStealthMode();
     const peer = new Api.InputUser({
       userId: bigInt(m.target_id),
       accessHash: m.target_access_hash
