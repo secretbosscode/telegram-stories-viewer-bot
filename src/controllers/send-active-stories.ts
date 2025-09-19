@@ -16,6 +16,7 @@ import { SendStoriesArgs, MappedStoryItem, StoriesModel, NotifyAdminParams } fro
 // Corrected import path for downloadStories and mapStories
 import { downloadStories, mapStories } from 'controllers/download-stories';
 import { notifyAdmin } from 'controllers/send-message';
+import { sendStoryFallbacks } from 'controllers/story-fallback';
 
 /**
  * Sends a user's active stories as Telegram media groups.
@@ -60,6 +61,14 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     }
   }
 
+  mapped.forEach((story) => {
+    story.source = {
+      ...(story.source ?? {}),
+      identifier: story.source?.identifier ?? task.link,
+      displayName: story.source?.displayName ?? task.link,
+    };
+  });
+
   try {
     // --- User notification: downloading ---
     await sendTemporaryMessage(
@@ -74,12 +83,14 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
     });
 
     // --- Download stories to buffer ---
-    await downloadStories(mapped, 'active');
+    const downloadResult = await downloadStories(mapped, 'active');
 
     // --- Only upload files with buffer and size <= 47MB (Telegram API limit fudge) ---
     const uploadableStories: MappedStoryItem[] = mapped.filter(
       (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 47 // <--- 'x' is typed here
     );
+
+    const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
 
     // --- Notify user about upload ---
     if (uploadableStories.length > 0) {
@@ -124,6 +135,10 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
         task.chatId,
         t(task.locale, 'active.none')
       );
+    }
+
+    if (failedDownloads.length > 0) {
+      await sendStoryFallbacks(task, failedDownloads);
     }
 
     // --- If more pages, offer buttons for the rest ---

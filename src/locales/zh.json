@@ -164,6 +164,8 @@
   "profile.error": "获取头像媒体时出错。",
   "stories.completed": "🎉 {{link}} 的下载已完成！",
   "stories.noneFound": "🤷 未找到 {{link}} 的公开故事。",
+  "stories.fallbackMessage": "⚠️ 故事 {{id}} 无法自动下载。请点击下方按钮直接在 Telegram 中打开。",
+  "stories.fallbackButton": "打开故事 {{id}}",
   "queue.cooldown": "⏳ 你只能每 {{hours}} 小时请求一次 \"{{user}}\" 的故事。\n请在 {{h}} 小时 {{m}} 分后再试。",
   "download.noStory": "❌ 无法获取所请求的故事。",
   "stories.fetchingArchive": "⏳ Fetching archived stories...",
