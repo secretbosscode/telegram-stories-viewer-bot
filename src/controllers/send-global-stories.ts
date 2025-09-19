@@ -1,13 +1,46 @@
-import { bot } from 'index';
+import { bot, GLOBAL_STORIES_PAGE_SIZE, GLOBAL_STORIES_CALLBACK_PREFIX } from 'index';
 import { chunkMediafiles, sendTemporaryMessage } from 'lib';
 import { t } from 'lib/i18n';
 import { downloadStories } from 'controllers/download-stories';
-import { SendStoriesArgs, MappedStoryItem, NotifyAdminParams } from 'types';
+import { SendStoriesArgs, MappedStoryItem, NotifyAdminParams, UserInfo } from 'types';
 import { notifyAdmin } from 'controllers/send-message';
 
 // =========================================================================
 // Sends stories from the global feed.
 // =========================================================================
+async function updatePaginationControls(task: UserInfo, batchSize: number) {
+  const messageId = task.globalStoriesMessageId;
+  if (!messageId) {
+    return;
+  }
+
+  const hasMore = batchSize >= GLOBAL_STORIES_PAGE_SIZE;
+  try {
+    if (hasMore) {
+      const nextOffset = (task.offset || 0) + GLOBAL_STORIES_PAGE_SIZE;
+      await bot.telegram.editMessageReplyMarkup(
+        task.chatId,
+        messageId,
+        undefined,
+        {
+          inline_keyboard: [
+            [
+              {
+                text: `${t(task.locale, 'pagination.next')} ${GLOBAL_STORIES_PAGE_SIZE}`,
+                callback_data: `${GLOBAL_STORIES_CALLBACK_PREFIX}${nextOffset}`,
+              },
+            ],
+          ],
+        },
+      );
+    } else {
+      await bot.telegram.editMessageReplyMarkup(task.chatId, messageId, undefined, undefined);
+    }
+  } catch (error) {
+    console.error('[sendGlobalStories] Failed to update pagination controls:', error);
+  }
+}
+
 export async function sendGlobalStories({ stories, task }: SendStoriesArgs) {
   let mapped: MappedStoryItem[] = stories;
 
@@ -47,6 +80,8 @@ export async function sendGlobalStories({ stories, task }: SendStoriesArgs) {
       await bot.telegram.sendMessage(task.chatId, t(task.locale, 'global.none'));
     }
 
+    await updatePaginationControls(task, stories.length);
+
     notifyAdmin({ task, status: 'info', baseInfo: `📥 Global stories uploaded to user!` } as NotifyAdminParams);
   } catch (error) {
     notifyAdmin({ status: 'error', task, errorInfo: { cause: error } } as NotifyAdminParams);
@@ -54,6 +89,7 @@ export async function sendGlobalStories({ stories, task }: SendStoriesArgs) {
     try {
       await bot.telegram.sendMessage(task.chatId, t(task.locale, 'global.error'));
     } catch (_) {/* ignore */}
+    await updatePaginationControls(task, 0);
     throw error;
   }
 }

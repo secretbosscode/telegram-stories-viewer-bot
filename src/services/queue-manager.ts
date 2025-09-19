@@ -29,10 +29,6 @@ import {
   getArchivedStoriesFx,
 } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
-import { sendGlobalStories } from 'controllers/send-global-stories';
-import { Userbot } from 'config/userbot';
-import { mapStories } from 'controllers/download-stories';
-import { Api } from 'telegram';
 
 // How long we allow a job to run before considering it failed
 export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for regular jobs
@@ -208,32 +204,23 @@ export async function processQueue() {
   try {
     console.log(`[QueueManager] Starting processing for ${currentTask.link} (Job ID: ${job.id})`);
 
-    if (currentTask.storyRequestType === 'global') {
-      const client = await Userbot.getInstance();
-      const res = await client.invoke(new Api.stories.GetAllStories({}));
-      const mapped = mapStories(((res as any)?.stories) || []);
-      if (!timedOut) {
-        await sendGlobalStories({ stories: mapped, task: currentTask });
-        await markDoneFx(job.id);
-        console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
-      }
-    } else {
-      const storiesResult = currentTask.storyRequestType === 'archived'
+    const storiesResult = currentTask.storyRequestType === 'global'
+      ? await getGlobalStoriesFx(currentTask)
+      : currentTask.storyRequestType === 'archived'
         ? await getArchivedStoriesFx(currentTask)
         : currentTask.linkType === 'username'
           ? await getAllStoriesFx(currentTask)
           : await getParticularStoryFx(currentTask);
 
-      if (typeof storiesResult === 'string') {
-        throw new Error(storiesResult);
-      }
+    if (typeof storiesResult === 'string') {
+      throw new Error(storiesResult);
+    }
 
-      const payload: SendStoriesFxParams = { task: currentTask, ...(storiesResult as object) };
-      if (!timedOut) {
-        await sendStoriesFx(payload);
-        await markDoneFx(job.id);
-        console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
-      }
+    const payload: SendStoriesFxParams = { task: currentTask, ...(storiesResult as object) };
+    if (!timedOut) {
+      await sendStoriesFx(payload);
+      await markDoneFx(job.id);
+      console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
     }
 
   } catch (err: any) {
