@@ -26,7 +26,7 @@ export async function sendArchivedStories({ stories, task }: SendStoriesArgs) {
       const client = await Userbot.getInstance();
       const entity = await client.getEntity(task.link!);
       const ids = storiesWithoutMedia.map((x: MappedStoryItem) => x.id);
-      await ensureStealthMode({ past: true });
+      await ensureStealthMode();
       const storiesWithMediaApi = await client.invoke(
         new Api.stories.GetStoriesByID({ id: ids, peer: entity })
       );
