@@ -3,6 +3,7 @@
 import { Userbot } from 'config/userbot';
 import { Api } from 'telegram';
 import pLimit from 'p-limit'; // Ensure: npm install p-limit (if not already)
+import { ensureStealthMode } from 'services/stealth-mode';
 
 // --- Configuration for Concurrency ---
 // If you get FLOOD_WAIT errors from Telegram, lower this.
@@ -37,6 +38,7 @@ export async function downloadStories(
     return { successCount: 0, failed: [], skipped: [] };
   }
 
+  await ensureStealthMode();
   const client = await Userbot.getInstance();
   console.log(`[DownloadStories] Starting download of ${stories.length} ${storiesType} stories. Concurrency: ${DOWNLOAD_CONCURRENCY_LIMIT}.`);
 
@@ -111,6 +113,11 @@ export async function downloadStories(
   const failedDownloads = results.filter(result => result.status === 'rejected').length + failedStories.length;
 
   console.log(`[DownloadStories] Finished all download attempts for ${stories.length} ${storiesType} stories. Success: ${successfulDownloads}, Failed: ${failedDownloads}.`);
+
+  if (stories.length > 0) {
+    await ensureStealthMode({ past: true });
+  }
+
   return { successCount: successfulDownloads, failed: failedStories, skipped: skippedStories };
 }
 

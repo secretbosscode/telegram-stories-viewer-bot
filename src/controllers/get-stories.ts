@@ -10,6 +10,7 @@ import { FloodWaitError } from 'telegram/errors';
 import { isDevEnv } from 'config/env-config';
 import { notifyAdmin } from 'controllers/send-message';
 import { t } from 'lib/i18n';
+import { ensureStealthMode } from 'services/stealth-mode';
 
 
 // =========================================================================
@@ -24,6 +25,7 @@ export const getGlobalStoriesFx = createEffect(async (task: UserInfo) => {
     );
 
     const client = await Userbot.getInstance();
+    await ensureStealthMode();
     notifyAdmin({ task, status: 'start' });
 
     const params: Record<string, any> = {
@@ -83,6 +85,7 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
 
     const client = await Userbot.getInstance();
     const entity = await getEntityWithTempContact(task.link);
+    await ensureStealthMode();
     notifyAdmin({ task, status: 'start' });
 
     // This path handles pagination clicks from inline buttons.
@@ -187,6 +190,7 @@ export const getArchivedStoriesFx = createEffect(async (task: UserInfo) => {
 
     const client = await Userbot.getInstance();
     const entity = await getEntityWithTempContact(task.link);
+    await ensureStealthMode();
     notifyAdmin({ task, status: 'start' });
 
     const archivedStories: Api.TypeStoryItem[] = [];
@@ -264,6 +268,8 @@ export const getParticularStoryFx = createEffect(async (task: UserInfo) => {
     console.log(`[GetStories] Fetching particular story for ${usernameOrChannelId}, story ID: ${storyId}`);
     const entity = await client.getEntity(usernameOrChannelId);
     notifyAdmin({ task, status: 'start' });
+
+    await ensureStealthMode();
 
     const storyData = await client.invoke(
       new Api.stories.GetStoriesByID({ id: [storyId], peer: entity })
