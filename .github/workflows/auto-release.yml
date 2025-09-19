@@ -15,6 +15,11 @@ jobs:
         with:
           fetch-depth: 0   # needed to push tags
 
+      - name: Sync main branch
+        run: |
+          git fetch origin main
+          git pull --ff-only origin main
+
       - name: Bump version and push tag
         id: bump
         uses: phips28/gh-action-bump-version@v10.1.1
