@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: auto-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   bump-and-release:
     runs-on: ubuntu-latest
