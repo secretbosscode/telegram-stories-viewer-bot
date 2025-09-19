@@ -129,6 +129,23 @@ if (!sentColumns.some((c) => c.name === 'story_type')) {
 }
 db.exec('DROP INDEX IF EXISTS monitor_sent_idx');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_sent_idx ON monitor_sent_stories (monitor_id, story_key, story_type)');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS hidden_story_cache (
+    peer_id TEXT NOT NULL,
+    access_hash TEXT,
+    story_id INTEGER NOT NULL,
+    media TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (peer_id, story_id)
+  );
+`);
+
+try {
+  db.prepare('DELETE FROM hidden_story_cache WHERE expires_at <= ?').run(Math.floor(Date.now() / 1000));
+} catch (err) {
+  console.error('[DB] Failed to prune hidden story cache:', err);
+}
 // Payments table for BTC invoices
 db.exec(`
   CREATE TABLE IF NOT EXISTS payments (

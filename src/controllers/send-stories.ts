@@ -38,6 +38,7 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       paginatedStories,
       particularStory,
       globalStories,
+      globalStoryOwnersById,
       task,
     } = params;
 
@@ -56,8 +57,8 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
         storiesWereSent = true;
       }
       else if (globalStories && globalStories.length > 0) {
-        const mappedGlobalStories: MappedStoryItem[] = mapStories(globalStories);
-        await sendGlobalStories({ stories: mappedGlobalStories, task });
+        const mappedGlobalStories: MappedStoryItem[] = mapStories(globalStories, globalStoryOwnersById);
+        await sendGlobalStories({ stories: mappedGlobalStories, task, storyOwnersById: globalStoryOwnersById });
         storiesWereSent = true;
       }
       // 3. Handle the general case of active and pinned stories.
