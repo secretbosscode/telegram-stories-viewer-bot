@@ -64,6 +64,10 @@ export interface MappedStoryItem {
   bufferSize?: number; // Size in MB
   noforwards?: boolean;
   owner?: Api.TypeEntityLike;
+  downloadStatus?: 'pending' | 'success' | 'failed' | 'skipped';
+  downloadError?: string;
+  downloadSkippedReason?: string;
+  source?: StorySourceContext;
 }
 
 export type StoriesModel = MappedStoryItem[]; // Alias for consistency
