@@ -26,11 +26,21 @@ export const getGlobalStoriesFx = createEffect(async (task: UserInfo) => {
     const client = await Userbot.getInstance();
     notifyAdmin({ task, status: 'start' });
 
-    const params: any = {
+    const params: Record<string, any> = {
       limit: GLOBAL_STORIES_PAGE_SIZE,
-      offset: BigInt(task.offset || 0),
-      state: '',
     };
+
+    if (task.globalStoriesState) {
+      try {
+        params.state = Buffer.from(task.globalStoriesState, 'base64');
+        if (task.globalStoriesShouldUseNext) {
+          params.next = true;
+        }
+      } catch (err) {
+        console.warn('[GetStories] Failed to decode global stories state token, requesting fresh page.', err);
+      }
+    }
+
     if (task.includeHiddenStories) {
       params.hidden = true;
     }
@@ -40,7 +50,16 @@ export const getGlobalStoriesFx = createEffect(async (task: UserInfo) => {
     );
 
     const stories: Api.TypeStoryItem[] = result.stories?.stories || [];
-    return { globalStories: stories };
+    const stateData = (result as any).state;
+    const nextState = stateData ? Buffer.from(stateData).toString('base64') : undefined;
+    const hasMoreRaw = (result as any).has_more ?? (result as any).hasMore;
+    const hasMore = Boolean(hasMoreRaw);
+
+    return {
+      globalStories: stories,
+      globalStoriesState: nextState,
+      globalStoriesHasMore: hasMore,
+    };
   } catch (error: any) {
     console.error('[GetStories] Error in getGlobalStoriesFx:', error);
     if (error instanceof FloodWaitError) {
