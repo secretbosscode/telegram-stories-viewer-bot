@@ -17,6 +17,7 @@ import { SendStoriesArgs, MappedStoryItem, StoriesModel, NotifyAdminParams } fro
 import { downloadStories, mapStories } from 'controllers/download-stories';
 import { notifyAdmin } from 'controllers/send-message';
 import { sendStoryFallbacks } from 'controllers/story-fallback';
+import { ensureStealthMode } from 'services/stealth-mode';
 
 /**
  * Sends a user's active stories as Telegram media groups.
@@ -51,6 +52,7 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       const client = await Userbot.getInstance();
       const entity = await client.getEntity(task.link!);
       const ids = storiesWithoutMedia.map((x: MappedStoryItem) => x.id); // <--- 'x' is typed here
+      await ensureStealthMode();
       const storiesWithMediaApi = await client.invoke(
         new Api.stories.GetStoriesByID({ id: ids, peer: entity })
       );
