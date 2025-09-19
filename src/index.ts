@@ -1143,9 +1143,9 @@ export async function handleCallbackQuery(ctx: IContextBot) {
   }
 
   if (data.startsWith(GLOBAL_STORIES_CALLBACK_PREFIX) && ctx.from?.id === BOT_ADMIN_ID) {
-    const offsetStr = data.slice(GLOBAL_STORIES_CALLBACK_PREFIX.length);
-    const offset = Number.parseInt(offsetStr, 10);
-    if (Number.isNaN(offset)) {
+    const payload = data.slice(GLOBAL_STORIES_CALLBACK_PREFIX.length);
+    const [hiddenFlag, stateToken] = payload.split(':');
+    if (!stateToken) {
       await ctx.answerCbQuery();
       return;
     }
@@ -1161,8 +1161,10 @@ export async function handleCallbackQuery(ctx: IContextBot) {
       user,
       initTime: Date.now(),
       storyRequestType: 'global',
-      offset,
       globalStoriesMessageId: message?.message_id,
+      includeHiddenStories: hiddenFlag === '1' ? true : undefined,
+      globalStoriesState: stateToken,
+      globalStoriesShouldUseNext: true,
     };
     handleNewTask(task);
     await ctx.answerCbQuery();

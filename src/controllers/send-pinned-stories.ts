@@ -12,12 +12,12 @@ import { Api } from 'telegram';
 import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram'; // <--- ADDED: For InlineKeyboardButton
 
 // CORRECTED: Import types from your central types.ts file
-import { SendStoriesArgs, StoriesModel, MappedStoryItem } from 'types';
+import { SendStoriesArgs, StoriesModel, MappedStoryItem, NotifyAdminParams, DownloadStoriesResult } from 'types';
 
 // Corrected import path for downloadStories and mapStories
 import { downloadStories, mapStories } from 'controllers/download-stories';
 import { notifyAdmin } from 'controllers/send-message';
-import { NotifyAdminParams } from 'types';
+import { sendStoryFallbacks } from 'controllers/story-fallback';
 
 // =========================================================================
 // CRITICAL FUNCTION: This function handles downloading and sending stories.
@@ -82,6 +82,14 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
       }
     }
 
+    mapped.forEach((story) => {
+      story.source = {
+        ...(story.source ?? {}),
+        identifier: story.source?.identifier ?? task.link,
+        displayName: story.source?.displayName ?? task.link,
+      };
+    });
+
     console.log(`[SendPinnedStories] [${task.link}] Preparing to download ${mapped.length} pinned stories.`);
 
     await sendTemporaryMessage(
@@ -100,10 +108,13 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     // This prevents the bot from getting stuck indefinitely on a hanging download.
     // =========================================================================
     const downloadPromise = downloadStories(mapped, 'pinned');
-    const timeoutPromise = new Promise((_, reject) =>
+    const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Download process timed out after 5 minutes.')), 300000)
     );
-    await Promise.race([downloadPromise, timeoutPromise]);
+    const downloadResult = await Promise.race<DownloadStoriesResult>([
+      downloadPromise,
+      timeoutPromise as unknown as Promise<DownloadStoriesResult>,
+    ]);
 
     console.log(`[SendPinnedStories] [${task.link}] downloadStories function completed.`);
 
@@ -112,6 +123,8 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
     );
 
     console.log(`[SendPinnedStories] [${task.link}] Found ${uploadableStories.length} uploadable pinned stories after download.`);
+
+    const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
 
     if (uploadableStories.length > 0) {
       await sendTemporaryMessage(
@@ -178,6 +191,10 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
         task.chatId,
         t(task.locale, 'pinned.none')
       );
+    }
+
+    if (failedDownloads.length > 0) {
+      await sendStoryFallbacks(task, failedDownloads);
     }
 
     // This block sends the premium upsell message if the user was limited.

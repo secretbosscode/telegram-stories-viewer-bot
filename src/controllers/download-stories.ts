@@ -1,7 +1,6 @@
 // src/controllers/download-stories.ts
 
 import { Userbot } from 'config/userbot';
-import { timeout } from 'lib';
 import { Api } from 'telegram';
 import pLimit from 'p-limit'; // Ensure: npm install p-limit (if not already)
 
@@ -16,7 +15,7 @@ const limit = pLimit(DOWNLOAD_CONCURRENCY_LIMIT);
 // ===============================
 
 // CORRECTED: Import MappedStoryItem and StoriesModel from your central types.ts file
-import { MappedStoryItem, StoriesModel } from 'types'; // <--- This import is correct
+import { DownloadStoriesResult, MappedStoryItem, StoriesModel } from 'types'; // <--- This import is correct
 
 
 // ===============================
@@ -32,24 +31,39 @@ export async function downloadStories(
   storiesType: 'active' | 'pinned' | 'archived',
   onProgress?: (story: MappedStoryItem) => void,
   signal?: AbortSignal,
-): Promise<number> {
+): Promise<DownloadStoriesResult> {
   if (!stories || stories.length === 0) {
     console.log(`[DownloadStories] No ${storiesType} stories to download.`);
-    return 0;
+    return { successCount: 0, failed: [], skipped: [] };
   }
 
   const client = await Userbot.getInstance();
   console.log(`[DownloadStories] Starting download of ${stories.length} ${storiesType} stories. Concurrency: ${DOWNLOAD_CONCURRENCY_LIMIT}.`);
 
+  const failedStories: MappedStoryItem[] = [];
+  const skippedStories: MappedStoryItem[] = [];
+  let successfulDownloads = 0;
+
   const downloadPromises = stories.map((storyItem: MappedStoryItem) =>
     limit(async () => {
-      if (signal?.aborted) return;
+      storyItem.downloadStatus = 'pending';
+      storyItem.downloadError = undefined;
+      storyItem.downloadSkippedReason = undefined;
+      if (signal?.aborted) {
+        storyItem.downloadStatus = 'failed';
+        storyItem.downloadError = 'aborted';
+        failedStories.push(storyItem);
+        return;
+      }
       const mediaExists = !!storyItem.media;
       const isNoforwards = !!storyItem.noforwards;
 
       // If media doesn't exist, skip (do not skip just for noforwards)
       if (!mediaExists) {
         console.log(`[DownloadStories] Story ${storyItem.id} (${storiesType}): Skipping, media missing.`);
+        storyItem.downloadStatus = 'skipped';
+        storyItem.downloadSkippedReason = 'no_media';
+        skippedStories.push(storyItem);
         return;
       }
 
@@ -66,13 +80,22 @@ export async function downloadStories(
         if (buffer instanceof Buffer && buffer.length > 0) {
           storyItem.buffer = buffer;
           storyItem.bufferSize = parseFloat((buffer.byteLength / (1024 * 1024)).toFixed(2));
+          storyItem.downloadStatus = 'success';
+          storyItem.downloadError = undefined;
           console.log(`[DownloadStories] Downloaded story ID ${storyItem.id} (${storiesType}), Type: ${storyItem.mediaType}, Size: ${storyItem.bufferSize} MB.`);
           onProgress?.(storyItem);
+          successfulDownloads++;
         } else {
           console.log(`[DownloadStories] Story ID ${storyItem.id} (${storiesType}): Empty or invalid buffer.`);
+          storyItem.downloadStatus = 'failed';
+          storyItem.downloadError = 'empty_buffer';
+          failedStories.push(storyItem);
         }
       } catch (error: any) { // Explicitly type error as any for now
         console.error(`[DownloadStories] Error downloading story ID ${storyItem.id} (${storiesType}): ${error.message}`);
+        storyItem.downloadStatus = 'failed';
+        storyItem.downloadError = error?.message ?? 'unknown_error';
+        failedStories.push(storyItem);
         if (error.errorMessage && error.errorMessage.startsWith('FLOOD_WAIT_')) {
           const waitSeconds = parseInt(error.errorMessage.split('_').pop() || '30');
           console.warn(`[DownloadStories] Hit FLOOD_WAIT for ${waitSeconds}s on story ${storyItem.id}.`);
@@ -85,15 +108,10 @@ export async function downloadStories(
 
   const results = await Promise.allSettled(downloadPromises);
 
-  let successfulDownloads = 0;
-  let failedDownloads = 0;
-  results.forEach(result => {
-    if (result.status === 'fulfilled') successfulDownloads++;
-    else failedDownloads++;
-  });
+  const failedDownloads = results.filter(result => result.status === 'rejected').length + failedStories.length;
 
   console.log(`[DownloadStories] Finished all download attempts for ${stories.length} ${storiesType} stories. Success: ${successfulDownloads}, Failed: ${failedDownloads}.`);
-  return successfulDownloads;
+  return { successCount: successfulDownloads, failed: failedStories, skipped: skippedStories };
 }
 
 // ===============================
@@ -104,8 +122,18 @@ export async function downloadStories(
  * Maps Telegram API stories to the internal MappedStoryItem type.
  * Skips stories with no media, no valid date, or unknown media type.
  */
-export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
+export function mapStories(
+  stories: Api.TypeStoryItem[],
+  storyOwnersById?: Map<number, Api.TypeEntityLike> | Record<number, Api.TypeEntityLike>
+): StoriesModel {
   const mappedStories: MappedStoryItem[] = [];
+
+  const resolveOwner: ((id: number) => Api.TypeEntityLike | undefined) | undefined =
+    storyOwnersById
+      ? storyOwnersById instanceof Map
+        ? (id: number) => storyOwnersById.get(id)
+        : (id: number) => storyOwnersById[id]
+      : undefined;
 
   stories.forEach((x: Api.TypeStoryItem) => { // Explicitly type x
     if (!x || !('id' in x)) return;
@@ -139,6 +167,13 @@ export function mapStories(stories: Api.TypeStoryItem[]): StoriesModel {
     }
 
     story.noforwards = 'noforwards' in x && typeof x.noforwards === 'boolean' ? x.noforwards : false;
+
+    if (resolveOwner) {
+      const owner = resolveOwner(x.id);
+      if (owner) {
+        story.owner = owner;
+      }
+    }
 
     if (story.id && story.media && story.mediaType && story.date) {
       mappedStories.push(story as MappedStoryItem);
