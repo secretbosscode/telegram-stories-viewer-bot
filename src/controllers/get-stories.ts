@@ -2,7 +2,7 @@
 
 import { Userbot } from 'config/userbot';
 import { createEffect } from 'effector';
-import { bot } from 'index';
+import { bot, GLOBAL_STORIES_PAGE_SIZE } from 'index';
 import { timeout, sendTemporaryMessage, isValidStoryLink, getEntityWithTempContact } from 'lib';
 import { UserInfo, NotifyAdminParams } from 'types';
 import { Api } from 'telegram';
@@ -27,7 +27,7 @@ export const getGlobalStoriesFx = createEffect(async (task: UserInfo) => {
     notifyAdmin({ task, status: 'start' });
 
     const params: any = {
-      limit: 50,
+      limit: GLOBAL_STORIES_PAGE_SIZE,
       offset: BigInt(task.offset || 0),
       state: '',
     };
