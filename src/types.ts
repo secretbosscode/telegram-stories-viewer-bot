@@ -18,8 +18,10 @@ export interface UserInfo {
   storyRequestType?: 'active' | 'pinned' | 'archived' | 'particular' | 'paginated' | 'global';
   isPaginated?: boolean;
   includeHiddenStories?: boolean;
-  offset?: number;
   globalStoriesMessageId?: number;
+  globalStoriesState?: string;
+  globalStoriesShouldUseNext?: boolean;
+  globalStoriesHasMore?: boolean;
 }
 
 // DownloadQueueItem: An item in the download queue (DB structure)

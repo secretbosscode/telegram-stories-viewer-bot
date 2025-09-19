@@ -12,6 +12,8 @@ export interface UserInfo {
   storyRequestType?: 'active' | 'pinned' | 'archived' | 'particular' | 'paginated' | 'global';
   isPaginated?: boolean;
   includeHiddenStories?: boolean;
-  offset?: number;
   globalStoriesMessageId?: number;
+  globalStoriesState?: string;
+  globalStoriesShouldUseNext?: boolean;
+  globalStoriesHasMore?: boolean;
 }
