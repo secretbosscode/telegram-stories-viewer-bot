@@ -235,13 +235,16 @@ export async function checkSingleMonitor(id: number): Promise<void> {
         : bigInt.zero,
     });
 
-    const res = await client.invoke(
-      new Api.stories.GetPeerStories({ peer }),
-    );
+    const [res, pinnedRes] = await Promise.all([
+      client.invoke(new Api.stories.GetPeerStories({ peer })),
+      client.invoke(new Api.stories.GetPinnedStories({ peer })),
+    ]);
 
     const activeStories = (res as any)?.stories?.stories || [];
+    const pinnedStoriesRaw = ((pinnedRes as any)?.stories || []) as any[];
 
     const activeSent = new Set(listSentStoryKeys(m.id, 'active'));
+    const pinnedSent = new Set(listSentStoryKeys(m.id, 'pinned'));
 
     const newActive: any[] = [];
     for (const s of activeStories) {
@@ -252,11 +255,35 @@ export async function checkSingleMonitor(id: number): Promise<void> {
       newActive.push(s);
     }
 
+    const newPinned: any[] = [];
+    for (const s of pinnedStoriesRaw) {
+      if (typeof s?.id !== 'number' || typeof s?.date !== 'number') continue;
+      const key = `${s.id}:${s.date}`;
+      if (pinnedSent.has(key)) continue;
+      markStorySent(m.id, s.id, s.date, s.expireDate ?? null, 'pinned');
+      pinnedSent.add(key);
+      if (activeSent.has(key)) continue;
+      newPinned.push(s);
+    }
+
     const lang = findUserById(m.telegram_id)?.language || 'en';
 
     if (newActive.length > 0) {
       await sendActiveStories({
         stories: mapStories(newActive),
+        task: {
+          chatId: m.telegram_id,
+          link: formatMonitorTarget(m),
+          linkType: 'username',
+          locale: lang,
+          initTime: Date.now(),
+        } as any,
+      });
+    }
+
+    if (newPinned.length > 0) {
+      await sendActiveStories({
+        stories: mapStories(newPinned),
         task: {
           chatId: m.telegram_id,
           link: formatMonitorTarget(m),
