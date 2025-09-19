@@ -357,6 +357,7 @@ bot.command('help', async (ctx) => {
         cmdStopmonitor: t(locale, 'cmd.stopmonitor'),
         cmdGlobalstories: t(locale, 'cmd.globalstories'),
         cmdListbugs: t(locale, 'cmd.listbugs'),
+        globalHiddenHint: t(locale, 'global.hiddenHint'),
         neverExpires: t(locale, 'premium.neverExpires'),
         });
     }
@@ -534,23 +535,87 @@ bot.command('archive', async (ctx) => {
   handleNewTask(task);
 });
 
-bot.command('globalstories', async (ctx) => {
-  const locale = ctx.from.language_code || 'en';
-  if (ctx.from.id !== BOT_ADMIN_ID) {
-    return ctx.reply(t(locale, 'global.adminOnly'));
+function getContextChatId(ctx: IContextBot): number | undefined {
+  if (ctx.chat?.id) {
+    return ctx.chat.id;
   }
-  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
+  const callbackMessage = ctx.callbackQuery?.message;
+  if (callbackMessage && 'chat' in callbackMessage) {
+    const chat = (callbackMessage as { chat?: { id?: number } }).chat;
+    if (chat?.id) {
+      return chat.id;
+    }
+  }
+  return undefined;
+}
+
+async function enqueueGlobalStories(
+  ctx: IContextBot,
+  includeHidden: boolean,
+): Promise<boolean> {
   const user = ctx.from;
+  if (!user) return false;
+  const chatId = getContextChatId(ctx);
+  if (typeof chatId === 'undefined') return false;
+
   const task: UserInfo = {
-    chatId: String(ctx.chat.id),
+    chatId: String(chatId),
     link: 'global',
     linkType: 'username',
     locale: user.language_code || '',
     user,
     initTime: Date.now(),
     storyRequestType: 'global',
+    includeHiddenStories: includeHidden ? true : undefined,
   };
-  handleNewTask(task);
+  await handleNewTask(task);
+  return true;
+}
+
+bot.command('globalstories', async (ctx) => {
+  const locale = ctx.from.language_code || 'en';
+  if (ctx.from.id !== BOT_ADMIN_ID) {
+    return ctx.reply(t(locale, 'global.adminOnly'));
+  }
+  if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
+
+  const text = ctx.message?.text ?? '';
+  const args = text.split(' ').slice(1);
+  const includeHidden = args.some((arg) => arg.toLowerCase() === 'hidden');
+
+  await enqueueGlobalStories(ctx, includeHidden);
+
+  if (!includeHidden) {
+    await ctx.reply(t(locale, 'global.hiddenHint'), {
+      reply_markup: {
+        inline_keyboard: [[{ text: t(locale, 'global.hiddenButton'), callback_data: 'globalstories:hidden' }]],
+      },
+    });
+  }
+});
+
+bot.action('globalstories:hidden', async (ctx) => {
+  const locale = ctx.from?.language_code || 'en';
+  if (!ctx.from) {
+    await ctx.answerCbQuery();
+    return;
+  }
+  if (ctx.from.id !== BOT_ADMIN_ID) {
+    await ctx.answerCbQuery(t(locale, 'global.adminOnly'), { show_alert: true });
+    return;
+  }
+  if (!isActivated(ctx.from.id)) {
+    await ctx.answerCbQuery(t(locale, 'msg.startFirst'), { show_alert: true });
+    return;
+  }
+
+  const started = await enqueueGlobalStories(ctx, true);
+  if (started) {
+    await ctx.answerCbQuery();
+    await ctx.editMessageReplyMarkup(undefined).catch(() => {});
+  } else {
+    await ctx.answerCbQuery();
+  }
 });
 
 bot.command('monitor', async (ctx) => {
