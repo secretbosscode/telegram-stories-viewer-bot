@@ -164,6 +164,8 @@
   "profile.error": "Error al obtener media del perfil.",
   "stories.completed": "🎉 Descarga de {{link}} completada!",
   "stories.noneFound": "🤷 No se encontraron historias públicas para {{link}}.",
+  "stories.fallbackMessage": "⚠️ La historia {{id}} no pudo descargarse automáticamente. Usa el botón de abajo para abrirla directamente en Telegram.",
+  "stories.fallbackButton": "Abrir historia {{id}}",
   "queue.cooldown": "⏳ Puedes solicitar historias de \"{{user}}\" solo cada {{hours}} horas.\nInténtalo de nuevo en {{h}}h {{m}}m.",
   "download.noStory": "❌ No se pudo obtener la historia solicitada.",
   "stories.fetchingArchive": "⏳ Fetching archived stories...",

@@ -9,6 +9,7 @@ import { Api } from 'telegram';
 import { SendStoriesArgs, MappedStoryItem, StoriesModel, NotifyAdminParams } from 'types';
 import { downloadStories, mapStories } from 'controllers/download-stories';
 import { notifyAdmin } from 'controllers/send-message';
+import { sendStoryFallbacks } from 'controllers/story-fallback';
 
 /**
  * Sends archived stories to the user.
@@ -33,6 +34,14 @@ export async function sendArchivedStories({ stories, task }: SendStoriesArgs) {
     }
   }
 
+  mapped.forEach((story) => {
+    story.source = {
+      ...(story.source ?? {}),
+      identifier: story.source?.identifier ?? task.link,
+      displayName: story.source?.displayName ?? task.link,
+    };
+  });
+
   try {
     await sendTemporaryMessage(
       bot,
@@ -45,11 +54,13 @@ export async function sendArchivedStories({ stories, task }: SendStoriesArgs) {
       );
     });
 
-    await downloadStories(mapped, 'archived');
+    const downloadResult = await downloadStories(mapped, 'archived');
 
     const uploadableStories: MappedStoryItem[] = mapped.filter(
       (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 47
     );
+
+    const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
 
     if (uploadableStories.length > 0) {
       await sendTemporaryMessage(
@@ -79,6 +90,10 @@ export async function sendArchivedStories({ stories, task }: SendStoriesArgs) {
         task.chatId,
         t(task.locale, 'archive.none')
       );
+    }
+
+    if (failedDownloads.length > 0) {
+      await sendStoryFallbacks(task, failedDownloads);
     }
 
     notifyAdmin({

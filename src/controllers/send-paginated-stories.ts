@@ -11,6 +11,7 @@ import { SendPaginatedStoriesArgs, MappedStoryItem } from 'types';
 import { downloadStories, mapStories } from 'controllers/download-stories';
 import { notifyAdmin } from 'controllers/send-message';
 import { NotifyAdminParams } from 'types';
+import { sendStoryFallbacks } from 'controllers/story-fallback';
 
 
 /**
@@ -24,6 +25,14 @@ export async function sendPaginatedStories({
 }: SendPaginatedStoriesArgs) { // <--- Using the imported SendPaginatedStoriesArgs
   // `mapStories` expects Api.TypeStoryItem[], and `stories` here is Api.TypeStoryItem[]
   const mapped: MappedStoryItem[] = mapStories(stories); // <--- Explicitly typed mapped to MappedStoryItem[]
+
+  mapped.forEach((story) => {
+    story.source = {
+      ...(story.source ?? {}),
+      identifier: story.source?.identifier ?? task.link,
+      displayName: story.source?.displayName ?? task.link,
+    };
+  });
 
   try {
     // Notify user that download is starting
@@ -49,13 +58,74 @@ export async function sendPaginatedStories({
         }
       }, 5000);
 
-      await downloadStories(mapped, 'pinned', onProgress, controller.signal);
+      const downloadResult = await downloadStories(mapped, 'pinned', onProgress, controller.signal);
 
       clearTimeout(globalTimeout);
       clearInterval(activityInterval);
 
       if (controller.signal.aborted) {
         throw new Error('Download timed out');
+      }
+
+      const uploadableStories: MappedStoryItem[] = mapped.filter(
+        (x) => x.buffer && x.bufferSize! <= 50 // skip too large files
+      );
+
+      const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
+
+      if (uploadableStories.length > 0) {
+        // Notify user that upload is starting
+        await sendTemporaryMessage(
+          bot,
+          task.chatId,
+          t(task.locale, 'download.uploading')
+        ).catch((err) => {
+          console.error(
+            `[sendPaginatedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
+            err
+          );
+        });
+
+        const isSingle = uploadableStories.length === 1;
+
+        await bot.telegram.sendMediaGroup(
+          task.chatId,
+          uploadableStories.map((x) => ({
+            media: { source: x.buffer! },
+            type: x.mediaType,
+            caption: isSingle ? undefined : x.caption ?? `Pinned story ${x.id}`,
+          }))
+        );
+
+        if (isSingle) {
+          const story = uploadableStories[0];
+          await sendTemporaryMessage(
+            bot,
+            task.chatId,
+            story.caption ?? `Pinned story ${story.id}`,
+          ).catch((err) => {
+            console.error(
+              `[sendPaginatedStories] Failed to send temporary caption to ${task.chatId}:`,
+              err,
+            );
+          });
+        }
+      } else {
+        await bot.telegram
+          .sendMessage(
+            task.chatId,
+            t(task.locale, 'pinned.none')
+          )
+          .catch((err) => {
+            console.error(
+              `[sendPaginatedStories] Failed to notify ${task.chatId} about no stories:`,
+              err
+            );
+          });
+      }
+
+      if (failedDownloads.length > 0) {
+        await sendStoryFallbacks(task, failedDownloads);
       }
     } catch (err) {
       await sendTemporaryMessage(
@@ -64,62 +134,6 @@ export async function sendPaginatedStories({
         t(task.locale, 'download.timedOut')
       ).catch(() => {/* ignore */});
       throw err;
-    }
-
-    // Filter only those stories which have a buffer (media) and are not too large
-    const uploadableStories: MappedStoryItem[] = mapped.filter( // <--- Explicitly typed uploadableStories
-      (x) => x.buffer && x.bufferSize! <= 50 // skip too large files
-    );
-
-    if (uploadableStories.length > 0) {
-      // Notify user that upload is starting
-      await sendTemporaryMessage(
-        bot,
-        task.chatId,
-        t(task.locale, 'download.uploading')
-      ).catch((err) => {
-        console.error(
-          `[sendPaginatedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
-          err
-        );
-      });
-
-      const isSingle = uploadableStories.length === 1;
-
-      await bot.telegram.sendMediaGroup(
-        task.chatId,
-        uploadableStories.map((x) => ({
-          media: { source: x.buffer! },
-          type: x.mediaType,
-          caption: isSingle ? undefined : x.caption ?? `Pinned story ${x.id}`,
-        }))
-      );
-
-      if (isSingle) {
-        const story = uploadableStories[0];
-        await sendTemporaryMessage(
-          bot,
-          task.chatId,
-          story.caption ?? `Pinned story ${story.id}`,
-        ).catch((err) => {
-          console.error(
-            `[sendPaginatedStories] Failed to send temporary caption to ${task.chatId}:`,
-            err,
-          );
-        });
-      }
-    } else {
-      await bot.telegram
-        .sendMessage(
-          task.chatId,
-          t(task.locale, 'pinned.none')
-        )
-        .catch((err) => {
-          console.error(
-            `[sendPaginatedStories] Failed to notify ${task.chatId} about no stories:`,
-            err
-          );
-        });
     }
 
   } catch (error) { // <--- Error can be 'unknown' or 'any' if not specified

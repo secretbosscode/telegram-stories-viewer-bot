@@ -18,7 +18,7 @@ const notifyAdmin = jest.fn();
 jest.mock('controllers/send-message', () => ({ notifyAdmin }));
 
 jest.mock('controllers/download-stories', () => ({
-  downloadStories: jest.fn(),
+  downloadStories: jest.fn(() => Promise.resolve({ successCount: 1, failed: [], skipped: [] })),
   mapStories: jest.fn((s: any) => s),
 }));
 
