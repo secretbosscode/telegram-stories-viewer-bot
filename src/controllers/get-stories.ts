@@ -124,11 +124,21 @@ export const getGlobalStoriesFx = createEffect(async (task: UserInfo) => {
     const client = await Userbot.getInstance();
     notifyAdmin({ task, status: 'start' });
 
-    const params: any = {
+    const params: Record<string, any> = {
       limit: GLOBAL_STORIES_PAGE_SIZE,
-      offset: BigInt(task.offset || 0),
-      state: '',
     };
+
+    if (task.globalStoriesState) {
+      try {
+        params.state = Buffer.from(task.globalStoriesState, 'base64');
+        if (task.globalStoriesShouldUseNext) {
+          params.next = true;
+        }
+      } catch (err) {
+        console.warn('[GetStories] Failed to decode global stories state token, requesting fresh page.', err);
+      }
+    }
+
     if (task.includeHiddenStories) {
       params.hidden = true;
     }

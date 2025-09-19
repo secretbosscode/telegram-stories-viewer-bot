@@ -216,7 +216,24 @@ export async function processQueue() {
       throw new Error(storiesResult);
     }
 
-    const payload: SendStoriesFxParams = { task: currentTask, ...(storiesResult as object) };
+    let taskForSend = currentTask;
+    let storiesPayload: Record<string, unknown> = storiesResult as Record<string, unknown>;
+
+    if (
+      currentTask.storyRequestType === 'global' &&
+      storiesResult &&
+      typeof storiesResult === 'object'
+    ) {
+      const { globalStoriesState, globalStoriesHasMore, ...rest } = storiesResult as Record<string, unknown>;
+      storiesPayload = rest;
+      taskForSend = {
+        ...currentTask,
+        globalStoriesState: typeof globalStoriesState === 'string' ? globalStoriesState : undefined,
+        globalStoriesHasMore: typeof globalStoriesHasMore === 'boolean' ? globalStoriesHasMore : Boolean(globalStoriesHasMore),
+      };
+    }
+
+    const payload: SendStoriesFxParams = { task: taskForSend, ...(storiesPayload as object) };
     if (!timedOut) {
       await sendStoriesFx(payload);
       await markDoneFx(job.id);

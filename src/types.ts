@@ -18,8 +18,10 @@ export interface UserInfo {
   storyRequestType?: 'active' | 'pinned' | 'archived' | 'particular' | 'paginated' | 'global';
   isPaginated?: boolean;
   includeHiddenStories?: boolean;
-  offset?: number;
   globalStoriesMessageId?: number;
+  globalStoriesState?: string;
+  globalStoriesShouldUseNext?: boolean;
+  globalStoriesHasMore?: boolean;
 }
 
 // DownloadQueueItem: An item in the download queue (DB structure)
@@ -37,6 +39,21 @@ export interface DownloadQueueItem {
 }
 
 // MappedStoryItem: Your internal representation of a story after mapping from Telegram API
+export interface StorySourceContext {
+  /**
+   * General identifier used to resolve the original peer again (username, link, etc.).
+   */
+  identifier?: string;
+  /**
+   * Cached input peer reference for exporting the story link without an extra lookup.
+   */
+  peer?: Api.TypeInputPeer;
+  /**
+   * Optional display helper (username, formatted link, etc.).
+   */
+  displayName?: string;
+}
+
 export interface MappedStoryItem {
   id: number;
   caption?: string;
@@ -50,6 +67,12 @@ export interface MappedStoryItem {
 }
 
 export type StoriesModel = MappedStoryItem[]; // Alias for consistency
+
+export interface DownloadStoriesResult {
+  successCount: number;
+  failed: MappedStoryItem[];
+  skipped: MappedStoryItem[];
+}
 
 // General arguments for sending stories effect (what sendStoriesFx will receive from stories-service)
 export interface SendStoriesFxParams {

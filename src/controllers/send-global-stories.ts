@@ -27,16 +27,17 @@ function extractStoryItems(result: any): Api.TypeStoryItem[] {
 // =========================================================================
 // Sends stories from the global feed.
 // =========================================================================
-async function updatePaginationControls(task: UserInfo, batchSize: number) {
+async function updatePaginationControls(task: UserInfo) {
   const messageId = task.globalStoriesMessageId;
   if (!messageId) {
     return;
   }
 
-  const hasMore = batchSize >= GLOBAL_STORIES_PAGE_SIZE;
+  const hasMore = Boolean(task.globalStoriesHasMore);
+  const stateToken = task.globalStoriesState;
+  const hiddenFlag = task.includeHiddenStories ? '1' : '0';
   try {
-    if (hasMore) {
-      const nextOffset = (task.offset || 0) + GLOBAL_STORIES_PAGE_SIZE;
+    if (hasMore && stateToken) {
       await bot.telegram.editMessageReplyMarkup(
         task.chatId,
         messageId,
@@ -46,7 +47,7 @@ async function updatePaginationControls(task: UserInfo, batchSize: number) {
             [
               {
                 text: `${t(task.locale, 'pagination.next')} ${GLOBAL_STORIES_PAGE_SIZE}`,
-                callback_data: `${GLOBAL_STORIES_CALLBACK_PREFIX}${nextOffset}`,
+                callback_data: `${GLOBAL_STORIES_CALLBACK_PREFIX}${hiddenFlag}:${stateToken}`,
               },
             ],
           ],
@@ -151,7 +152,7 @@ export async function sendGlobalStories({ stories, task, storyOwnersById }: Send
       await bot.telegram.sendMessage(task.chatId, t(task.locale, 'global.none'));
     }
 
-    await updatePaginationControls(task, stories.length);
+    await updatePaginationControls(task);
 
     notifyAdmin({ task, status: 'info', baseInfo: `📥 Global stories uploaded to user!` } as NotifyAdminParams);
   } catch (error) {
@@ -160,7 +161,7 @@ export async function sendGlobalStories({ stories, task, storyOwnersById }: Send
     try {
       await bot.telegram.sendMessage(task.chatId, t(task.locale, 'global.error'));
     } catch (_) {/* ignore */}
-    await updatePaginationControls(task, 0);
+    await updatePaginationControls({ ...task, globalStoriesHasMore: false, globalStoriesState: undefined });
     throw error;
   }
 }
