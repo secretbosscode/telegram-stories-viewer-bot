@@ -51,17 +51,17 @@ export const getGlobalStoriesFx = createEffect(async (task: UserInfo) => {
       new Api.stories.GetAllStories(params)
     );
 
-    const stories: Api.TypeStoryItem[] = result.stories?.stories || [];
-    const stateData = (result as any).state;
-    const nextState = stateData ? Buffer.from(stateData).toString('base64') : undefined;
-    const hasMoreRaw = (result as any).has_more ?? (result as any).hasMore;
-    const hasMore = Boolean(hasMoreRaw);
+    let stories: Api.TypeStoryItem[] = [];
+    if (result instanceof Api.stories.AllStories) {
+      const collected = collectStoriesFromAllStories(result);
+      stories = mergeStoriesWithHiddenCache(collected, {
+        includeHidden: Boolean(task.includeHiddenStories),
+      });
+    } else if (task.includeHiddenStories) {
+      stories = mergeStoriesWithHiddenCache([], { includeHidden: true });
+    }
 
-    return {
-      globalStories: stories,
-      globalStoriesState: nextState,
-      globalStoriesHasMore: hasMore,
-    };
+    return { globalStories: stories };
   } catch (error: any) {
     console.error('[GetStories] Error in getGlobalStoriesFx:', error);
     if (error instanceof FloodWaitError) {
