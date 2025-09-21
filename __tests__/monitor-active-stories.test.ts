@@ -76,3 +76,54 @@ test('fetches pinned stories once and avoids resending on retries', async () => 
 
   removeMonitor('user', '123');
 });
+
+test('does not resend active story when pinned entry uses the same key', async () => {
+  const row = addMonitor('user', '456', 'tester', '999', null);
+
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(123), accessHash: bigInt(999), username: 'tester' }];
+    }
+    if (query instanceof Api.stories.GetPeerStories) {
+      return {
+        stories: {
+          stories: [{ id: 1, date: 10, expireDate: 2000000000 }],
+        },
+      } as any;
+    }
+    if (query instanceof Api.stories.GetPinnedStories) {
+      return {
+        stories: [{ id: 1, date: 10 }],
+      } as any;
+    }
+    if (query instanceof Api.photos.GetUserPhotos) {
+      return { photos: [] } as any;
+    }
+    return {};
+  });
+
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  const { sendActiveStories } = require('../src/controllers/send-active-stories');
+  const sendActiveStoriesMock = sendActiveStories as jest.Mock;
+
+  sendActiveStoriesMock.mockClear();
+
+  await checkSingleMonitor(row.id);
+
+  expect(sendActiveStoriesMock).toHaveBeenCalledTimes(1);
+  const [firstCall] = sendActiveStoriesMock.mock.calls as any[];
+  expect(firstCall[0].stories).toEqual([
+    { id: 1, date: 10, expireDate: 2000000000 },
+  ]);
+  expect(listSentStoryKeys(row.id, 'active')).toContain('1:10');
+  expect(listSentStoryKeys(row.id, 'pinned')).toContain('1:10');
+
+  sendActiveStoriesMock.mockClear();
+
+  await checkSingleMonitor(row.id);
+
+  expect(sendActiveStoriesMock).not.toHaveBeenCalled();
+
+  removeMonitor('user', '456');
+});

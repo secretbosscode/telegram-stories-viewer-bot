@@ -117,16 +117,90 @@ db.exec(`
   );
 `);
 
-const sentColumns = db.prepare("PRAGMA table_info(monitor_sent_stories)").all() as any[];
+type TableColumnInfo = {
+  cid: number;
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: unknown;
+  pk: number;
+};
+
+const getMonitorSentColumns = (): TableColumnInfo[] =>
+  db.prepare("PRAGMA table_info(monitor_sent_stories)").all() as TableColumnInfo[];
+
+let sentColumns = getMonitorSentColumns();
 if (!sentColumns.some((c) => c.name === 'story_date')) {
   db.exec('ALTER TABLE monitor_sent_stories ADD COLUMN story_date INTEGER');
+  sentColumns = getMonitorSentColumns();
 }
 if (!sentColumns.some((c) => c.name === 'story_key')) {
   db.exec('ALTER TABLE monitor_sent_stories ADD COLUMN story_key TEXT');
+  sentColumns = getMonitorSentColumns();
 }
 if (!sentColumns.some((c) => c.name === 'story_type')) {
   db.exec("ALTER TABLE monitor_sent_stories ADD COLUMN story_type TEXT DEFAULT 'active'");
+  sentColumns = getMonitorSentColumns();
 }
+
+const sentPrimaryKeyColumns = sentColumns
+  .filter((c) => c.pk > 0)
+  .sort((a, b) => a.pk - b.pk)
+  .map((c) => c.name);
+const sentIndexes = db
+  .prepare("PRAGMA index_list('monitor_sent_stories')")
+  .all() as { name: string; origin?: string }[];
+const hasLegacyPrimaryKeyIndex = sentIndexes.some(
+  (idx) => idx.origin === 'pk' || idx.name?.startsWith('sqlite_autoindex_monitor_sent_stories'),
+);
+const needsSentStoryMigration = hasLegacyPrimaryKeyIndex && !sentPrimaryKeyColumns.includes('story_type');
+
+if (needsSentStoryMigration) {
+  db.exec('BEGIN TRANSACTION');
+  try {
+    db.exec('DROP INDEX IF EXISTS monitor_sent_idx');
+    db.exec('ALTER TABLE monitor_sent_stories RENAME TO monitor_sent_stories_old');
+    db.exec(`
+      CREATE TABLE monitor_sent_stories (
+        monitor_id INTEGER NOT NULL,
+        story_id INTEGER NOT NULL,
+        story_date INTEGER NOT NULL,
+        story_key TEXT NOT NULL,
+        story_type TEXT NOT NULL DEFAULT 'active',
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (monitor_id, story_key, story_type)
+      );
+    `);
+
+    const legacyColumns = db
+      .prepare("PRAGMA table_info(monitor_sent_stories_old)")
+      .all() as TableColumnInfo[];
+    const legacyStoryDate = legacyColumns.some((c) => c.name === 'story_date');
+    const legacyStoryKey = legacyColumns.some((c) => c.name === 'story_key');
+    const legacyStoryType = legacyColumns.some((c) => c.name === 'story_type');
+    const legacyExpiresAt = legacyColumns.some((c) => c.name === 'expires_at');
+
+    const storyDateSelect = legacyStoryDate ? 'story_date' : '0';
+    const storyKeySelect = legacyStoryKey
+      ? 'story_key'
+      : "CAST(story_id AS TEXT) || ':' || CAST(COALESCE(story_date, 0) AS TEXT)";
+    const storyTypeSelect = legacyStoryType ? "COALESCE(story_type, 'active')" : "'active'";
+    const expiresAtSelect = legacyExpiresAt ? 'COALESCE(expires_at, 0)' : '0';
+
+    db.exec(`
+      INSERT INTO monitor_sent_stories (monitor_id, story_id, story_date, story_key, story_type, expires_at)
+      SELECT monitor_id, story_id, ${storyDateSelect}, ${storyKeySelect}, ${storyTypeSelect}, ${expiresAtSelect}
+      FROM monitor_sent_stories_old;
+    `);
+
+    db.exec('DROP TABLE monitor_sent_stories_old');
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
 db.exec('DROP INDEX IF EXISTS monitor_sent_idx');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_sent_idx ON monitor_sent_stories (monitor_id, story_key, story_type)');
 
