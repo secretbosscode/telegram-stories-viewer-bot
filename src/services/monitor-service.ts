@@ -228,6 +228,10 @@ export async function checkSingleMonitor(id: number): Promise<void> {
   await refreshMonitorUsername(m);
 
   try {
+    const targetLabel = formatMonitorTarget(m);
+    console.log(
+      `[Monitor] Checking ${targetLabel} for subscriber ${m.telegram_id}.`,
+    );
     const client = await Userbot.getInstance();
     await ensureStealthMode();
     const peer = new Api.InputUser({
@@ -271,11 +275,14 @@ export async function checkSingleMonitor(id: number): Promise<void> {
     const lang = findUserById(m.telegram_id)?.language || 'en';
 
     if (newActive.length > 0) {
+      console.log(
+        `[Monitor] ${targetLabel}: ${newActive.length} new active stories queued for delivery.`,
+      );
       await sendActiveStories({
         stories: mapStories(newActive),
         task: {
           chatId: m.telegram_id,
-          link: formatMonitorTarget(m),
+          link: targetLabel,
           linkType: 'username',
           locale: lang,
           initTime: Date.now(),
@@ -284,16 +291,23 @@ export async function checkSingleMonitor(id: number): Promise<void> {
     }
 
     if (newPinned.length > 0) {
+      console.log(
+        `[Monitor] ${targetLabel}: ${newPinned.length} new pinned stories queued for delivery.`,
+      );
       await sendActiveStories({
         stories: mapStories(newPinned),
         task: {
           chatId: m.telegram_id,
-          link: formatMonitorTarget(m),
+          link: targetLabel,
           linkType: 'username',
           locale: lang,
           initTime: Date.now(),
         } as any,
       });
+    }
+
+    if (newActive.length === 0 && newPinned.length === 0) {
+      console.log(`[Monitor] ${targetLabel}: no new stories found.`);
     }
 
     try {
