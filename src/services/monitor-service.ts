@@ -120,9 +120,13 @@ export function listUserMonitors(telegramId: string): MonitorRow[] {
   return listMonitors(telegramId);
 }
 
-export function startMonitorLoop(): void {
+export function startMonitorLoop(runImmediately = true): void {
   stopMonitorLoop();
-  scheduleNextMonitorCheck();
+  if (runImmediately) {
+    void forceCheckMonitors();
+  } else {
+    scheduleNextMonitorCheck();
+  }
 }
 
 export function stopMonitorLoop(): void {
