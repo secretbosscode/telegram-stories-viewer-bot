@@ -48,6 +48,7 @@ The bot is configured through environment variables. Copy `.env.example` to `.en
 | `BTC_ZPUB` | optional* | Same as above but using the ZPUB format. |
 | `LOG_FILE` | optional | Path for runtime error logs (default `/data/error.log`). |
 | `DEBUG_LOG` | optional | Set to `true` or `1` to mirror all console output to `/data/debug.log`. |
+| `DISABLE_STEALTH_MODE` | optional | Set to `true` or `1` to skip activating Telegram stealth mode. |
 
 `*` At least one of `BTC_WALLET_ADDRESS`, `BTC_XPUB`, `BTC_YPUB` or `BTC_ZPUB` must be set.
 

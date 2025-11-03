@@ -170,7 +170,21 @@ async function initClient() {
     }
   };
 
-  client.addEventHandler(storyUpdateHandler, new Raw({ types: [Api.UpdateStory, Api.UpdateStoryID] }));
+  const storyApi = Api as typeof Api & {
+    UpdateStory?: typeof Api.UpdateStory;
+    UpdateStoryID?: typeof Api.UpdateStoryID;
+  };
+
+  if (
+    typeof (client as any).addEventHandler === 'function' &&
+    storyApi.UpdateStory &&
+    storyApi.UpdateStoryID
+  ) {
+    client.addEventHandler(
+      storyUpdateHandler,
+      new Raw({ types: [storyApi.UpdateStory, storyApi.UpdateStoryID] }),
+    );
+  }
   return client;
 }
 
