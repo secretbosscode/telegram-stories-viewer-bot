@@ -92,7 +92,17 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 47 // <--- 'x' is typed here
     );
 
+    const oversizeStories = mapped.filter(
+      (story: MappedStoryItem) => story.buffer && story.bufferSize! > 47,
+    );
+
     const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
+    const fallbackCandidates = [
+      ...failedDownloads,
+      ...oversizeStories.filter(
+        (story) => !failedDownloads.some((failed) => failed.id === story.id),
+      ),
+    ];
 
     // --- Notify user about upload ---
     if (uploadableStories.length > 0) {
@@ -139,8 +149,8 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       );
     }
 
-    if (failedDownloads.length > 0) {
-      await sendStoryFallbacks(task, failedDownloads);
+    if (fallbackCandidates.length > 0) {
+      await sendStoryFallbacks(task, fallbackCandidates);
     }
 
     // --- If more pages, offer buttons for the rest ---
