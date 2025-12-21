@@ -47,6 +47,23 @@ function getQueueLoad(): { pending: number; processing: number } {
   };
 }
 
+type TopUser = { id: string; username?: string | null; count: number };
+
+function getTopRequesters(since: number, limit = 5): TopUser[] {
+  const rows = db
+    .prepare(
+      `SELECT r.telegram_id as id, u.username as username, COUNT(*) as count
+       FROM user_request_log r
+       LEFT JOIN users u ON u.telegram_id = r.telegram_id
+       WHERE r.requested_at > ?
+       GROUP BY r.telegram_id, u.username
+       ORDER BY count DESC
+       LIMIT ?`,
+    )
+    .all(since, limit) as TopUser[];
+  return rows || [];
+}
+
 export function getDailyStats() {
   const since = Math.floor(Date.now() / 1000) - 86400;
   const newUsers = countRows(
@@ -75,7 +92,7 @@ export function getDailyStats() {
     }
   } catch {}
 
-  return { newUsers, paidInvoices, invitesRedeemed, errors };
+  return { newUsers, paidInvoices, invitesRedeemed, errors, topUsers: getTopRequesters(since) };
 }
 
 function formatUptime(): string {
@@ -97,6 +114,15 @@ export function getStatusText(): string {
   const nextText = next
     ? new Date(next).toISOString().replace('T', ' ').replace(/\..+/, ' UTC')
     : 'n/a';
+  const topUsersText =
+    stats.topUsers && stats.topUsers.length
+      ? stats.topUsers
+          .map((u, i) => {
+            const label = u.username ? `@${u.username}` : u.id;
+            return `${i + 1}. ${label} (${u.count})`;
+          })
+          .join('\n')
+      : 'none';
   return (
     `🕒 Uptime: ${formatUptime()}\n` +
     `New users: ${stats.newUsers}\n` +
@@ -104,7 +130,8 @@ export function getStatusText(): string {
     `Invites redeemed: ${stats.invitesRedeemed}\n` +
     `Errors last 24h: ${stats.errors}\n` +
     `Queue: ${queueText}\n` +
-    `Next monitor check: ${nextText}`
+    `Next monitor check: ${nextText}\n` +
+    `Top users (24h):\n${topUsersText}`
   );
 }
 
@@ -148,4 +175,3 @@ export function startAdminStatusUpdates(bot: Telegraf<any>) {
   sendStartupStatus(bot);
   setInterval(() => updateAdminStatus(bot), 60 * 60 * 1000);
 }
-
