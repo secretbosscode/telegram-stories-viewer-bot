@@ -20,6 +20,28 @@ import { notifyAdmin } from 'controllers/send-message';
 import { sendStoryFallbacks } from 'controllers/story-fallback';
 import { ensureStealthMode } from 'services/stealth-mode';
 
+const PINNED_CAPTION_LIMIT = 1024;
+
+const buildPinnedCaption = (caption: string | undefined, suffix: string): string => {
+  const normalizedCaption = caption?.trim();
+  if (!normalizedCaption) {
+    return suffix.slice(0, PINNED_CAPTION_LIMIT);
+  }
+
+  const separator = '\n\n';
+  const fullCaption = `${normalizedCaption}${separator}${suffix}`;
+  if (fullCaption.length <= PINNED_CAPTION_LIMIT) {
+    return fullCaption;
+  }
+
+  const available = PINNED_CAPTION_LIMIT - suffix.length - separator.length;
+  if (available <= 0) {
+    return suffix.slice(0, PINNED_CAPTION_LIMIT);
+  }
+
+  return `${normalizedCaption.slice(0, available)}${separator}${suffix}`;
+};
+
 // =========================================================================
 // CRITICAL FUNCTION: This function handles downloading and sending stories.
 // It contains essential error handling and business logic for premium users.
@@ -146,11 +168,14 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
         try {
           await bot.telegram.sendMediaGroup(
             task.chatId,
-            album.map((x: MappedStoryItem) => ({
-              media: { source: x.buffer! },
-              type: x.mediaType!,
-              caption: `${x.caption ?? ''}` + '\n\n' + `Pinned story from ${task.link}`,
-            }))
+            album.map((x: MappedStoryItem) => {
+              const suffix = `Pinned story from ${task.link}`;
+              return {
+                media: { source: x.buffer! },
+                type: x.mediaType!,
+                caption: buildPinnedCaption(x.caption, suffix),
+              };
+            })
           );
         } catch (sendError) {
           console.error(
