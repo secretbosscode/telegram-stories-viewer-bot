@@ -91,6 +91,7 @@
   "users.listHeader": "👥 Users ({{count}}):",
   "history.none": "No recent history found.",
   "history.listHeader": "📜 History (last 30 days):",
+  "history.usageSuffix": "({{count}} in 30d)",
   "queue.flushed": "✅ Cleared {{count}} job(s) from the queue.",
   "error.generic": "An error occurred.",
   "admin.blockUsage": "Usage: /block <telegram_id | @username>",
