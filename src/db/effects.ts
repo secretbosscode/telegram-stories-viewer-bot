@@ -71,7 +71,10 @@ export const findPendingJobFx = createEffect((telegram_id: string) => db.findPen
 export const getQueueStatsFx = createEffect((jobId: number) => db.getQueueStats(jobId));
 
 // Fetch recent history of downloads for admin reporting
-export const getRecentHistoryFx = createEffect((limit: number) => db.getRecentHistory(limit));
+export const getRecentHistoryFx = createEffect(
+  (params: { limit: number; excludeIds?: string[] }) =>
+    db.getRecentHistory(params.limit, params.excludeIds ?? []),
+);
 
 export const recordProfileRequestFx = createEffect(
   (params: { telegram_id: string; target_username: string }) =>

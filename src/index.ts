@@ -981,14 +981,15 @@ bot.command('history', async (ctx) => {
   const locale = ctx.from.language_code || 'en';
   if (!isActivated(ctx.from.id)) return ctx.reply(t(locale, 'msg.startFirst'));
   try {
-    const rows = await getRecentHistoryFx(50);
+    const rows = await getRecentHistoryFx({ limit: 50, excludeIds: [String(BOT_ADMIN_ID)] });
     if (!rows.length) return ctx.reply(t(locale, 'history.none'));
     let msg = t(locale, 'history.listHeader') + '\n';
     rows.forEach((r: any, i: number) => {
       const date = new Date(r.enqueued_ts * 1000).toLocaleDateString();
       const user = r.username ? `@${r.username}` : r.telegram_id;
       const type = r.is_bot ? t(locale, 'label.bot') : t(locale, 'label.user');
-      msg += `${i + 1}. ${user} [${type}] -> ${r.target_username} [${r.status}] ${date}\n`;
+      const usage = t(locale, 'history.usageSuffix', { count: r.user_count });
+      msg += `${i + 1}. ${user} [${type}] -> ${r.target_username} [${r.status}] ${date} ${usage}\n`;
     });
     await ctx.reply(msg, { link_preview_options: { is_disabled: true } });
   } catch (e) {

@@ -483,17 +483,26 @@ export function runMaintenance(): void {
 }
 
 // Retrieve recent usage history limited to the last 30 days
-export function getRecentHistory(limit: number): any[] {
+export function getRecentHistory(limit: number, excludeIds: string[] = []): any[] {
+  const exclusions = excludeIds.filter(Boolean);
+  const excludeClause = exclusions.length
+    ? `AND q.telegram_id NOT IN (${exclusions.map(() => '?').join(', ')})`
+    : '';
   return db
     .prepare(
-      `SELECT q.telegram_id, u.username, u.is_bot, q.target_username, q.status, q.enqueued_ts, q.processed_ts
+      `SELECT q.telegram_id, u.username, u.is_bot, q.target_username, q.status, q.enqueued_ts, q.processed_ts,
+              (SELECT COUNT(*)
+               FROM download_queue q2
+               WHERE q2.telegram_id = q.telegram_id
+                 AND q2.enqueued_ts > (strftime('%s','now') - 2592000)) AS user_count
        FROM download_queue q
        LEFT JOIN users u ON u.telegram_id = q.telegram_id
        WHERE q.enqueued_ts > (strftime('%s','now') - 2592000)
+       ${excludeClause}
        ORDER BY q.enqueued_ts DESC
        LIMIT ?`
     )
-    .all(limit);
+    .all(...exclusions, limit);
 }
 
 export function wasRecentlyDownloaded(telegram_id: string, target_username: string, hours: number): boolean {
