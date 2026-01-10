@@ -4,6 +4,11 @@ export function isNoWorkersError(err: unknown): boolean {
   return code === -500 && typeof msg === 'string' && msg.includes('No workers running');
 }
 
+export function isNotConnectedError(err: unknown): boolean {
+  const msg = (err as any)?.errorMessage || (err as any)?.message;
+  return typeof msg === 'string' && msg.includes('Not connected');
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

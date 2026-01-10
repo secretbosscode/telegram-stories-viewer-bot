@@ -24,6 +24,7 @@ import { handleHiddenStoryUpdate } from 'services/hidden-story-cache';
 export class Userbot {
   private static client: TelegramClient | null = null;
   private static initPromise: Promise<TelegramClient> | null = null;
+  private static reconnectPromise: Promise<TelegramClient> | null = null;
   private static monitor: NodeJS.Timeout | null = null;
   private static readonly CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
 
@@ -41,6 +42,21 @@ export class Userbot {
     }
     Userbot.client = null;
     Userbot.initPromise = null;
+  }
+
+  public static async reconnect(reason?: string): Promise<TelegramClient> {
+    if (Userbot.reconnectPromise) return Userbot.reconnectPromise;
+    Userbot.reconnectPromise = (async () => {
+      const label = reason ? ` (${reason})` : '';
+      console.warn(`[Userbot] Reconnecting${label}...`);
+      await Userbot.reset();
+      return Userbot.getInstance();
+    })();
+    try {
+      return await Userbot.reconnectPromise;
+    } finally {
+      Userbot.reconnectPromise = null;
+    }
   }
 
   /**
@@ -79,9 +95,8 @@ export class Userbot {
       }
       console.error('[Userbot] Connection check failed:', err);
       recordTimeoutError(err);
-      await Userbot.reset();
       try {
-        await Userbot.getInstance();
+        await Userbot.reconnect('connection check');
         console.log('[Userbot] Reconnected after connection failure.');
       } catch (re) {
         console.error('[Userbot] Reconnection attempt failed:', re);
