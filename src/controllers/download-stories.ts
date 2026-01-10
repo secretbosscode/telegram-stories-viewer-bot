@@ -4,6 +4,7 @@ import { Userbot } from 'config/userbot';
 import { Api } from 'telegram';
 import pLimit from 'p-limit'; // Ensure: npm install p-limit (if not already)
 import { ensureStealthMode } from 'services/stealth-mode';
+import { isNotConnectedError } from 'lib/telegram-retry';
 
 // --- Configuration for Concurrency ---
 // If you get FLOOD_WAIT errors from Telegram, lower this.
@@ -46,6 +47,26 @@ export async function downloadStories(
   const skippedStories: MappedStoryItem[] = [];
   let successfulDownloads = 0;
 
+  const downloadWithReconnect = async (media: Api.TypeMessageMedia, storyId: number) => {
+    const maxAttempts = 2;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await client.downloadMedia(media);
+      } catch (err) {
+        lastError = err;
+        if (!isNotConnectedError(err) || attempt === maxAttempts) {
+          throw err;
+        }
+        console.warn(
+          `[DownloadStories] Connection lost while downloading story ${storyId}. Reconnecting (attempt ${attempt}/${maxAttempts})...`,
+        );
+        await Userbot.reconnect(`download story ${storyId}`);
+      }
+    }
+    throw lastError;
+  };
+
   const downloadPromises = stories.map((storyItem: MappedStoryItem) =>
     limit(async () => {
       storyItem.downloadStatus = 'pending';
@@ -77,7 +98,7 @@ export async function downloadStories(
         console.log(`[DownloadStories] Attempting download for story ID ${storyItem.id} (${storiesType})`);
 
         // storyItem.media is Api.StoryItem['media'] type
-        const buffer = await client.downloadMedia(storyItem.media);
+        const buffer = await downloadWithReconnect(storyItem.media, storyItem.id);
 
         if (buffer instanceof Buffer && buffer.length > 0) {
           storyItem.buffer = buffer;
