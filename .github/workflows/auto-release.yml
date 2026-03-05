@@ -19,6 +19,11 @@ jobs:
         with:
           fetch-depth: 0   # needed to push tags
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Sync main branch
         run: |
           git fetch origin main
