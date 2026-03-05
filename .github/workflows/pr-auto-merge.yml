@@ -15,7 +15,7 @@ permissions:
 jobs:
   resolve:
     if: github.event_name == 'pull_request_target'
-    runs-on: self-hosted
+    runs-on: secretbosscode
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,7 +31,7 @@ jobs:
 
   update-open-prs:
     if: github.event_name == 'push'
-    runs-on: self-hosted
+    runs-on: secretbosscode
     steps:
       - uses: actions/checkout@v4
         with:
