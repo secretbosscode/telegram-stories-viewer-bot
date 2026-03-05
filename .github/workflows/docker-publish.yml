@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-and-push:
-    runs-on: secretbosscode
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
