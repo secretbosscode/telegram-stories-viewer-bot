@@ -11,7 +11,7 @@ permissions:
 jobs:
   cleanup:
     if: github.event.pull_request.merged == true && github.event.pull_request.head.ref != 'main' && github.event.pull_request.head.ref != 'development'
-    runs-on: self-hosted
+    runs-on: secretbosscode
     steps:
       - name: Delete merged branch
         uses: actions/github-script@v6
