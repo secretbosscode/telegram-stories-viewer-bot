@@ -1,3 +1,4 @@
+import 'services/stars-delivery-guard';
 import { IContextBot } from 'config/context-interface';
 import { MAX_MONITORS_PER_USER } from 'services/monitor-service';
 import { isUserPremium } from 'services/premium-service';
