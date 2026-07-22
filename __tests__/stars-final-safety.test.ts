@@ -67,5 +67,5 @@ describe('final Stars safety invariants', () => {
     expect(commands).toContain("String(error).includes('STAR_MONITOR_LIMIT')");
   });
 
-  // Paid media must never be sent after a bundle enters refund fencing.
+  // Paid media must never be duplicated by refund or timeout recovery races.
 });
