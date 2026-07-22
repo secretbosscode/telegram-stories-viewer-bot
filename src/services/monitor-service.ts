@@ -27,6 +27,11 @@ import { findUserById } from '../repositories/user-repository';
 import { isUserPremium } from 'services/premium-service';
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { ensureStealthMode } from 'services/stealth-mode';
+import {
+  authorizeStarsMonitorRemoval,
+  clearStarsMonitorRemovalAuthorization,
+  getStarsMonitoringEntitlement,
+} from 'services/stars-mode-safety';
 
 export const CHECK_INTERVAL_HOURS = 1;
 export const MAX_MONITORS_PER_USER = 5;
@@ -110,8 +115,22 @@ export async function removeProfileMonitor(
   username: string,
 ): Promise<void> {
   const existing = findMonitorByUsername(telegramId, username);
-  if (existing) {
+  if (!existing) return;
+
+  // A user may retain both legacy Premium and a paid Stars monitoring grant.
+  // Always authorize an explicit user-requested removal so the entitlement
+  // preservation trigger cannot turn a successful-looking /unmonitor into a
+  // no-op merely because the legacy Premium handler called this service.
+  const hasStarsEntitlement = Boolean(getStarsMonitoringEntitlement(telegramId));
+  if (hasStarsEntitlement) {
+    authorizeStarsMonitorRemoval(telegramId, existing.target_id);
+  }
+  try {
     removeMonitor(telegramId, existing.target_id);
+  } finally {
+    if (hasStarsEntitlement) {
+      clearStarsMonitorRemovalAuthorization(telegramId, existing.target_id);
+    }
   }
 }
 
@@ -263,7 +282,8 @@ export async function checkSingleMonitor(id: number): Promise<void> {
     for (const s of activeStories) {
       const key = `${s.id}:${s.date}`;
       if (activeSent.has(key)) continue;
-      markStorySent(m.id, s.id, s.date, s.expireDate, 'active');
+      // Reserve only in memory for cross-list de-duplication. Persist the key
+      // after Telegram delivery succeeds so transient failures are retried.
       activeSent.add(key);
       newActive.push(s);
     }
@@ -273,7 +293,6 @@ export async function checkSingleMonitor(id: number): Promise<void> {
       if (typeof s?.id !== 'number' || typeof s?.date !== 'number') continue;
       const key = `${s.id}:${s.date}`;
       if (pinnedSent.has(key)) continue;
-      markStorySent(m.id, s.id, s.date, s.expireDate ?? null, 'pinned');
       pinnedSent.add(key);
       if (activeSent.has(key)) continue;
       newPinned.push(s);
@@ -295,6 +314,9 @@ export async function checkSingleMonitor(id: number): Promise<void> {
           initTime: Date.now(),
         } as any,
       });
+      for (const s of newActive) {
+        markStorySent(m.id, s.id, s.date, s.expireDate, 'active');
+      }
     }
 
     if (newPinned.length > 0) {
@@ -311,6 +333,9 @@ export async function checkSingleMonitor(id: number): Promise<void> {
           initTime: Date.now(),
         } as any,
       });
+      for (const s of newPinned) {
+        markStorySent(m.id, s.id, s.date, s.expireDate ?? null, 'pinned');
+      }
     }
 
     if (newActive.length === 0 && newPinned.length === 0) {
