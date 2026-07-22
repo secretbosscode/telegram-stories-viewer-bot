@@ -15,7 +15,10 @@ import {
 } from 'types';
 
 import { sendActiveStories } from 'controllers/send-active-stories';
-import { sendPaginatedStories } from 'controllers/send-paginated-stories';
+import {
+  PartialStoryDeliveryError,
+  sendPaginatedStories,
+} from 'controllers/send-paginated-stories';
 import { sendParticularStory } from 'controllers/send-particular-story';
 import { sendPinnedStories } from 'controllers/send-pinned-stories';
 import { sendGlobalStories } from 'controllers/send-global-stories';
@@ -90,9 +93,8 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
 
     try {
       if (particularStory) {
-        await sendParticularStory({ story: particularStory, task });
-        deliveredStoryIds = [particularStory.id];
-        storiesWereSent = true;
+        deliveredStoryIds = await sendParticularStory({ story: particularStory, task });
+        storiesWereSent = deliveredStoryIds.length > 0;
       }
       else if (paginatedStories && paginatedStories.length > 0) {
         deliveredStoryIds = await sendPaginatedStories({
@@ -153,9 +155,6 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
               `Incomplete paid delivery: ${delivered.length}/${expected.length} expected stories delivered`,
             ),
           );
-          // Do not leave a customer charged for a partial result bundle. A full
-          // refund is safer than finalizing incomplete fulfillment or retrying
-          // already-delivered media and creating duplicates.
           await refundUndeliverableStarsBundle(task.starsBundleId);
           return;
         }
@@ -189,6 +188,14 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       }
     }
     catch (error: any) {
+      if (task.starsBundleId && error instanceof PartialStoryDeliveryError) {
+        recordStarsDeliveryFailure(task.starsBundleId, error);
+        // Some media already reached Telegram. Never retry the full bundle and
+        // duplicate that content; refund the purchase instead.
+        await refundUndeliverableStarsBundle(task.starsBundleId);
+        return;
+      }
+
       if (task.starsBundleId) {
         recordStarsDeliveryFailure(task.starsBundleId, error);
       }
