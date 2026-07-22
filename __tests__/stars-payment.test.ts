@@ -243,6 +243,33 @@ describe('Telegram Stars result unlocks', () => {
     expect((db.prepare(`SELECT status FROM star_result_bundles WHERE id = 'refund-processing-job'`).get() as any).status).toBe('REFUNDED');
   });
 
+
+  test('refunds a fulfilled monitoring purchase without allowing delivered media refunds', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(`
+      INSERT INTO star_result_bundles (
+        id, user_id, chat_id, target, locale, request_kind, story_ids,
+        task_json, result_count, price_stars, status, created_at, expires_at,
+        paid_at, delivered_at, attempt_count
+      ) VALUES ('monitor-refund', '123', '123', 'story-monitoring', 'en',
+        'monitor_week', '[]', '{}', 3, 199, 'DELIVERED', ?, ?, ?, ?, 0)
+    `).run(now, now + 1800, now, now);
+    db.prepare(`
+      INSERT INTO star_payments (
+        telegram_payment_charge_id, bundle_id, user_id, amount_stars, paid_at
+      ) VALUES ('monitor-refund-charge', 'monitor-refund', '123', 199, ?)
+    `).run(now);
+
+    expect(await refundUndeliverableStarsBundle('monitor-refund')).toBe(true);
+    expect(bot.telegram.callApi).toHaveBeenCalledWith('refundStarPayment', {
+      user_id: 123,
+      telegram_payment_charge_id: 'monitor-refund-charge',
+    });
+    expect((db.prepare(
+      `SELECT status FROM star_result_bundles WHERE id = 'monitor-refund'`,
+    ).get() as any).status).toBe('REFUNDED');
+  });
+
   test('delivery cannot settle after refund fencing begins', () => {
     const now = Math.floor(Date.now() / 1000);
     db.prepare(`

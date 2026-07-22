@@ -116,6 +116,11 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
         });
         storiesWereSent = true;
       } else {
+        const activeStoryIds = new Set(activeStories.map((story) => Number(story.id)));
+        const uniquePinnedStories = pinnedStories.filter(
+          (story) => !activeStoryIds.has(Number(story.id)),
+        );
+
         if (activeStories.length > 0) {
           const activeDeliveredIds = await sendActiveStories({
             stories: mapStories(activeStories),
@@ -126,9 +131,9 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
           await timeout(2000);
         }
 
-        if (pinnedStories.length > 0) {
+        if (uniquePinnedStories.length > 0) {
           const pinnedDeliveredIds = await sendPinnedStories({
-            stories: mapStories(pinnedStories),
+            stories: mapStories(uniquePinnedStories),
             task,
           });
           deliveredStoryIds.push(...pinnedDeliveredIds);

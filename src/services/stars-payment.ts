@@ -514,7 +514,11 @@ async function refundBundle(
     const fenced = db.prepare(
       `UPDATE star_result_bundles
        SET status = 'REFUND_PENDING', last_error = NULL
-       WHERE id = ? AND status IN ('PAID', 'DELIVERING', 'REFUND_PENDING')`,
+       WHERE id = ?
+         AND (
+           status IN ('PAID', 'DELIVERING', 'REFUND_PENDING')
+           OR (status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month'))
+         )`,
     ).run(bundle.id);
     if (fenced.changes === 0) {
       db.exec('ROLLBACK');

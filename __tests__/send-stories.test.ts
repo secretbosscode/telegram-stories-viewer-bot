@@ -26,7 +26,7 @@ jest.mock('../src/controllers/send-paginated-stories', () => ({
 
 const sendActiveStories: any = jest.fn(async () => []);
 jest.mock('../src/controllers/send-active-stories', () => ({ sendActiveStories }));
-const sendPinnedStories = jest.fn();
+const sendPinnedStories: any = jest.fn(async () => []);
 jest.mock('../src/controllers/send-pinned-stories', () => ({ sendPinnedStories }));
 const sendGlobalStories = jest.fn();
 jest.mock('../src/controllers/send-global-stories', () => ({ sendGlobalStories }));
@@ -71,6 +71,7 @@ describe('sendStoriesFx', () => {
     sendParticularStory.mockResolvedValue([1]);
     sendPaginatedStories.mockResolvedValue([1]);
     sendActiveStories.mockResolvedValue([]);
+    sendPinnedStories.mockResolvedValue([]);
   });
 
   test('sends persistent completion message', async () => {
@@ -255,6 +256,31 @@ describe('sendStoriesFx', () => {
     );
     expect(refundUndeliverableStarsBundle).toHaveBeenCalledWith('bundle-batch-error');
     expect(markStarsBundleDelivered).not.toHaveBeenCalled();
+  });
+
+
+  test('does not deliver a story twice when Telegram returns it as active and pinned', async () => {
+    sendActiveStories.mockResolvedValue([7]);
+    sendPinnedStories.mockResolvedValue([8]);
+
+    await sendStoriesFx({
+      activeStories: [{ id: 7 }] as any,
+      pinnedStories: [{ id: 7 }, { id: 8 }] as any,
+      task: {
+        chatId: '7',
+        link: '@target',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+      },
+    } as any);
+
+    expect(sendActiveStories).toHaveBeenCalledWith(
+      expect.objectContaining({ stories: [{ id: 7 }] }),
+    );
+    expect(sendPinnedStories).toHaveBeenCalledWith(
+      expect.objectContaining({ stories: [{ id: 8 }] }),
+    );
   });
 
   test('marks a paid bundle delivered only when every purchased ID was delivered', async () => {
