@@ -6,6 +6,7 @@ import { db } from 'db';
 import { t } from 'lib/i18n';
 import { saveUser } from '../repositories/user-repository';
 import { isUserPremium } from './premium-service';
+import { processStartReferral } from './referral-service';
 import {
   addProfileMonitor,
   formatMonitorTarget,
@@ -43,7 +44,47 @@ db.exec(`
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (chat_id, user_id)
   );
+
+  -- Groups whose legacy chat-wide command menu has been cleared. Telegram
+  -- exposes no API to enumerate historical command scopes, so the one-shot
+  -- scope migration cannot discover every legacy group (e.g. groups that only
+  -- ran /start or /help and never queued a download). This table lets the
+  -- middleware lazily clear each such group's stale menu exactly once, on its
+  -- next interaction, independent of the one-shot migration.
+  CREATE TABLE IF NOT EXISTS legacy_group_scopes (
+    chat_id TEXT PRIMARY KEY,
+    cleared_at INTEGER NOT NULL
+  );
 `);
+
+// Clears the pre-Stars chat-wide command menu for a single group the first
+// time the bot observes it, then records it so the delete API call runs once.
+// A failed delete is intentionally left unrecorded so it is retried later.
+async function clearLegacyGroupScope(
+  bot: Telegraf<IContextBot>,
+  chatId: string,
+): Promise<void> {
+  const numericChatId = Number(chatId);
+  if (!Number.isFinite(numericChatId) || numericChatId >= 0) return;
+
+  const already = db
+    .prepare('SELECT 1 FROM legacy_group_scopes WHERE chat_id = ?')
+    .get(chatId);
+  if (already) return;
+
+  try {
+    await (bot.telegram as any).callApi('deleteMyCommands', {
+      scope: { type: 'chat', chat_id: numericChatId },
+    });
+  } catch (error) {
+    console.warn(`[Stars] Could not clear legacy group command scope ${chatId}:`, error);
+    return;
+  }
+
+  db.prepare(
+    'INSERT OR IGNORE INTO legacy_group_scopes (chat_id, cleared_at) VALUES (?, ?)',
+  ).run(chatId, Math.floor(Date.now() / 1000));
+}
 
 function getStarsBaseCommands(locale: string) {
   return [
@@ -223,6 +264,16 @@ async function renderStarsStart(ctx: any, bot: Telegraf<IContextBot>): Promise<v
   const locale = ctx.from?.language_code || 'en';
   const userId = String(ctx.from?.id ?? '');
   const chatId = String(ctx.chat?.id ?? ctx.from?.id ?? '');
+
+  // Stars mode intercepts /start before the legacy bot.start handler, so the
+  // referral bookkeeping must run here too; otherwise invite-link joins never
+  // credit the inviter or grant the five-referral Premium reward.
+  const startText = String(ctx.message?.text || '');
+  const payloadMatch = startText.match(/^\/start(?:@[a-zA-Z0-9_]+)?\s+(.+)$/);
+  if (userId) {
+    await processStartReferral(ctx.telegram, userId, payloadMatch?.[1]?.trim());
+  }
+
   await ctx.reply(t(locale, 'stars.startText', prices()), { parse_mode: 'Markdown' });
   await syncChatCommands(bot, chatId, userId, locale, true);
 }
@@ -439,6 +490,11 @@ async function migrateExistingCommandScopes(
       SELECT CAST(chat_id AS TEXT) AS group_id
       FROM star_result_bundles
       WHERE CAST(chat_id AS INTEGER) < 0
+      UNION
+      SELECT CAST(chat_id AS TEXT) AS group_id
+      FROM bot_command_scopes
+      WHERE is_group = 1
+        AND CAST(chat_id AS INTEGER) < 0
     )
     WHERE group_id IS NOT NULL
     ORDER BY group_id
@@ -451,6 +507,10 @@ async function migrateExistingCommandScopes(
       await (bot.telegram as any).callApi('deleteMyCommands', {
         scope: { type: 'chat', chat_id: groupId },
       });
+      // Record so the middleware's lazy safety net does not repeat the call.
+      db.prepare(
+        'INSERT OR IGNORE INTO legacy_group_scopes (chat_id, cleared_at) VALUES (?, ?)',
+      ).run(row.group_id, Math.floor(Date.now() / 1000));
     } catch (error) {
       console.warn(`[Stars] Could not clear legacy group command scope ${row.group_id}:`, error);
     }
@@ -577,7 +637,14 @@ export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
       if (paidMonitoring && command === 'unmonitor') return handleStarsUnmonitor(ctx, next);
       return next();
     }
-if (command === 'start') return renderStarsStart(ctx, bot);
+
+    // Clear any stale pre-Stars chat-wide menu the first time this group is
+    // seen, regardless of which branch handles the message below. This is the
+    // safety net for legacy groups the one-shot scope migration could not
+    // enumerate (no queue/bundle rows to discover them by).
+    if (chatId) await clearLegacyGroupScope(bot, chatId);
+
+    if (command === 'start') return renderStarsStart(ctx, bot);
     if (command === 'help') return renderStarsHelp(ctx, bot);
     if (command === 'monitor') return handleStarsMonitor(ctx, next);
     if (command === 'unmonitor') return handleStarsUnmonitor(ctx, next);

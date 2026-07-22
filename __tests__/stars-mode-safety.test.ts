@@ -1,5 +1,7 @@
 import { jest } from '@jest/globals';
 
+jest.mock('../src/config/env-config', () => ({ BTC_CONFIGURED: true }));
+
 jest.mock('../src/db', () => {
   const SyncDatabase = require('../src/db/sqlite-sync').default;
   const db = new SyncDatabase(':memory:');
@@ -182,6 +184,26 @@ describe('Stars mode safety migrations', () => {
       INSERT INTO payment_checks (invoice_id, next_check, check_start)
       VALUES (?, ?, ?)
     `).run(result.lastInsertRowid, now + 60, now);
+
+    initializeStarsModeSafety(bot);
+
+    const row = db.prepare("SELECT value FROM bot_settings WHERE key = 'payment_mode'").get() as any;
+    expect(row.value).toBe('btc');
+  });
+
+  test('completed BTC payment history keeps a legacy install in BTC mode', () => {
+    const now = Math.floor(Date.now() / 1000);
+    // A historical, fully-paid BTC invoice with no currently outstanding
+    // invoice. The initial migration selected 'btc' for this install; the
+    // automatic mode pass must not silently downgrade it to Stars.
+    db.prepare(`
+      INSERT INTO payments (
+        user_id, invoice_amount, user_address, expires_at, paid_at
+      ) VALUES ('legacy', 0.0001, 'address', ?, ?)
+    `).run(now - 7200, now - 3600);
+    db.prepare(
+      "UPDATE bot_settings SET value = 'btc', updated_by = 'migration' WHERE key = 'payment_mode'",
+    ).run();
 
     initializeStarsModeSafety(bot);
 

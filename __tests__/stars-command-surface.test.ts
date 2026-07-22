@@ -59,4 +59,34 @@ describe('Stars command surface', () => {
     expect(source).toContain("setStarsMonitorPrice(plan, value, String(ctx.from.id))");
     expect(source).toContain('Usage: /setmonitorprice <week|month> <1-10000>');
   });
+
+  test('Stars-mode /start still credits referrals through the shared referral service', () => {
+    expect(source).toContain("import { processStartReferral } from './referral-service'");
+    const startBlock = source.match(/async function renderStarsStart[\s\S]*?\n}\n/)?.[0] ?? '';
+    expect(startBlock).toContain('processStartReferral(ctx.telegram, userId');
+    // It parses the invite code out of the raw "/start <payload>" text.
+    expect(startBlock).toContain('const payloadMatch = startText.match(');
+    expect(startBlock).toContain('payloadMatch?.[1]?.trim()');
+  });
+
+  test('legacy group menus are cleared lazily even when the migration cannot discover them', () => {
+    // Telegram exposes no API to enumerate historical command scopes, so the
+    // one-shot migration alone cannot be complete for groups.
+    expect(source).toContain('CREATE TABLE IF NOT EXISTS legacy_group_scopes');
+    expect(source).toContain('async function clearLegacyGroupScope');
+    // The middleware safety net runs before the command branches so every
+    // group interaction clears the stale menu once.
+    expect(source).toContain('if (chatId) await clearLegacyGroupScope(bot, chatId)');
+    const clearBlock = source.match(/async function clearLegacyGroupScope[\s\S]*?\n}\n/)?.[0] ?? '';
+    expect(clearBlock).toContain("scope: { type: 'chat', chat_id: numericChatId }");
+    expect(clearBlock).toContain('INSERT OR IGNORE INTO legacy_group_scopes');
+    // A failed delete returns before recording, so it is retried next time.
+    expect(clearBlock).toContain('return;');
+  });
+
+  test('the scope migration also enumerates observed groups and records what it clears', () => {
+    const migrationBlock = source.match(/async function migrateExistingCommandScopes[\s\S]*?\n}\n/)?.[0] ?? '';
+    expect(migrationBlock).toContain('FROM bot_command_scopes');
+    expect(migrationBlock).toContain('INSERT OR IGNORE INTO legacy_group_scopes');
+  });
 });

@@ -1,6 +1,7 @@
 import type { Telegraf } from 'telegraf';
 import { db } from 'db';
 import { IContextBot } from 'config/context-interface';
+import { BTC_CONFIGURED } from 'config/env-config';
 
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 const MONTH_SECONDS = 30 * 24 * 60 * 60;
@@ -444,15 +445,28 @@ function migrateDefaultPaymentMode(): void {
        AND COALESCE(p.expires_at, c.check_start + 86400) >= ?`,
   ).get(now) as { count?: number } | undefined;
 
+  // A configured BTC installation with historical completed payments is a
+  // genuine legacy deployment even when no invoice is currently outstanding.
+  // The initial mode migration in stars-payment.ts already selects `btc` for
+  // this case, so mirror that predicate here; otherwise this pass would flip a
+  // legitimately-BTC install back to Stars and hide the legacy payment flow
+  // without an administrator choosing it.
+  const completedLegacyPayment = db.prepare(
+    `SELECT COUNT(*) AS count FROM payments WHERE paid_at IS NOT NULL`,
+  ).get() as { count?: number } | undefined;
+
   const hasActiveLegacyPayment =
     Number(activeInvoice?.count ?? 0) > 0 || Number(activeCheck?.count ?? 0) > 0;
+  const hasCompletedLegacyPayment =
+    BTC_CONFIGURED && Number(completedLegacyPayment?.count ?? 0) > 0;
+  const hasLegacyPayment = hasActiveLegacyPayment || hasCompletedLegacyPayment;
 
   const wasAutomatic = !modeRow || modeRow.updated_by === 'migration';
   if (!wasAutomatic) return;
 
   setSetting(
     'payment_mode',
-    hasActiveLegacyPayment ? 'btc' : 'stars',
+    hasLegacyPayment ? 'btc' : 'stars',
     'migration',
   );
 }
