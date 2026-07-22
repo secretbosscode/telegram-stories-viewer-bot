@@ -36,6 +36,7 @@ function initializeSafetySchema(): void {
     DROP TRIGGER IF EXISTS bind_star_bundle_requesting_user;
     DROP TRIGGER IF EXISTS fulfill_star_monitor_purchase;
     DROP TRIGGER IF EXISTS revoke_latest_star_monitor_refund;
+    DROP TRIGGER IF EXISTS enforce_star_monitor_limit;
     DROP TRIGGER IF EXISTS preserve_active_star_monitors;
   `);
 
@@ -284,6 +285,12 @@ function initializeSafetySchema(): void {
       ) > COALESCE(
         (SELECT max_targets FROM star_monitor_entitlements e WHERE e.user_id = monitors.telegram_id),
         0
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM users u
+        WHERE u.telegram_id = monitors.telegram_id
+          AND COALESCE(u.is_premium, 0) = 1
+          AND (u.premium_until IS NULL OR u.premium_until >= CAST(strftime('%s','now') AS INTEGER))
       );
 
       DELETE FROM star_monitor_delete_authorizations
@@ -310,7 +317,37 @@ function initializeSafetySchema(): void {
         SELECT 1 FROM star_monitor_entitlements e
         WHERE e.user_id = monitors.telegram_id
           AND e.expires_at > CAST(strftime('%s','now') AS INTEGER)
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM users u
+        WHERE u.telegram_id = monitors.telegram_id
+          AND COALESCE(u.is_premium, 0) = 1
+          AND (u.premium_until IS NULL OR u.premium_until >= CAST(strftime('%s','now') AS INTEGER))
       );
+    END;
+
+    CREATE TRIGGER enforce_star_monitor_limit
+    BEFORE INSERT ON monitors
+    WHEN EXISTS (
+      SELECT 1 FROM star_monitor_entitlements e
+      WHERE e.user_id = NEW.telegram_id
+        AND e.expires_at > CAST(strftime('%s','now') AS INTEGER)
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM users u
+      WHERE u.telegram_id = NEW.telegram_id
+        AND COALESCE(u.is_premium, 0) = 1
+        AND (u.premium_until IS NULL OR u.premium_until >= CAST(strftime('%s','now') AS INTEGER))
+    )
+    AND (
+      SELECT COUNT(*) FROM monitors existing
+      WHERE existing.telegram_id = NEW.telegram_id
+    ) >= COALESCE(
+      (SELECT e.max_targets FROM star_monitor_entitlements e WHERE e.user_id = NEW.telegram_id),
+      0
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'STAR_MONITOR_LIMIT');
     END;
 
     CREATE TRIGGER preserve_active_star_monitors

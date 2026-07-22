@@ -213,7 +213,15 @@ async function handleStarsMonitor(ctx: any, next: () => Promise<void>): Promise<
 
   const input = args[0];
   const username = input.replace(/^@/, '');
-  const added = await addProfileMonitor(userId, username);
+  let added;
+  try {
+    added = await addProfileMonitor(userId, username);
+  } catch (error) {
+    if (String(error).includes('STAR_MONITOR_LIMIT')) {
+      return ctx.reply(t(locale, 'stars.monitorLimit', { maxTargets: entitlement.maxTargets }));
+    }
+    throw error;
+  }
   if (!added) return ctx.reply(t(locale, 'stars.monitorAlready'));
   return ctx.reply(t(locale, 'stars.monitorStarted', { target: input }));
 }

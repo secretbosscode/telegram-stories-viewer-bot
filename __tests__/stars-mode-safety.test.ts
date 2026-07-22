@@ -131,6 +131,8 @@ describe('Stars mode safety migrations', () => {
     db.prepare('DELETE FROM star_monitor_grants').run();
     db.prepare('DELETE FROM star_result_bundles').run();
     db.prepare('DELETE FROM star_payments').run();
+    db.prepare('DELETE FROM monitors').run();
+    db.prepare('DELETE FROM users').run();
     db.prepare('DELETE FROM payment_checks').run();
     db.prepare('DELETE FROM payments').run();
     db.prepare(
@@ -289,5 +291,51 @@ describe('Stars mode safety migrations', () => {
     expect(remaining?.expiresAt).toBeLessThanOrEqual(weekEntitlement.expiresAt + 2);
     expect(remaining?.maxTargets).toBe(3);
     expect(remaining?.plan).toBe('monitor_week');
+  });
+
+
+  test('monitor target limit is enforced atomically by SQLite', () => {
+    const now = Math.floor(Date.now() / 1000);
+    insertMonitorBundle('atomic-limit', 'atomic-user', 'monitor_week', 199, now, 1);
+    payMonitorBundle('atomic-limit', 'atomic-user', 'atomic-charge', 199, now);
+
+    db.prepare(
+      `INSERT INTO monitors (telegram_id, target_id, target_username, created_at)
+       VALUES ('atomic-user', '1', 'first', ?)`
+    ).run(now);
+
+    expect(() => db.prepare(
+      `INSERT INTO monitors (telegram_id, target_id, target_username, created_at)
+       VALUES ('atomic-user', '2', 'second', ?)`
+    ).run(now + 1)).toThrow(/STAR_MONITOR_LIMIT/);
+
+    const row = db.prepare(
+      "SELECT COUNT(*) AS count FROM monitors WHERE telegram_id = 'atomic-user'"
+    ).get() as any;
+    expect(Number(row.count)).toBe(1);
+  });
+
+  test('refunding Stars monitoring preserves monitors for active Premium users', () => {
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(
+      `INSERT INTO users (telegram_id, is_premium, premium_until)
+       VALUES ('premium-monitor', 1, ?)`
+    ).run(now + 86400);
+    insertMonitorBundle('premium-refund', 'premium-monitor', 'monitor_week', 199, now, 1);
+    payMonitorBundle('premium-refund', 'premium-monitor', 'premium-refund-charge', 199, now);
+    db.prepare(
+      `INSERT INTO monitors (telegram_id, target_id, target_username, created_at)
+       VALUES ('premium-monitor', '1', 'kept', ?)`
+    ).run(now);
+
+    db.prepare(
+      "UPDATE star_payments SET refunded_at = ? WHERE telegram_payment_charge_id = 'premium-refund-charge'"
+    ).run(now + 1);
+
+    expect(getStarsMonitoringEntitlement('premium-monitor')).toBeUndefined();
+    const row = db.prepare(
+      "SELECT COUNT(*) AS count FROM monitors WHERE telegram_id = 'premium-monitor'"
+    ).get() as any;
+    expect(Number(row.count)).toBe(1);
   });
 });

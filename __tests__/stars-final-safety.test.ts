@@ -34,4 +34,21 @@ describe('final Stars safety invariants', () => {
     expect(commands).toContain("callApi('deleteMyCommands'");
     expect(commands).toContain("type: 'chat_member'");
   });
+
+
+  test('Stars menus cannot be overwritten by legacy startup or per-user updates', () => {
+    const index = source('src/index.ts');
+    expect(index).toContain("import { isStarsMode } from './services/stars-payment'");
+    expect(index).toContain('if (isStarsMode()) return;');
+    expect(index).toContain('if (!isStarsMode()) {');
+  });
+
+  test('monitor limits are atomic and Premium eligibility survives Stars refunds', () => {
+    const safety = source('src/services/stars-mode-safety.ts');
+    const commands = source('src/services/stars-command-surface.ts');
+    expect(safety).toContain('CREATE TRIGGER enforce_star_monitor_limit');
+    expect(safety).toContain("RAISE(ABORT, 'STAR_MONITOR_LIMIT')");
+    expect(safety.match(/COALESCE\(u\.is_premium, 0\) = 1/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(commands).toContain("String(error).includes('STAR_MONITOR_LIMIT')");
+  });
 });
