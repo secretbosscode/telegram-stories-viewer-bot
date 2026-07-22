@@ -16,6 +16,14 @@ describe('PR 310 final review regressions', () => {
   test('monitor purchases remain refundable after fulfillment', () => {
     const payment = source('src/services/stars-payment.ts');
     expect(payment).toContain("status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month')");
+    expect(payment).toContain("OR (status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month'))");
+  });
+
+  test('active and pinned API overlap cannot deliver the same story twice', () => {
+    const delivery = source('src/controllers/send-stories.ts');
+    expect(delivery).toContain('const activeStoryIds = new Set');
+    expect(delivery).toContain('const uniquePinnedStories = pinnedStories.filter');
+    expect(delivery).toContain('stories: mapStories(uniquePinnedStories)');
   });
 
   test('monitor plan restoration follows payment order and Premium expiry reconciles excess rows', () => {
