@@ -1,5 +1,5 @@
 import type { Telegraf } from 'telegraf';
-import { BOT_ADMIN_ID, NODE_ENV } from 'config/env-config';
+import { BOT_ADMIN_ID } from 'config/env-config';
 import { IContextBot } from 'config/context-interface';
 import { db } from 'db';
 import { t } from 'lib/i18n';
@@ -173,7 +173,7 @@ export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
   // Existing Jest suites build lightweight bot/database mocks and are not
   // integration tests for Telegram command menus. Avoid delayed production
   // migrations in that environment.
-  if (NODE_ENV === 'test') return;
+  if (process.env.NODE_ENV === 'test') return;
   if (registered) return;
   registered = true;
 
