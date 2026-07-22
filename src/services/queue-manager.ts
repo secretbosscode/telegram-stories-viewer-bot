@@ -279,6 +279,12 @@ export async function processQueue() {
       }
       if (!timedOut) {
         await markDoneFx(job.id);
+        if (currentTask.starsBundleId) {
+          const { finalizeDeferredStarsRefund } = await import('./stars-payment');
+          await finalizeDeferredStarsRefund(currentTask.starsBundleId).catch((error) => {
+            console.error(`[QueueManager] Deferred Stars refund failed for ${currentTask.starsBundleId}:`, error);
+          });
+        }
         console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
       }
     }

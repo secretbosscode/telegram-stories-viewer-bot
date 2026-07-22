@@ -31,6 +31,7 @@ import {
   authorizeStarsMonitorRemoval,
   clearStarsMonitorRemovalAuthorization,
   getStarsMonitoringEntitlement,
+  reconcileStarsMonitorLimit,
 } from 'services/stars-mode-safety';
 
 export const CHECK_INTERVAL_HOURS = 1;
@@ -156,9 +157,29 @@ export async function forceCheckMonitors(): Promise<number> {
     clearTimeout(monitorTimer);
     monitorTimer = null;
   }
-  const monitors = listAllMonitors();
+  let monitors = listAllMonitors();
   const premiumCache = new Map<string, boolean>();
+  const reconciledUsers = new Set<string>();
   try {
+    for (const monitor of monitors) {
+      let premium = premiumCache.get(monitor.telegram_id);
+      if (premium === undefined) {
+        premium = isUserPremium(monitor.telegram_id);
+        premiumCache.set(monitor.telegram_id, premium);
+      }
+      const starsEntitlement = getStarsMonitoringEntitlement(monitor.telegram_id);
+      if (
+        !premium &&
+        Number(monitor.telegram_id) !== BOT_ADMIN_ID &&
+        starsEntitlement &&
+        !reconciledUsers.has(monitor.telegram_id)
+      ) {
+        reconcileStarsMonitorLimit(monitor.telegram_id);
+        reconciledUsers.add(monitor.telegram_id);
+      }
+    }
+
+    monitors = listAllMonitors();
     for (const monitor of monitors) {
       let premium = premiumCache.get(monitor.telegram_id);
       if (premium === undefined) {

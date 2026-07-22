@@ -469,7 +469,11 @@ export function recordStarsDeliveryFailure(bundleId: string, error: unknown): vo
   ).run(error instanceof Error ? error.message : String(error), bundleId);
 }
 
-async function refundBundle(bundle: StarsBundleRow, notifyUser = true): Promise<boolean> {
+async function refundBundle(
+  bundle: StarsBundleRow,
+  notifyUser = true,
+  deferIfProcessing = false,
+): Promise<boolean> {
   const payment = getPaymentForBundle(bundle.id);
   if (!payment || payment.refunded_at || bundle.status === 'REFUNDED') return Boolean(payment?.refunded_at);
   if (!botInstance) return false;
@@ -484,7 +488,20 @@ async function refundBundle(bundle: StarsBundleRow, notifyUser = true): Promise<
        LIMIT 1`,
     ).get(bundle.id);
     if (processing) {
-      db.exec('ROLLBACK');
+      if (deferIfProcessing) {
+        db.prepare(
+          `UPDATE star_result_bundles
+           SET status = 'REFUND_PENDING'
+           WHERE id = ?
+             AND (
+               status IN ('PAID', 'DELIVERING', 'REFUND_PENDING')
+               OR (status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month'))
+             )`,
+        ).run(bundle.id);
+        db.exec('COMMIT');
+      } else {
+        db.exec('ROLLBACK');
+      }
       return false;
     }
 
@@ -552,6 +569,12 @@ async function refundBundle(bundle: StarsBundleRow, notifyUser = true): Promise<
 export async function refundUndeliverableStarsBundle(bundleId: string): Promise<boolean> {
   const bundle = getBundle(bundleId);
   if (!bundle) return false;
+  return refundBundle(bundle, true, true);
+}
+
+export async function finalizeDeferredStarsRefund(bundleId: string): Promise<boolean> {
+  const bundle = getBundle(bundleId);
+  if (!bundle || bundle.status !== 'REFUND_PENDING') return false;
   return refundBundle(bundle);
 }
 
@@ -760,9 +783,14 @@ export function registerStarsPayments(bot: Telegraf<IContextBot>): void {
     } else if (action.startsWith('mode:')) {
       const mode = action.slice('mode:'.length) === 'btc' ? 'btc' : 'stars';
       const changed = setPaymentMode(mode, String(ctx.from.id));
-      if (changed && mode === 'stars') {
-        const { synchronizeStarsCommandMenus } = await import('./stars-command-surface');
-        await synchronizeStarsCommandMenus(bot, true);
+      if (changed) {
+        const { synchronizeLegacyCommandMenus, synchronizeStarsCommandMenus } =
+          await import('./stars-command-surface');
+        if (mode === 'stars') {
+          await synchronizeStarsCommandMenus(bot, true);
+        } else {
+          await synchronizeLegacyCommandMenus(bot);
+        }
       }
       await ctx.answerCbQuery(
         changed

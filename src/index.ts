@@ -1302,12 +1302,12 @@ async function startApp() {
   startMonitorLoop();
   resumePendingChecks();
   scheduleDatabaseBackups();
-  if (!isStarsMode()) {
-    await bot.telegram.setMyCommands(getBaseCommands('en'));
-    await bot.telegram.setMyCommands(
-      [...getBaseCommands('en'), ...getPremiumCommands('en'), ...getAdminCommands('en')],
-      { scope: { type: 'chat', chat_id: BOT_ADMIN_ID } }
-    );
+  const { synchronizeLegacyCommandMenus, synchronizeStarsCommandMenus } =
+    await import('./services/stars-command-surface');
+  if (isStarsMode()) {
+    await synchronizeStarsCommandMenus(bot, true);
+  } else {
+    await synchronizeLegacyCommandMenus(bot);
   }
   bot.launch({ dropPendingUpdates: true }).then(() => {
     console.log('✅ Telegram bot started successfully and is ready for commands.');

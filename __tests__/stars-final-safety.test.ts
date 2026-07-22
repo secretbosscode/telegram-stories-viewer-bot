@@ -47,7 +47,8 @@ describe('final Stars safety invariants', () => {
     const index = source('src/index.ts');
     expect(index).toContain("import { isStarsMode } from './services/stars-payment'");
     expect(index).toContain('if (isStarsMode()) return;');
-    expect(index).toContain('if (!isStarsMode()) {');
+    expect(index).toContain('await synchronizeStarsCommandMenus(bot, true)');
+    expect(index).toContain('await synchronizeLegacyCommandMenus(bot)');
   });
 
   test('switching to Stars forces an immediate command-menu rebuild', () => {

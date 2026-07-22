@@ -204,36 +204,39 @@ function initializeSafetySchema(): void {
           ),
           max_targets = COALESCE(
             (
-              SELECT max_targets
-              FROM star_monitor_grants
-              WHERE user_id = star_monitor_entitlements.user_id
-                AND bundle_id <> NEW.bundle_id
-                AND refunded_at IS NULL
-              ORDER BY granted_at DESC, bundle_id DESC
+              SELECT g.max_targets
+              FROM star_monitor_grants g
+              JOIN star_payments p ON p.bundle_id = g.bundle_id
+              WHERE g.user_id = star_monitor_entitlements.user_id
+                AND g.bundle_id <> NEW.bundle_id
+                AND g.refunded_at IS NULL
+              ORDER BY p.paid_at DESC, p.rowid DESC
               LIMIT 1
             ),
             max_targets
           ),
           plan = COALESCE(
             (
-              SELECT plan
-              FROM star_monitor_grants
-              WHERE user_id = star_monitor_entitlements.user_id
-                AND bundle_id <> NEW.bundle_id
-                AND refunded_at IS NULL
-              ORDER BY granted_at DESC, bundle_id DESC
+              SELECT g.plan
+              FROM star_monitor_grants g
+              JOIN star_payments p ON p.bundle_id = g.bundle_id
+              WHERE g.user_id = star_monitor_entitlements.user_id
+                AND g.bundle_id <> NEW.bundle_id
+                AND g.refunded_at IS NULL
+              ORDER BY p.paid_at DESC, p.rowid DESC
               LIMIT 1
             ),
             plan
           ),
           last_bundle_id = COALESCE(
             (
-              SELECT bundle_id
-              FROM star_monitor_grants
-              WHERE user_id = star_monitor_entitlements.user_id
-                AND bundle_id <> NEW.bundle_id
-                AND refunded_at IS NULL
-              ORDER BY granted_at DESC, bundle_id DESC
+              SELECT g.bundle_id
+              FROM star_monitor_grants g
+              JOIN star_payments p ON p.bundle_id = g.bundle_id
+              WHERE g.user_id = star_monitor_entitlements.user_id
+                AND g.bundle_id <> NEW.bundle_id
+                AND g.refunded_at IS NULL
+              ORDER BY p.paid_at DESC, p.rowid DESC
               LIMIT 1
             ),
             ''
@@ -466,6 +469,72 @@ export function getStarsMonitoringEntitlement(userId: string):
     maxTargets: Number(row.max_targets),
     plan: row.plan,
   };
+}
+
+
+export function reconcileStarsMonitorLimit(userId: string): number {
+  const entitlement = getStarsMonitoringEntitlement(userId);
+  if (!entitlement) return 0;
+
+  const premium = db.prepare(
+    `SELECT 1
+     FROM users
+     WHERE telegram_id = ?
+       AND COALESCE(is_premium, 0) = 1
+       AND (premium_until IS NULL OR premium_until >= ?)
+     LIMIT 1`,
+  ).get(userId, nowSeconds());
+  if (premium) return 0;
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(
+      `INSERT OR REPLACE INTO star_monitor_delete_authorizations (
+         telegram_id, target_id, authorized_at
+       )
+       SELECT m.telegram_id, m.target_id, ?
+       FROM monitors m
+       WHERE m.telegram_id = ?
+         AND (
+           SELECT COUNT(*)
+           FROM monitors earlier
+           WHERE earlier.telegram_id = m.telegram_id
+             AND (
+               COALESCE(earlier.created_at, 0) < COALESCE(m.created_at, 0)
+               OR (
+                 COALESCE(earlier.created_at, 0) = COALESCE(m.created_at, 0)
+                 AND earlier.id <= m.id
+               )
+             )
+         ) > ?`,
+    ).run(nowSeconds(), userId, entitlement.maxTargets);
+
+    const removed = db.prepare(
+      `DELETE FROM monitors
+       WHERE telegram_id = ?
+         AND (
+           SELECT COUNT(*)
+           FROM monitors earlier
+           WHERE earlier.telegram_id = monitors.telegram_id
+             AND (
+               COALESCE(earlier.created_at, 0) < COALESCE(monitors.created_at, 0)
+               OR (
+                 COALESCE(earlier.created_at, 0) = COALESCE(monitors.created_at, 0)
+                 AND earlier.id <= monitors.id
+               )
+             )
+         ) > ?`,
+    ).run(userId, entitlement.maxTargets);
+
+    db.prepare(
+      'DELETE FROM star_monitor_delete_authorizations WHERE telegram_id = ?',
+    ).run(userId);
+    db.exec('COMMIT');
+    return Number(removed.changes ?? 0);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function authorizeStarsMonitorRemoval(

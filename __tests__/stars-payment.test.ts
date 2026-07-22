@@ -43,6 +43,7 @@ jest.mock('../src/config/env-config', () => ({
 
 import { db } from '../src/db';
 import {
+  finalizeDeferredStarsRefund,
   getPaymentMode,
   getStarsPrice,
   isStarsBundleDeliverable,
@@ -235,7 +236,11 @@ describe('Telegram Stars result unlocks', () => {
 
     expect(refunded).toBe(false);
     expect(bot.telegram.callApi).not.toHaveBeenCalledWith('refundStarPayment', expect.anything());
-    expect((db.prepare(`SELECT status FROM star_result_bundles WHERE id = 'refund-processing-job'`).get() as any).status).toBe('DELIVERING');
+    expect((db.prepare(`SELECT status FROM star_result_bundles WHERE id = 'refund-processing-job'`).get() as any).status).toBe('REFUND_PENDING');
+
+    db.prepare("UPDATE download_queue SET status = 'done' WHERE json_extract(task_details, '$.starsBundleId') = 'refund-processing-job'").run();
+    expect(await finalizeDeferredStarsRefund('refund-processing-job')).toBe(true);
+    expect((db.prepare(`SELECT status FROM star_result_bundles WHERE id = 'refund-processing-job'`).get() as any).status).toBe('REFUNDED');
   });
 
   test('delivery cannot settle after refund fencing begins', () => {

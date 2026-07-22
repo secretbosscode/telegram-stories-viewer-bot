@@ -34,6 +34,17 @@ const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v4';
 const syncedChats = new Set<string>();
 let registered = false;
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bot_command_scopes (
+    chat_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    locale TEXT NOT NULL DEFAULT 'en',
+    is_group INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
+  );
+`);
+
 function getStarsBaseCommands(locale: string) {
   return [
     { command: 'start', description: t(locale, 'cmd.start') },
@@ -78,6 +89,61 @@ function getAdminCommands(locale: string) {
   ];
 }
 
+function getLegacyBaseCommands(locale: string) {
+  return [
+    { command: 'start', description: t(locale, 'cmd.start') },
+    { command: 'help', description: t(locale, 'cmd.help') },
+    { command: 'premium', description: t(locale, 'cmd.premium') },
+    { command: 'upgrade', description: t(locale, 'cmd.upgrade') },
+    { command: 'freetrial', description: t(locale, 'cmd.freetrial') },
+    { command: 'verify', description: t(locale, 'cmd.verify') },
+    { command: 'queue', description: t(locale, 'cmd.queue') },
+    { command: 'invite', description: t(locale, 'cmd.invite') },
+    { command: 'profile', description: t(locale, 'cmd.profile') },
+    { command: 'bugs', description: t(locale, 'cmd.bugs') },
+  ];
+}
+
+function getLegacyPremiumCommands(locale: string) {
+  return [
+    { command: 'monitor', description: t(locale, 'cmd.monitor') },
+    { command: 'unmonitor', description: t(locale, 'cmd.unmonitor') },
+    { command: 'archive', description: t(locale, 'cmd.archive') },
+  ];
+}
+
+function getLegacyAdminCommands(locale: string) {
+  return [
+    { command: 'setpremium', description: t(locale, 'cmd.setpremium') },
+    { command: 'unsetpremium', description: t(locale, 'cmd.unsetpremium') },
+    { command: 'ispremium', description: t(locale, 'cmd.ispremium') },
+    { command: 'listpremium', description: t(locale, 'cmd.listpremium') },
+    { command: 'users', description: t(locale, 'cmd.users') },
+    { command: 'history', description: t(locale, 'cmd.history') },
+    { command: 'block', description: t(locale, 'cmd.block') },
+    { command: 'unblock', description: t(locale, 'cmd.unblock') },
+    { command: 'blocklist', description: t(locale, 'cmd.blocklist') },
+    { command: 'status', description: t(locale, 'cmd.status') },
+    { command: 'restart', description: t(locale, 'cmd.restart') },
+    { command: 'flush', description: t(locale, 'cmd.flush') },
+    { command: 'forcemonitor', description: t(locale, 'cmd.forcemonitor') },
+    { command: 'stopmonitor', description: t(locale, 'cmd.stopmonitor') },
+    { command: 'globalstories', description: t(locale, 'cmd.globalstories') },
+    { command: 'welcome', description: t(locale, 'cmd.welcome') },
+    { command: 'bugreport', description: t(locale, 'cmd.listbugs') },
+  ];
+}
+
+function buildLegacyCommands(locale: string, userId?: string) {
+  const commands = [...getLegacyBaseCommands(locale)];
+  const admin = userId === String(BOT_ADMIN_ID);
+  if (admin || (userId && isUserPremium(userId))) {
+    commands.push(...getLegacyPremiumCommands(locale));
+  }
+  if (admin) commands.push(...getLegacyAdminCommands(locale));
+  return commands;
+}
+
 function buildCommands(locale: string, userId?: string) {
   const commands = [...getStarsBaseCommands(locale)];
   const admin = userId === String(BOT_ADMIN_ID);
@@ -109,12 +175,26 @@ async function syncChatCommands(
 
   // Private chats can use a chat scope. Group and supergroup menus must use a
   // member scope so one admin/Premium user cannot replace everyone else's menu.
-  const scope: any = chatId === userId
-    ? { type: 'chat', chat_id: numericChatId }
-    : { type: 'chat_member', chat_id: numericChatId, user_id: numericUserId };
+  const isGroup = chatId !== userId;
+  const scope: any = isGroup
+    ? { type: 'chat_member', chat_id: numericChatId, user_id: numericUserId }
+    : { type: 'chat', chat_id: numericChatId };
 
   try {
+    if (isGroup) {
+      await (bot.telegram as any).callApi('deleteMyCommands', {
+        scope: { type: 'chat', chat_id: numericChatId },
+      }).catch(() => {});
+    }
     await bot.telegram.setMyCommands(buildCommands(locale, userId), { scope });
+    db.prepare(
+      `INSERT INTO bot_command_scopes (chat_id, user_id, locale, is_group, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(chat_id, user_id) DO UPDATE SET
+         locale = excluded.locale,
+         is_group = excluded.is_group,
+         updated_at = excluded.updated_at`,
+    ).run(chatId, userId, locale || 'en', isGroup ? 1 : 0, Math.floor(Date.now() / 1000));
     syncedChats.add(cacheKey);
   } catch (error) {
     console.warn(`[Stars] Could not update command menu for ${chatId}/${userId}:`, error);
@@ -369,6 +449,17 @@ async function migrateExistingCommandScopes(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
+  const trackedMembers = db.prepare(
+    `SELECT chat_id, user_id, locale
+     FROM bot_command_scopes
+     WHERE is_group = 1
+     ORDER BY updated_at ASC`,
+  ).all() as { chat_id: string; user_id: string; locale?: string }[];
+  for (const member of trackedMembers) {
+    await syncChatCommands(bot, member.chat_id, member.user_id, member.locale || 'en', true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
   const users = db.prepare(
     'SELECT telegram_id, language FROM users ORDER BY created_at ASC',
   ).all() as { telegram_id: string; language?: string }[];
@@ -391,6 +482,59 @@ function looksLikeStoryRequest(text: string): boolean {
     /^https?:\/\//i.test(text) ||
     text.includes('t.me/')
   );
+}
+
+export async function synchronizeLegacyCommandMenus(
+  bot: Telegraf<IContextBot>,
+): Promise<void> {
+  syncedChats.clear();
+  await bot.telegram.setMyCommands(getLegacyBaseCommands('en'));
+  await bot.telegram.setMyCommands(
+    buildLegacyCommands('en', String(BOT_ADMIN_ID)),
+    { scope: { type: 'chat', chat_id: BOT_ADMIN_ID } },
+  );
+
+  const trackedScopes = db.prepare(
+    `SELECT chat_id, user_id, locale, is_group
+     FROM bot_command_scopes
+     ORDER BY updated_at ASC`,
+  ).all() as { chat_id: string; user_id: string; locale?: string; is_group: number }[];
+
+  const clearedGroups = new Set<string>();
+  for (const tracked of trackedScopes) {
+    const chatId = Number(tracked.chat_id);
+    const userId = Number(tracked.user_id);
+    if (!Number.isFinite(chatId) || !Number.isFinite(userId)) continue;
+    if (tracked.is_group) {
+      if (!clearedGroups.has(tracked.chat_id)) {
+        await (bot.telegram as any).callApi('deleteMyCommands', {
+          scope: { type: 'chat', chat_id: chatId },
+        }).catch(() => {});
+        clearedGroups.add(tracked.chat_id);
+      }
+      await bot.telegram.setMyCommands(
+        buildLegacyCommands(tracked.locale || 'en', tracked.user_id),
+        { scope: { type: 'chat_member', chat_id: chatId, user_id: userId } },
+      ).catch(() => {});
+    } else {
+      await bot.telegram.setMyCommands(
+        buildLegacyCommands(tracked.locale || 'en', tracked.user_id),
+        { scope: { type: 'chat', chat_id: chatId } },
+      ).catch(() => {});
+    }
+  }
+
+  const users = db.prepare(
+    'SELECT telegram_id, language FROM users ORDER BY created_at ASC',
+  ).all() as { telegram_id: string; language?: string }[];
+  for (const user of users) {
+    const chatId = Number(user.telegram_id);
+    if (!Number.isFinite(chatId)) continue;
+    await bot.telegram.setMyCommands(
+      buildLegacyCommands(user.language || 'en', user.telegram_id),
+      { scope: { type: 'chat', chat_id: chatId } },
+    ).catch(() => {});
+  }
 }
 
 export async function synchronizeStarsCommandMenus(
