@@ -1,5 +1,6 @@
 import fs from 'fs';
 
+// This file anchors the exact-head regression contract used by the final review gate.
 const source = (path: string) => fs.readFileSync(path, 'utf8');
 
 describe('PR 310 final review regressions', () => {
