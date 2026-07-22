@@ -33,17 +33,16 @@ export const USERBOT_PHONE_NUMBER = getEnvVar('USERBOT_PHONE_NUMBER');
 export const USERBOT_PASSWORD = process.env.USERBOT_PASSWORD || parsed?.USERBOT_PASSWORD || '';
 export const USERBOT_PHONE_CODE = process.env.USERBOT_PHONE_CODE || parsed?.USERBOT_PHONE_CODE || '';
 
-// payments
+// Legacy BTC payments. These values remain optional so an existing deployment
+// can start directly in Telegram Stars mode without changing its environment.
 export const BTC_XPUB = process.env.BTC_XPUB || parsed?.BTC_XPUB || '';
 export const BTC_YPUB = process.env.BTC_YPUB || parsed?.BTC_YPUB || '';
 export const BTC_ZPUB = process.env.BTC_ZPUB || parsed?.BTC_ZPUB || '';
 export const BTC_WALLET_ADDRESS =
   process.env.BTC_WALLET_ADDRESS || parsed?.BTC_WALLET_ADDRESS || '';
-if (!BTC_WALLET_ADDRESS && !BTC_XPUB && !BTC_YPUB && !BTC_ZPUB) {
-  throw new Error(
-    'Either BTC_WALLET_ADDRESS, BTC_XPUB, BTC_YPUB or BTC_ZPUB is required',
-  );
-}
+export const BTC_CONFIGURED = Boolean(
+  BTC_WALLET_ADDRESS || BTC_XPUB || BTC_YPUB || BTC_ZPUB,
+);
 
 // Base directory for all runtime data inside the container. Docker mounts a
 // persistent host directory here.
