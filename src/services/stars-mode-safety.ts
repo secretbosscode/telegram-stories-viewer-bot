@@ -35,7 +35,6 @@ function getSetting(key: string): string | undefined {
 function initializeSafetySchema(): void {
   const now = nowSeconds();
 
-  // Recreate these triggers so upgrades always receive the latest safety rules.
   db.exec(`
     DROP TRIGGER IF EXISTS bind_star_bundle_requesting_user;
     DROP TRIGGER IF EXISTS fulfill_star_monitor_purchase;
@@ -108,7 +107,10 @@ function initializeSafetySchema(): void {
             WHEN 'monitor_week' THEN ${WEEK_SECONDS}
             ELSE ${MONTH_SECONDS}
           END,
-        3,
+        CASE
+          WHEN NEW.result_count BETWEEN 1 AND 20 THEN NEW.result_count
+          ELSE 3
+        END,
         NEW.request_kind,
         NEW.id,
         CAST(strftime('%s','now') AS INTEGER)
@@ -124,7 +126,10 @@ function initializeSafetySchema(): void {
             WHEN 'monitor_week' THEN ${WEEK_SECONDS}
             ELSE ${MONTH_SECONDS}
           END,
-        max_targets = 3,
+        max_targets = CASE
+          WHEN NEW.result_count BETWEEN 1 AND 20 THEN NEW.result_count
+          ELSE 3
+        END,
         plan = NEW.request_kind,
         last_bundle_id = NEW.id,
         updated_at = CAST(strftime('%s','now') AS INTEGER);
@@ -267,6 +272,17 @@ export function getStarsMonitorPrice(plan: 'week' | 'month'): number {
   const fallback = plan === 'week' ? 199 : 499;
   const value = Number(getSetting(key));
   return Number.isInteger(value) && value > 0 && value <= 10_000 ? value : fallback;
+}
+
+export function setStarsMonitorPrice(
+  plan: 'week' | 'month',
+  price: number,
+  changedBy: string,
+): boolean {
+  if (!Number.isInteger(price) || price < 1 || price > 10_000) return false;
+  const key = plan === 'week' ? 'stars_monitor_week_price' : 'stars_monitor_month_price';
+  setSetting(key, String(price), changedBy);
+  return true;
 }
 
 export function getStarsMonitorTargetLimit(): number {
