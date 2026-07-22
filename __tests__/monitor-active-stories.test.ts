@@ -20,37 +20,36 @@ import { checkSingleMonitor } from '../src/services/monitor-service';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
 
-test('fetches pinned stories once and avoids resending on retries', async () => {
-  const row = addMonitor('user', '123', 'tester', '999', null);
-
-  const invoke = jest.fn(async (query: any) => {
+function createInvoke(active: any[], pinned: any[] = []) {
+  return jest.fn(async (query: any) => {
     if (query instanceof Api.users.GetUsers) {
       return [{ id: bigInt(123), accessHash: bigInt(999), username: 'tester' }];
     }
     if (query instanceof Api.stories.GetPeerStories) {
-      return {
-        stories: {
-          stories: [{ id: 1, date: 10, expireDate: 2000000000 }],
-        },
-      } as any;
+      return { stories: { stories: active } } as any;
     }
     if (query instanceof Api.stories.GetPinnedStories) {
-      return {
-        stories: [{ id: 2, date: 20 }],
-      } as any;
+      return { stories: pinned } as any;
     }
     if (query instanceof Api.photos.GetUserPhotos) {
       return { photos: [] } as any;
     }
     return {};
   });
+}
+
+test('fetches pinned stories once and avoids resending on retries', async () => {
+  const row = addMonitor('user', '123', 'tester', '999', null);
+  const invoke = createInvoke(
+    [{ id: 1, date: 10, expireDate: 2000000000 }],
+    [{ id: 2, date: 20 }],
+  );
 
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
 
   const { sendActiveStories } = require('../src/controllers/send-active-stories');
   const sendActiveStoriesMock = sendActiveStories as jest.Mock;
-
-  sendActiveStoriesMock.mockClear();
+  sendActiveStoriesMock.mockReset().mockResolvedValue(undefined);
 
   await checkSingleMonitor(row.id);
 
@@ -62,6 +61,7 @@ test('fetches pinned stories once and avoids resending on retries', async () => 
   expect(pinnedCall[0].stories).toEqual([
     { id: 2, date: 20 },
   ]);
+  expect(listSentStoryKeys(row.id, 'active')).toContain('1:10');
   expect(listSentStoryKeys(row.id, 'pinned')).toContain('2:20');
 
   sendActiveStoriesMock.mockClear();
@@ -79,35 +79,16 @@ test('fetches pinned stories once and avoids resending on retries', async () => 
 
 test('does not resend active story when pinned entry uses the same key', async () => {
   const row = addMonitor('user', '456', 'tester', '999', null);
-
-  const invoke = jest.fn(async (query: any) => {
-    if (query instanceof Api.users.GetUsers) {
-      return [{ id: bigInt(123), accessHash: bigInt(999), username: 'tester' }];
-    }
-    if (query instanceof Api.stories.GetPeerStories) {
-      return {
-        stories: {
-          stories: [{ id: 1, date: 10, expireDate: 2000000000 }],
-        },
-      } as any;
-    }
-    if (query instanceof Api.stories.GetPinnedStories) {
-      return {
-        stories: [{ id: 1, date: 10 }],
-      } as any;
-    }
-    if (query instanceof Api.photos.GetUserPhotos) {
-      return { photos: [] } as any;
-    }
-    return {};
-  });
+  const invoke = createInvoke(
+    [{ id: 1, date: 10, expireDate: 2000000000 }],
+    [{ id: 1, date: 10 }],
+  );
 
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
 
   const { sendActiveStories } = require('../src/controllers/send-active-stories');
   const sendActiveStoriesMock = sendActiveStories as jest.Mock;
-
-  sendActiveStoriesMock.mockClear();
+  sendActiveStoriesMock.mockReset().mockResolvedValue(undefined);
 
   await checkSingleMonitor(row.id);
 
@@ -117,7 +98,6 @@ test('does not resend active story when pinned entry uses the same key', async (
     { id: 1, date: 10, expireDate: 2000000000 },
   ]);
   expect(listSentStoryKeys(row.id, 'active')).toContain('1:10');
-  expect(listSentStoryKeys(row.id, 'pinned')).toContain('1:10');
 
   sendActiveStoriesMock.mockClear();
 
@@ -126,4 +106,28 @@ test('does not resend active story when pinned entry uses the same key', async (
   expect(sendActiveStoriesMock).not.toHaveBeenCalled();
 
   removeMonitor('user', '456');
+});
+
+test('does not persist a story key until delivery succeeds', async () => {
+  const row = addMonitor('user', '789', 'tester', '999', null);
+  const invoke = createInvoke([
+    { id: 9, date: 90, expireDate: 2000000000 },
+  ]);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  const { sendActiveStories } = require('../src/controllers/send-active-stories');
+  const sendActiveStoriesMock = sendActiveStories as jest.Mock;
+  sendActiveStoriesMock
+    .mockReset()
+    .mockRejectedValueOnce(new Error('Telegram unavailable'))
+    .mockResolvedValueOnce(undefined);
+
+  await checkSingleMonitor(row.id);
+  expect(listSentStoryKeys(row.id, 'active')).not.toContain('9:90');
+
+  await checkSingleMonitor(row.id);
+  expect(sendActiveStoriesMock).toHaveBeenCalledTimes(2);
+  expect(listSentStoryKeys(row.id, 'active')).toContain('9:90');
+
+  removeMonitor('user', '789');
 });
