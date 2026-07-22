@@ -29,10 +29,10 @@ import {
   getArchivedStoriesFx,
 } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
+import { isUserPremium } from 'services/premium-service';
 
-// How long we allow a job to run before considering it failed
-export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for regular jobs
-export const PAGINATED_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000; // half the time for paginated requests
+export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000;
+export const PAGINATED_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
 
 const COOLDOWN_HOURS = { free: 12, premium: 2, admin: 0 };
 
@@ -40,6 +40,20 @@ function formatEta(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}m ${s}s`;
+}
+
+function getRequesterId(task: UserInfo, fallbackChatId: string): string {
+  return String(task.user?.id ?? fallbackChatId);
+}
+
+function restoreRequesterEntitlement(task: UserInfo, fallbackChatId: string): UserInfo {
+  const requesterId = getRequesterId(task, fallbackChatId);
+  return {
+    ...task,
+    isPremium:
+      requesterId === String(BOT_ADMIN_ID) ||
+      isUserPremium(requesterId),
+  };
 }
 
 export async function getQueueStatusForUser(telegram_id: string, locale = 'en'): Promise<string> {
@@ -59,8 +73,10 @@ function getCooldownHours({ isPremium, isAdmin }: { isPremium?: boolean; isAdmin
 
 export async function handleNewTask(user: UserInfo) {
   const { chatId: telegram_id, link: target_username, nextStoriesIds } = user;
-  const is_admin = telegram_id === BOT_ADMIN_ID.toString();
-  const cooldown = getCooldownHours({ isPremium: user.isPremium, isAdmin: is_admin });
+  const requesterId = getRequesterId(user, telegram_id);
+  const is_admin = requesterId === BOT_ADMIN_ID.toString();
+  const isPremium = is_admin || isUserPremium(requesterId) || Boolean(user.isPremium);
+  const cooldown = getCooldownHours({ isPremium, isAdmin: is_admin });
 
   try {
     if (user.storyRequestType === 'global' && !is_admin) {
@@ -116,13 +132,14 @@ export async function handleNewTask(user: UserInfo) {
       await sendTemporaryMessage(
         bot,
         telegram_id,
-        t(user.locale, 'queue.already')
+        t(user.locale, 'queue.already'),
       );
       return;
     }
 
     const jobDetails: UserInfo = {
       ...user,
+      isPremium,
       storyRequestType: Array.isArray(nextStoriesIds) && nextStoriesIds.length > 0
         ? 'paginated'
         : user.storyRequestType,
@@ -143,11 +160,11 @@ export async function handleNewTask(user: UserInfo) {
       telegram_id,
       t(user.locale, 'queue.enqueued', { user: target_username, position, eta: formatEta(eta) }),
     );
-    
+
     setImmediate(processQueue);
-  } catch(e: any) {
-    console.error('[handleNewTask] Error during task validation/enqueueing:', e);
-      await bot.telegram.sendMessage(telegram_id, t(user.locale, 'queue.enqueueError'));
+  } catch (error: any) {
+    console.error('[handleNewTask] Error during task validation/enqueueing:', error);
+    await bot.telegram.sendMessage(telegram_id, t(user.locale, 'queue.enqueueError'));
   }
 }
 
@@ -159,7 +176,7 @@ export async function processQueue() {
   }
 
   const job: DownloadQueueItem | null = await getNextQueueItemFx();
-  
+
   if (!job) {
     console.log('[QueueManager] Queue is empty. Processor is idle.');
     return;
@@ -168,14 +185,24 @@ export async function processQueue() {
   isProcessing = true;
   await markProcessingFx(job.id);
 
-  const currentTask: UserInfo = { ...job.task, chatId: job.chatId, instanceId: job.id };
+  // getNextQueueItem historically refreshes Premium from the queue chat ID.
+  // In a group that is the negative group ID, not the requesting member. Restore
+  // authorization from the preserved requester before discovery/payment checks.
+  const currentTask: UserInfo = restoreRequesterEntitlement(
+    { ...job.task, chatId: job.chatId, instanceId: job.id },
+    job.chatId,
+  );
+  const requesterId = getRequesterId(currentTask, job.chatId);
 
-  if (currentTask.storyRequestType === 'global' && job.chatId !== BOT_ADMIN_ID.toString()) {
+  if (
+    currentTask.storyRequestType === 'global' &&
+    requesterId !== BOT_ADMIN_ID.toString()
+  ) {
     await markErrorFx({ jobId: job.id, message: 'Admin only' });
     await sendTemporaryMessage(
       bot,
       job.chatId,
-      t(currentTask.locale, 'global.adminOnly')
+      t(currentTask.locale, 'global.adminOnly'),
     );
     isProcessing = false;
     await cleanupQueueFx();
@@ -195,7 +222,7 @@ export async function processQueue() {
     await sendTemporaryMessage(
       bot,
       job.chatId,
-      t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link })
+      t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link }),
     );
     isProcessing = false;
     setImmediate(processQueue);
@@ -229,7 +256,9 @@ export async function processQueue() {
       taskForSend = {
         ...currentTask,
         globalStoriesState: typeof globalStoriesState === 'string' ? globalStoriesState : undefined,
-        globalStoriesHasMore: typeof globalStoriesHasMore === 'boolean' ? globalStoriesHasMore : Boolean(globalStoriesHasMore),
+        globalStoriesHasMore: typeof globalStoriesHasMore === 'boolean'
+          ? globalStoriesHasMore
+          : Boolean(globalStoriesHasMore),
       };
     }
 
@@ -239,17 +268,16 @@ export async function processQueue() {
       await markDoneFx(job.id);
       console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
     }
-
-  } catch (err: any) {
+  } catch (error: any) {
     if (!timedOut) {
-      console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
-      await markErrorFx({ jobId: job.id, message: err?.message || 'Unknown processing error' });
+      console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, error);
+      await markErrorFx({ jobId: job.id, message: error?.message || 'Unknown processing error' });
       await bot.telegram.sendMessage(
         job.chatId,
         t(currentTask.locale, 'queue.processingError', {
           user: currentTask.link,
-          reason: err?.message || 'Unknown error',
-        })
+          reason: error?.message || 'Unknown error',
+        }),
       );
     }
   } finally {
