@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pr310-review-round-fixes-v4
+  group: pr310-review-round-fixes-v5
   cancel-in-progress: true
 
 jobs:
@@ -71,14 +71,25 @@ jobs:
         run: npm run build
 
       - name: Run full Jest suite
-        run: timeout 360s npm test -- --runInBand --forceExit
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 360s npm test -- --runInBand --forceExit 2>&1 | tee jest.log
+
+      - name: Upload Jest diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr310-jest-log-${{ github.run_id }}
+          path: jest.log
+          if-no-files-found: warn
 
       - name: Commit validated fixes
         shell: bash
         run: |
           rm -f .github/workflows/pr310-review-round-fixes.yml
           rm -f scripts/pr310-review-round-fixes.py
-          rm -f patch.log
+          rm -f patch.log jest.log
           git config user.name "chatgpt-codex-connector[bot]"
           git config user.email "199175422+chatgpt-codex-connector[bot]@users.noreply.github.com"
           git add -A
