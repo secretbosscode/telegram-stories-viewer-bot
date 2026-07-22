@@ -17,13 +17,13 @@ jest.mock('lib', () => ({
 const notifyAdmin = jest.fn();
 jest.mock('controllers/send-message', () => ({ notifyAdmin }));
 
-const downloadStories = jest.fn();
+const downloadStories: any = jest.fn();
 jest.mock('controllers/download-stories', () => ({
   downloadStories,
   mapStories: jest.fn((stories: any) => stories),
 }));
 
-const sendStoryFallbacks = jest.fn();
+const sendStoryFallbacks: any = jest.fn();
 jest.mock('controllers/story-fallback', () => ({ sendStoryFallbacks }));
 
 jest.mock('config/userbot', () => ({
