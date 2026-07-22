@@ -8,6 +8,10 @@ on:
     branches:
       - agent/stars-result-unlocks
 
+concurrency:
+  group: pr-validation-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
