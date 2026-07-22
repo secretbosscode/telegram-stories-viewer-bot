@@ -39,9 +39,7 @@ export const MAX_MONITORS_PER_USER = 5;
 const USERNAME_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 const usernameRefreshTimes = new Map<number, number>();
 
-// Track when the next monitor cycle is scheduled
 let nextMonitorCheckAt: number | null = null;
-// Store the timeout handle for the monitor loop
 let monitorTimer: NodeJS.Timeout | null = null;
 
 function scheduleNextMonitorCheck() {
@@ -53,12 +51,10 @@ function scheduleNextMonitorCheck() {
   monitorTimer = setTimeout(async () => {
     try {
       await forceCheckMonitors();
-    } catch (err) {
-      console.error('[Monitor] Scheduled check error:', err);
+    } catch (error) {
+      console.error('[Monitor] Scheduled check error:', error);
     }
   }, intervalMs);
-  // The scheduler must not keep an otherwise finished process alive during
-  // clean container shutdowns, one-off scripts, or the Jest suite.
   monitorTimer.unref?.();
 }
 
@@ -66,28 +62,28 @@ export function getNextMonitorCheck(): number | null {
   return nextMonitorCheckAt;
 }
 
-export function formatMonitorTarget(m: MonitorRow): string {
-  if (m.target_username) {
-    return m.target_username.startsWith('+')
-      ? m.target_username
-      : `@${m.target_username}`;
+export function formatMonitorTarget(monitor: MonitorRow): string {
+  if (monitor.target_username) {
+    return monitor.target_username.startsWith('+')
+      ? monitor.target_username
+      : `@${monitor.target_username}`;
   }
-  return m.target_id;
+  return monitor.target_id;
 }
 
 async function notifyUsernameChange(
-  m: MonitorRow,
+  monitor: MonitorRow,
   newUsername: string,
 ): Promise<void> {
-  const oldUsername = m.target_username;
-  updateMonitorUsername(m.id, newUsername);
-  m.target_username = newUsername;
+  const oldUsername = monitor.target_username;
+  updateMonitorUsername(monitor.id, newUsername);
+  monitor.target_username = newUsername;
   if (!oldUsername) return;
-  const lang = findUserById(m.telegram_id)?.language;
-  const format = (u: string) => (u.startsWith('+') ? u : `@${u}`);
+  const language = findUserById(monitor.telegram_id)?.language;
+  const format = (username: string) => (username.startsWith('+') ? username : `@${username}`);
   await bot.telegram.sendMessage(
-    m.telegram_id,
-    t(lang, 'monitor.usernameChanged', {
+    monitor.telegram_id,
+    t(language, 'monitor.usernameChanged', {
       old: format(oldUsername),
       user: format(newUsername),
     }),
@@ -117,10 +113,6 @@ export async function removeProfileMonitor(
   const existing = findMonitorByUsername(telegramId, username);
   if (!existing) return;
 
-  // A user may retain both legacy Premium and a paid Stars monitoring grant.
-  // Always authorize an explicit user-requested removal so the entitlement
-  // preservation trigger cannot turn a successful-looking /unmonitor into a
-  // no-op merely because the legacy Premium handler called this service.
   const hasStarsEntitlement = Boolean(getStarsMonitoringEntitlement(telegramId));
   if (hasStarsEntitlement) {
     authorizeStarsMonitorRemoval(telegramId, existing.target_id);
@@ -167,17 +159,17 @@ export async function forceCheckMonitors(): Promise<number> {
   const monitors = listAllMonitors();
   const premiumCache = new Map<string, boolean>();
   try {
-    for (const m of monitors) {
-      let premium = premiumCache.get(m.telegram_id);
+    for (const monitor of monitors) {
+      let premium = premiumCache.get(monitor.telegram_id);
       if (premium === undefined) {
-        premium = isUserPremium(m.telegram_id);
-        premiumCache.set(m.telegram_id, premium);
+        premium = isUserPremium(monitor.telegram_id);
+        premiumCache.set(monitor.telegram_id, premium);
       }
-      if (!premium && Number(m.telegram_id) !== BOT_ADMIN_ID) {
-        removeMonitor(m.telegram_id, m.target_id);
+      if (!premium && Number(monitor.telegram_id) !== BOT_ADMIN_ID) {
+        removeMonitor(monitor.telegram_id, monitor.target_id);
         continue;
       }
-      await checkSingleMonitor(m.id);
+      await checkSingleMonitor(monitor.id);
     }
   } finally {
     scheduleNextMonitorCheck();
@@ -185,137 +177,177 @@ export async function forceCheckMonitors(): Promise<number> {
   return monitors.length;
 }
 
-export async function refreshMonitorUsername(m: MonitorRow): Promise<void> {
-  const last = usernameRefreshTimes.get(m.id) || 0;
+export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void> {
+  const last = usernameRefreshTimes.get(monitor.id) || 0;
   if (Date.now() - last < USERNAME_REFRESH_INTERVAL_MS) return;
-  usernameRefreshTimes.set(m.id, Date.now());
+  usernameRefreshTimes.set(monitor.id, Date.now());
 
   try {
-    if (m.target_access_hash) {
+    if (monitor.target_access_hash) {
       const client = await Userbot.getInstance();
-      const res = await client.invoke(
+      const response = await client.invoke(
         new Api.users.GetUsers({
           id: [
             new Api.InputUser({
-              userId: bigInt(m.target_id),
-              accessHash: bigInt(m.target_access_hash),
+              userId: bigInt(monitor.target_id),
+              accessHash: bigInt(monitor.target_access_hash),
             }),
           ],
         }),
       );
-      const user = Array.isArray(res) ? res[0] : res;
+      const user = Array.isArray(response) ? response[0] : response;
       if (user) {
         const username = (user as any).username || null;
         const accessHash = (user as any).accessHash
           ? String((user as any).accessHash)
           : null;
-        if (username && username !== m.target_username) {
-          await notifyUsernameChange(m, username);
+        if (username && username !== monitor.target_username) {
+          await notifyUsernameChange(monitor, username);
         }
-        if (accessHash && accessHash !== m.target_access_hash) {
-          updateMonitorAccessHash(m.id, accessHash);
-          m.target_access_hash = accessHash;
+        if (accessHash && accessHash !== monitor.target_access_hash) {
+          updateMonitorAccessHash(monitor.id, accessHash);
+          monitor.target_access_hash = accessHash;
         }
       }
       return;
     }
 
     const entity = await getEntityWithTempContact(
-      m.target_username || m.target_id,
+      monitor.target_username || monitor.target_id,
     );
     const username = (entity as any).username || null;
-    const idStr = String((entity as any).id);
+    const idString = String((entity as any).id);
     const accessHash = (entity as any).accessHash
       ? String((entity as any).accessHash)
       : null;
 
-    if (username && username !== m.target_username) {
-      await notifyUsernameChange(m, username);
+    if (username && username !== monitor.target_username) {
+      await notifyUsernameChange(monitor, username);
     }
-    if (idStr !== m.target_id) {
-      updateMonitorTarget(m.id, idStr);
-      m.target_id = idStr;
+    if (idString !== monitor.target_id) {
+      updateMonitorTarget(monitor.id, idString);
+      monitor.target_id = idString;
     }
-    if (accessHash && accessHash !== m.target_access_hash) {
-      updateMonitorAccessHash(m.id, accessHash);
-      m.target_access_hash = accessHash;
+    if (accessHash && accessHash !== monitor.target_access_hash) {
+      updateMonitorAccessHash(monitor.id, accessHash);
+      monitor.target_access_hash = accessHash;
     }
-  } catch (err) {
+  } catch (error) {
     console.error(
-      `[Monitor] Error refreshing username for ${formatMonitorTarget(m)}:`,
-      err,
+      `[Monitor] Error refreshing username for ${formatMonitorTarget(monitor)}:`,
+      error,
+    );
+  }
+}
+
+function storyKey(story: any): string {
+  return `${story.id}:${story.date}`;
+}
+
+function recordDeliveredStories(
+  monitorId: number,
+  stories: any[],
+  deliveredIds: Set<number>,
+  type: 'active' | 'pinned',
+): void {
+  for (const story of stories) {
+    if (!deliveredIds.has(Number(story.id))) continue;
+    markStorySent(
+      monitorId,
+      story.id,
+      story.date,
+      type === 'active' ? story.expireDate : story.expireDate ?? null,
+      type,
     );
   }
 }
 
 export async function checkSingleMonitor(id: number): Promise<void> {
-  const m = getMonitor(id);
-  if (!m) return;
-  await refreshMonitorUsername(m);
+  const monitor = getMonitor(id);
+  if (!monitor) return;
+  await refreshMonitorUsername(monitor);
 
   try {
-    const targetLabel = formatMonitorTarget(m);
+    const targetLabel = formatMonitorTarget(monitor);
     console.log(
-      `[Monitor] Checking ${targetLabel} for subscriber ${m.telegram_id}.`,
+      `[Monitor] Checking ${targetLabel} for subscriber ${monitor.telegram_id}.`,
     );
     const client = await Userbot.getInstance();
     await ensureStealthMode();
     const peer = new Api.InputUser({
-      userId: bigInt(m.target_id),
-      accessHash: m.target_access_hash
-        ? bigInt(m.target_access_hash)
+      userId: bigInt(monitor.target_id),
+      accessHash: monitor.target_access_hash
+        ? bigInt(monitor.target_access_hash)
         : bigInt.zero,
     });
 
-    const [res, pinnedRes] = await Promise.all([
+    const [response, pinnedResponse] = await Promise.all([
       client.invoke(new Api.stories.GetPeerStories({ peer })),
       client.invoke(new Api.stories.GetPinnedStories({ peer })),
     ]);
 
-    const activeStories = (res as any)?.stories?.stories || [];
-    const pinnedStoriesRaw = ((pinnedRes as any)?.stories || []) as any[];
+    const activeStories = (response as any)?.stories?.stories || [];
+    const pinnedStories = ((pinnedResponse as any)?.stories || []) as any[];
 
-    const activeSent = new Set(listSentStoryKeys(m.id, 'active'));
-    const pinnedSent = new Set(listSentStoryKeys(m.id, 'pinned'));
+    const persistedActiveKeys = new Set(listSentStoryKeys(monitor.id, 'active'));
+    const persistedPinnedKeys = new Set(listSentStoryKeys(monitor.id, 'pinned'));
 
-    const newActive: any[] = [];
-    for (const s of activeStories) {
-      const key = `${s.id}:${s.date}`;
-      if (activeSent.has(key)) continue;
-      // Reserve only in memory for cross-list de-duplication. Persist the key
-      // after Telegram delivery succeeds so transient failures are retried.
-      activeSent.add(key);
-      newActive.push(s);
-    }
+    const newActive = activeStories.filter(
+      (story: any) => !persistedActiveKeys.has(storyKey(story)),
+    );
+    const activeCandidateKeys = new Set(newActive.map(storyKey));
+    const newPinned = pinnedStories.filter((story: any) => {
+      if (typeof story?.id !== 'number' || typeof story?.date !== 'number') return false;
+      const key = storyKey(story);
+      return !persistedPinnedKeys.has(key) && !activeCandidateKeys.has(key);
+    });
 
-    const newPinned: any[] = [];
-    for (const s of pinnedStoriesRaw) {
-      if (typeof s?.id !== 'number' || typeof s?.date !== 'number') continue;
-      const key = `${s.id}:${s.date}`;
-      if (pinnedSent.has(key)) continue;
-      pinnedSent.add(key);
-      if (activeSent.has(key)) continue;
-      newPinned.push(s);
-    }
-
-    const lang = findUserById(m.telegram_id)?.language || 'en';
+    const language = findUserById(monitor.telegram_id)?.language || 'en';
 
     if (newActive.length > 0) {
       console.log(
         `[Monitor] ${targetLabel}: ${newActive.length} new active stories queued for delivery.`,
       );
-      await sendActiveStories({
-        stories: mapStories(newActive),
-        task: {
-          chatId: m.telegram_id,
-          link: targetLabel,
-          linkType: 'username',
-          locale: lang,
-          initTime: Date.now(),
-        } as any,
-      });
-      for (const s of newActive) {
-        markStorySent(m.id, s.id, s.date, s.expireDate, 'active');
+      const deliveredActiveIds = new Set(
+        await sendActiveStories({
+          stories: mapStories(newActive),
+          task: {
+            chatId: monitor.telegram_id,
+            link: targetLabel,
+            linkType: 'username',
+            locale: language,
+            initTime: Date.now(),
+          } as any,
+        }),
+      );
+      recordDeliveredStories(monitor.id, newActive, deliveredActiveIds, 'active');
+
+      // A story may appear in both the active and pinned responses. If the
+      // active copy was delivered, record the pinned key too so it is not sent
+      // again as a separate pinned alert during the next cycle.
+      const pinnedByKey = new Map(
+        pinnedStories
+          .filter((story: any) => typeof story?.id === 'number' && typeof story?.date === 'number')
+          .map((story: any) => [storyKey(story), story]),
+      );
+      for (const story of newActive) {
+        if (!deliveredActiveIds.has(Number(story.id))) continue;
+        const pinnedStory = pinnedByKey.get(storyKey(story));
+        if (pinnedStory && !persistedPinnedKeys.has(storyKey(story))) {
+          markStorySent(
+            monitor.id,
+            pinnedStory.id,
+            pinnedStory.date,
+            pinnedStory.expireDate ?? null,
+            'pinned',
+          );
+        }
+      }
+
+      if (deliveredActiveIds.size < newActive.length) {
+        console.warn(
+          `[Monitor] ${targetLabel}: ${newActive.length - deliveredActiveIds.size} active stories were not delivered and will be retried.`,
+        );
       }
     }
 
@@ -323,18 +355,23 @@ export async function checkSingleMonitor(id: number): Promise<void> {
       console.log(
         `[Monitor] ${targetLabel}: ${newPinned.length} new pinned stories queued for delivery.`,
       );
-      await sendActiveStories({
-        stories: mapStories(newPinned),
-        task: {
-          chatId: m.telegram_id,
-          link: targetLabel,
-          linkType: 'username',
-          locale: lang,
-          initTime: Date.now(),
-        } as any,
-      });
-      for (const s of newPinned) {
-        markStorySent(m.id, s.id, s.date, s.expireDate ?? null, 'pinned');
+      const deliveredPinnedIds = new Set(
+        await sendActiveStories({
+          stories: mapStories(newPinned),
+          task: {
+            chatId: monitor.telegram_id,
+            link: targetLabel,
+            linkType: 'username',
+            locale: language,
+            initTime: Date.now(),
+          } as any,
+        }),
+      );
+      recordDeliveredStories(monitor.id, newPinned, deliveredPinnedIds, 'pinned');
+      if (deliveredPinnedIds.size < newPinned.length) {
+        console.warn(
+          `[Monitor] ${targetLabel}: ${newPinned.length - deliveredPinnedIds.size} pinned stories were not delivered and will be retried.`,
+        );
       }
     }
 
@@ -343,59 +380,60 @@ export async function checkSingleMonitor(id: number): Promise<void> {
     }
 
     try {
-      const photoRes = await client.invoke(
+      const photoResponse = await client.invoke(
         new Api.photos.GetUserPhotos({ userId: peer, limit: 1 }),
       );
-      const photos = (photoRes as any)?.photos || [];
+      const photos = (photoResponse as any)?.photos || [];
       const latest = photos[0];
       const latestId = latest ? String(latest.id) : null;
-      if (!latestId && m.last_photo_id) {
+
+      if (!latestId && monitor.last_photo_id) {
         await bot.telegram.sendMessage(
-          m.telegram_id,
-          t(lang, 'monitor.photoRemoved', { user: formatMonitorTarget(m) }),
+          monitor.telegram_id,
+          t(language, 'monitor.photoRemoved', { user: formatMonitorTarget(monitor) }),
         );
-        updateMonitorPhoto(m.id, null);
-      } else if (latestId !== m.last_photo_id) {
-        if (latest && latestId) {
-          try {
-            const buffer = (await client.downloadMedia(latest as any)) as Buffer;
-            const isVideo =
-              'videoSizes' in latest &&
-              Array.isArray((latest as any).videoSizes) &&
-              (latest as any).videoSizes.length > 0;
-            const caption = `New profile ${isVideo ? 'video' : 'photo'} from ${formatMonitorTarget(m)}`;
-            if (isVideo) {
-              await bot.telegram.sendVideo(
-                m.telegram_id,
-                { source: buffer },
-                { caption },
-              );
-            } else {
-              await bot.telegram.sendPhoto(
-                m.telegram_id,
-                { source: buffer },
-                { caption },
-              );
-            }
-          } catch (err) {
-            console.error(
-              `[Monitor] Error sending profile media for ${formatMonitorTarget(m)}:`,
-              err,
+        updateMonitorPhoto(monitor.id, null);
+      } else if (latest && latestId && latestId !== monitor.last_photo_id) {
+        try {
+          const buffer = (await client.downloadMedia(latest as any)) as Buffer;
+          const isVideo =
+            'videoSizes' in latest &&
+            Array.isArray((latest as any).videoSizes) &&
+            (latest as any).videoSizes.length > 0;
+          const caption = `New profile ${isVideo ? 'video' : 'photo'} from ${formatMonitorTarget(monitor)}`;
+          if (isVideo) {
+            await bot.telegram.sendVideo(
+              monitor.telegram_id,
+              { source: buffer },
+              { caption },
+            );
+          } else {
+            await bot.telegram.sendPhoto(
+              monitor.telegram_id,
+              { source: buffer },
+              { caption },
             );
           }
+          // Persist only after Telegram confirms delivery. Failed profile-media
+          // notifications are retried on the next monitor cycle.
+          updateMonitorPhoto(monitor.id, latestId);
+        } catch (error) {
+          console.error(
+            `[Monitor] Error sending profile media for ${formatMonitorTarget(monitor)}:`,
+            error,
+          );
         }
-        updateMonitorPhoto(m.id, latestId);
       }
-    } catch (err) {
+    } catch (error) {
       console.error(
-        `[Monitor] Error checking profile photo for ${formatMonitorTarget(m)}:`,
-        err,
+        `[Monitor] Error checking profile photo for ${formatMonitorTarget(monitor)}:`,
+        error,
       );
     }
-  } catch (err) {
+  } catch (error) {
     console.error(
-      `[Monitor] Error checking ${formatMonitorTarget(m)}:`,
-      err,
+      `[Monitor] Error checking ${formatMonitorTarget(monitor)}:`,
+      error,
     );
   }
 
