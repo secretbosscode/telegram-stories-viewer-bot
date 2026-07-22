@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pr310-final-review-fixes
+  group: pr310-final-review-fixes-v2
   cancel-in-progress: true
 
 jobs:
@@ -62,7 +62,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pr310-final-review-logs
+          name: pr310-final-review-logs-v2
           path: |
             patch.log
             build.log
