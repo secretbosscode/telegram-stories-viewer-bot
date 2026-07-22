@@ -10,13 +10,29 @@ import { sendStoryFallbacks } from 'controllers/story-fallback';
 
 const TELEGRAM_MEDIA_GROUP_LIMIT = 10;
 
+export class PartialStoryDeliveryError extends Error {
+  readonly deliveredStoryIds: number[];
+  readonly cause: unknown;
+
+  constructor(cause: unknown, deliveredStoryIds: number[]) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    super(`Partial story delivery failed after ${deliveredStoryIds.length} result(s): ${message}`);
+    this.name = 'PartialStoryDeliveryError';
+    this.cause = cause;
+    this.deliveredStoryIds = [...new Set(deliveredStoryIds.map(Number).filter(Number.isFinite))];
+  }
+}
+
 function getStoryCaption(story: MappedStoryItem, task: SendPaginatedStoriesArgs['task']): string {
   return story.caption ?? (task.starsUnlocked
     ? `Story from ${task.link}`
     : `Pinned story ${story.id}`);
 }
 
-async function sendSingleStory(story: MappedStoryItem, task: SendPaginatedStoriesArgs['task']): Promise<void> {
+async function sendSingleStory(
+  story: MappedStoryItem,
+  task: SendPaginatedStoriesArgs['task'],
+): Promise<void> {
   const media = { source: story.buffer! };
   const extra = { caption: getStoryCaption(story, task).slice(0, 1024) };
   if (story.mediaType === 'photo') {
@@ -28,8 +44,9 @@ async function sendSingleStory(story: MappedStoryItem, task: SendPaginatedStorie
 
 /**
  * Sends paginated stories and returns the exact IDs delivered as Telegram media
- * or valid exported fallback links. Paid bundles use this to prove complete
- * fulfillment before they are finalized.
+ * or valid exported fallback links. If a later batch fails after earlier media
+ * was delivered, the thrown error carries those IDs so paid delivery can refund
+ * instead of retrying and duplicating media.
  */
 export async function sendPaginatedStories({
   stories,
@@ -138,6 +155,11 @@ export async function sendPaginatedStories({
       task.chatId,
       t(task.locale, 'download.timedOut'),
     ).catch(() => {/* ignore */});
+
+    const partialIds = [...deliveredStoryIds];
+    if (partialIds.length > 0) {
+      throw new PartialStoryDeliveryError(error, partialIds);
+    }
     throw error;
   }
 }
