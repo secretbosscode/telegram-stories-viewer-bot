@@ -112,6 +112,15 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
       pinnedStories = pinnedStories.filter(p => !activeStories.some(a => a.id === p.id));
     }
 
+    // A paid result bundle stores the exact story IDs shown before checkout.
+    // Refetch normally, then filter to that immutable set so a buyer receives
+    // the results they paid to unlock rather than unrelated newer stories.
+    if (task.starsUnlocked && task.starsExpectedStoryIds?.length) {
+      const expectedIds = new Set(task.starsExpectedStoryIds);
+      activeStories = activeStories.filter((story) => expectedIds.has(story.id));
+      pinnedStories = pinnedStories.filter((story) => expectedIds.has(story.id));
+    }
+
     console.log(`[GetStories] Initial fetch for ${task.link}: ${activeStories.length} active, ${pinnedStories.length} initial pinned.`);
 
     if (!task.nextStoriesIds) {
@@ -130,9 +139,13 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
           });
 
         if (olderPinnedResult && olderPinnedResult.stories.length > 0) {
-          const newPinnedStories = olderPinnedResult.stories.filter(
+          let newPinnedStories = olderPinnedResult.stories.filter(
             newStory => !activeStories.some(aS => aS.id === newStory.id) && !pinnedStories.some(pS => pS.id === newStory.id)
           );
+          if (task.starsUnlocked && task.starsExpectedStoryIds?.length) {
+            const expectedIds = new Set(task.starsExpectedStoryIds);
+            newPinnedStories = newPinnedStories.filter((story) => expectedIds.has(story.id));
+          }
           if (newPinnedStories.length > 0) {
             pinnedStories.push(...newPinnedStories);
             lastPinnedStoryId = newPinnedStories[newPinnedStories.length - 1].id;
