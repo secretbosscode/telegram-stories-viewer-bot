@@ -80,22 +80,19 @@ import {
   initializeStarsModeSafety,
 } from '../src/services/stars-mode-safety';
 
-function makeBot() {
-  const launch = jest.fn(async () => undefined);
-  return {
-    launch,
-    telegram: {},
-  } as any;
-}
+const originalLaunch = jest.fn(async () => undefined);
+const bot = {
+  launch: originalLaunch,
+  telegram: {},
+} as any;
 
 describe('Stars mode safety migrations', () => {
-  const bot = makeBot();
-
   beforeAll(() => {
     initializeStarsModeSafety(bot);
   });
 
   beforeEach(() => {
+    originalLaunch.mockClear();
     db.prepare('DELETE FROM star_monitor_entitlements').run();
     db.prepare('DELETE FROM star_result_bundles').run();
     db.prepare('DELETE FROM star_payments').run();
@@ -108,7 +105,7 @@ describe('Stars mode safety migrations', () => {
 
   test('launch wrapper retains pending Telegram payment updates', async () => {
     await bot.launch({ dropPendingUpdates: true });
-    expect(bot.launch).toHaveBeenCalledWith({ dropPendingUpdates: false });
+    expect(originalLaunch).toHaveBeenCalledWith({ dropPendingUpdates: false });
   });
 
   test('new bundles are bound to the requesting user instead of a group chat', () => {
@@ -133,7 +130,9 @@ describe('Stars mode safety migrations', () => {
       now + 1800,
     );
 
-    const row = db.prepare("SELECT user_id, chat_id FROM star_result_bundles WHERE id = 'group-bundle'").get() as any;
+    const row = db.prepare(
+      "SELECT user_id, chat_id FROM star_result_bundles WHERE id = 'group-bundle'",
+    ).get() as any;
     expect(row.user_id).toBe('456');
     expect(row.chat_id).toBe('-100123');
   });
@@ -191,7 +190,9 @@ describe('Stars mode safety migrations', () => {
       ) VALUES ('charge-1', 'monitor-refund', '321', 499, ?)
     `).run(now);
 
-    db.prepare("UPDATE star_payments SET refunded_at = ? WHERE telegram_payment_charge_id = 'charge-1'").run(now + 1);
+    db.prepare(
+      "UPDATE star_payments SET refunded_at = ? WHERE telegram_payment_charge_id = 'charge-1'",
+    ).run(now + 1);
 
     expect(getStarsMonitoringEntitlement('321')).toBeUndefined();
   });
