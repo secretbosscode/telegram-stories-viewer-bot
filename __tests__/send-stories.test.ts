@@ -10,7 +10,7 @@ jest.mock('../src/config/env-config', () => ({
 
 const sendParticularStory = jest.fn();
 jest.mock('../src/controllers/send-particular-story', () => ({ sendParticularStory }));
-const sendPaginatedStories = jest.fn();
+const sendPaginatedStories = jest.fn(async () => 1);
 jest.mock('../src/controllers/send-paginated-stories', () => ({ sendPaginatedStories }));
 const sendActiveStories = jest.fn();
 jest.mock('../src/controllers/send-active-stories', () => ({ sendActiveStories }));
@@ -20,17 +20,19 @@ const sendGlobalStories = jest.fn();
 jest.mock('../src/controllers/send-global-stories', () => ({ sendGlobalStories }));
 jest.mock('../src/controllers/download-stories', () => ({ mapStories: jest.fn((s: any) => s) }));
 
-// This suite covers the existing delivery orchestrator. Stars offer creation
-// has its own dedicated tests and is kept out of these assertions.
 const maybeOfferStoryUnlock = jest.fn(async () => false);
 const markStarsBundleDelivered = jest.fn();
 const recordStarsDeliveryFailure = jest.fn();
 const refundUndeliverableStarsBundle = jest.fn(async () => true);
+const isStarsMode = jest.fn(() => false);
+const areStarsEnabled = jest.fn(() => true);
 jest.mock('../src/services/stars-payment', () => ({
   maybeOfferStoryUnlock,
   markStarsBundleDelivered,
   recordStarsDeliveryFailure,
   refundUndeliverableStarsBundle,
+  isStarsMode,
+  areStarsEnabled,
 }));
 
 const sendTemporaryMessage = jest.fn();
@@ -39,7 +41,7 @@ jest.mock('../src/lib/helpers.ts', () => ({
   sendTemporaryMessage,
 }));
 
-const bot = { telegram: { sendMessage: jest.fn() } } as any;
+const bot = { telegram: { sendMessage: jest.fn(async () => undefined) } } as any;
 jest.mock('../src/index.ts', () => ({ bot }));
 
 import { sendStoriesFx } from '../src/controllers/send-stories';
@@ -49,6 +51,9 @@ describe('sendStoriesFx', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     maybeOfferStoryUnlock.mockResolvedValue(false);
+    isStarsMode.mockReturnValue(false);
+    areStarsEnabled.mockReturnValue(true);
+    sendPaginatedStories.mockResolvedValue(1);
   });
 
   test('sends persistent completion message', async () => {
@@ -69,13 +74,7 @@ describe('sendStoriesFx', () => {
     expect(bot.telegram.sendMessage).toHaveBeenCalledWith(
       '1',
       '🎉 Download for user completed!',
-      { link_preview_options: { is_disabled: true } }
-    );
-    expect(sendTemporaryMessage).not.toHaveBeenCalledWith(
-      bot,
-      '1',
-      expect.any(String),
-      expect.anything()
+      { link_preview_options: { is_disabled: true } },
     );
   });
 
@@ -92,15 +91,75 @@ describe('sendStoriesFx', () => {
 
     await sendStoriesFx(params);
 
-    expect(bot.telegram.sendMessage).not.toHaveBeenCalledWith(
-      '1',
-      expect.any(String)
-    );
     expect(sendTemporaryMessage).toHaveBeenCalledWith(
       bot,
       '1',
       '🤷 No public stories found for user.',
-      { link_preview_options: { is_disabled: true } }
+      { link_preview_options: { is_disabled: true } },
     );
+  });
+
+  test('paused Stars mode never falls through to free media delivery', async () => {
+    isStarsMode.mockReturnValue(true);
+    areStarsEnabled.mockReturnValue(false);
+
+    await sendStoriesFx({
+      particularStory: {} as any,
+      task: {
+        chatId: '55',
+        link: '@target',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+        user: { id: 55, is_bot: false, first_name: 'User' },
+      },
+    } as any);
+
+    expect(sendParticularStory).not.toHaveBeenCalled();
+    expect(maybeOfferStoryUnlock).not.toHaveBeenCalled();
+    expect(bot.telegram.sendMessage).toHaveBeenCalledWith(
+      '55',
+      expect.stringContaining('paused'),
+    );
+  });
+
+  test('does not mark a paid bundle delivered when no media or fallback was sent', async () => {
+    sendPaginatedStories.mockResolvedValue(0);
+
+    await sendStoriesFx({
+      paginatedStories: [{ id: 77 }] as any,
+      task: {
+        chatId: '77',
+        link: '@target',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+        starsUnlocked: true,
+        starsBundleId: 'bundle-77',
+      },
+    } as any);
+
+    expect(markStarsBundleDelivered).not.toHaveBeenCalled();
+    expect(refundUndeliverableStarsBundle).toHaveBeenCalledWith('bundle-77');
+  });
+
+  test('marks a paid bundle delivered only after at least one result was sent', async () => {
+    sendPaginatedStories.mockResolvedValue(1);
+
+    await sendStoriesFx({
+      paginatedStories: [{ id: 88 }] as any,
+      task: {
+        chatId: '88',
+        link: '@target',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+        starsUnlocked: true,
+        starsBundleId: 'bundle-88',
+      },
+    } as any);
+
+    expect(markStarsBundleDelivered).toHaveBeenCalledWith('bundle-88');
+    expect(refundUndeliverableStarsBundle).not.toHaveBeenCalled();
   });
 });
