@@ -34,6 +34,10 @@ import { isUserPremium } from '../src/services/premium-service';
 
 const monitorService = require('../src/services/monitor-service');
 
+afterEach(() => {
+  monitorService.stopMonitorLoop();
+});
+
 test('removes monitor when user is not premium', async () => {
   const row = addMonitor('user', '123', 'tester', null, null);
   (isUserPremium as jest.Mock).mockReturnValue(false);
@@ -45,4 +49,3 @@ test('removes monitor when user is not premium', async () => {
   expect(spy).not.toHaveBeenCalled();
   expect(getMonitor(row.id)).toBeUndefined();
 });
-
