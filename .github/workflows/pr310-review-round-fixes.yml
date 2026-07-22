@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pr310-review-round-fixes-v5
+  group: pr310-review-round-fixes-v6
   cancel-in-progress: true
 
 jobs:
@@ -32,17 +32,23 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Make patch replacements literal
+      - name: Prepare deterministic patcher
         run: |
           python3 - <<'PY'
           from pathlib import Path
           path = Path('scripts/pr310-review-round-fixes.py')
           text = path.read_text()
-          old = 'updated, count = re.subn(pattern, replacement, text, count=1, flags=flags)'
-          new = 'updated, count = re.subn(pattern, lambda _match: replacement, text, count=1, flags=flags)'
-          if old not in text:
+          old_engine = 'updated, count = re.subn(pattern, replacement, text, count=1, flags=flags)'
+          new_engine = 'updated, count = re.subn(pattern, lambda _match: replacement, text, count=1, flags=flags)'
+          if old_engine not in text:
               raise SystemExit('regex replacement engine marker not found')
-          path.write_text(text.replace(old, new, 1))
+          text = text.replace(old_engine, new_engine, 1)
+
+          old_fixture = """    payMonitorBundle('expired-week', 'renewed-user', 'expired-week-charge', 199, expiredWeekPaidAt);\n\n    insertMonitorBundle('later-month', 'renewed-user', 'monitor_month', 499, now, 5);"""
+          new_fixture = """    payMonitorBundle('expired-week', 'renewed-user', 'expired-week-charge', 199, expiredWeekPaidAt);\n    db.prepare(\n      \"UPDATE star_monitor_entitlements SET expires_at = ? WHERE user_id = 'renewed-user'\",\n    ).run(expiredWeekPaidAt + (7 * 24 * 60 * 60));\n\n    insertMonitorBundle('later-month', 'renewed-user', 'monitor_month', 499, now, 5);"""
+          if old_fixture not in text:
+              raise SystemExit('expired-grant fixture marker not found')
+          path.write_text(text.replace(old_fixture, new_fixture, 1))
           PY
 
       - name: Apply review-round fixes
