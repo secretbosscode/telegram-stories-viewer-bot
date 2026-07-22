@@ -165,7 +165,8 @@ export async function forceCheckMonitors(): Promise<number> {
         premium = isUserPremium(monitor.telegram_id);
         premiumCache.set(monitor.telegram_id, premium);
       }
-      if (!premium && Number(monitor.telegram_id) !== BOT_ADMIN_ID) {
+      const starsEntitlement = getStarsMonitoringEntitlement(monitor.telegram_id);
+      if (!premium && Number(monitor.telegram_id) !== BOT_ADMIN_ID && !starsEntitlement) {
         removeMonitor(monitor.telegram_id, monitor.target_id);
         continue;
       }
@@ -317,6 +318,7 @@ export async function checkSingleMonitor(id: number): Promise<void> {
             linkType: 'username',
             locale: language,
             initTime: Date.now(),
+            monitorDelivery: true,
           } as any,
         }),
       );
@@ -364,6 +366,7 @@ export async function checkSingleMonitor(id: number): Promise<void> {
             linkType: 'username',
             locale: language,
             initTime: Date.now(),
+            monitorDelivery: true,
           } as any,
         }),
       );

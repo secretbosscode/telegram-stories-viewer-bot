@@ -30,7 +30,7 @@ import {
   setStarsMonitorPrice,
 } from './stars-mode-safety';
 
-const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v3';
+const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v4';
 const syncedChats = new Set<string>();
 let registered = false;
 
@@ -324,6 +324,39 @@ async function migrateExistingCommandScopes(bot: Telegraf<IContextBot>): Promise
     COMMAND_SCOPE_MIGRATION_KEY,
   ) as { value?: string } | undefined;
   if (done?.value === '1') return;
+
+  const legacyGroups = db.prepare(`
+    SELECT DISTINCT group_id
+    FROM (
+      SELECT CAST(telegram_id AS TEXT) AS group_id
+      FROM download_queue
+      WHERE CAST(telegram_id AS INTEGER) < 0
+      UNION
+      SELECT CAST(json_extract(task_details, '$.chatId') AS TEXT) AS group_id
+      FROM download_queue
+      WHERE json_valid(task_details)
+        AND CAST(json_extract(task_details, '$.chatId') AS INTEGER) < 0
+      UNION
+      SELECT CAST(chat_id AS TEXT) AS group_id
+      FROM star_result_bundles
+      WHERE CAST(chat_id AS INTEGER) < 0
+    )
+    WHERE group_id IS NOT NULL
+    ORDER BY group_id
+  `).all() as { group_id: string }[];
+
+  for (const row of legacyGroups) {
+    const groupId = Number(row.group_id);
+    if (!Number.isFinite(groupId)) continue;
+    try {
+      await (bot.telegram as any).callApi('deleteMyCommands', {
+        scope: { type: 'chat', chat_id: groupId },
+      });
+    } catch (error) {
+      console.warn(`[Stars] Could not clear legacy group command scope ${row.group_id}:`, error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 
   const users = db.prepare(
     'SELECT telegram_id, language FROM users ORDER BY created_at ASC',

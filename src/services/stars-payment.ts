@@ -513,8 +513,8 @@ export async function refundUndeliverableStarsBundle(bundleId: string): Promise<
   return refundBundle(bundle);
 }
 
-async function recoverPaidBundles(): Promise<void> {
-  if (recoveryRunning || !botInstance || !isStarsMode()) return;
+export async function recoverPaidBundles(): Promise<void> {
+  if (recoveryRunning || !botInstance) return;
   recoveryRunning = true;
   try {
     const cutoff = nowSeconds() - DELIVERY_STALE_SECONDS;

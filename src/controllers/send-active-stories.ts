@@ -191,6 +191,10 @@ export async function sendActiveStories({
     await bot.telegram.sendMessage(task.chatId, t(task.locale, 'active.error')).catch(() => {});
 
     const partialIds = [...deliveredStoryIds];
+    if ((task as any).monitorDelivery && partialIds.length > 0) {
+      console.warn(`[sendActiveStories] Partial monitor delivery for ${task.link}; remaining stories will retry.`);
+      return partialIds;
+    }
     if (partialIds.length > 0) {
       throw new PartialStoryDeliveryError(error, partialIds);
     }

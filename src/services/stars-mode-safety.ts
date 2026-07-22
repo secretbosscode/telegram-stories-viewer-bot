@@ -4,10 +4,7 @@ import { IContextBot } from 'config/context-interface';
 
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 const MONTH_SECONDS = 30 * 24 * 60 * 60;
-const MONITOR_INTERVAL_MS = 60 * 60 * 1000;
 
-let monitorTimer: NodeJS.Timeout | null = null;
-let monitorCycleRunning = false;
 let launchPatched = false;
 
 function nowSeconds(): number {
@@ -249,6 +246,51 @@ function initializeSafetySchema(): void {
       SET refunded_at = NEW.refunded_at
       WHERE bundle_id = NEW.bundle_id AND refunded_at IS NULL;
 
+      INSERT OR REPLACE INTO star_monitor_delete_authorizations (
+        telegram_id, target_id, authorized_at
+      )
+      SELECT m.telegram_id, m.target_id, CAST(strftime('%s','now') AS INTEGER)
+      FROM monitors m
+      JOIN star_monitor_entitlements e ON e.user_id = m.telegram_id
+      WHERE e.user_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      )
+      AND (
+        SELECT COUNT(*) FROM monitors earlier
+        WHERE earlier.telegram_id = m.telegram_id
+          AND (
+            COALESCE(earlier.created_at, 0) < COALESCE(m.created_at, 0)
+            OR (
+              COALESCE(earlier.created_at, 0) = COALESCE(m.created_at, 0)
+              AND earlier.id <= m.id
+            )
+          )
+      ) > e.max_targets;
+
+      DELETE FROM monitors
+      WHERE telegram_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      )
+      AND (
+        SELECT COUNT(*) FROM monitors earlier
+        WHERE earlier.telegram_id = monitors.telegram_id
+          AND (
+            COALESCE(earlier.created_at, 0) < COALESCE(monitors.created_at, 0)
+            OR (
+              COALESCE(earlier.created_at, 0) = COALESCE(monitors.created_at, 0)
+              AND earlier.id <= monitors.id
+            )
+          )
+      ) > COALESCE(
+        (SELECT max_targets FROM star_monitor_entitlements e WHERE e.user_id = monitors.telegram_id),
+        0
+      );
+
+      DELETE FROM star_monitor_delete_authorizations
+      WHERE telegram_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      );
+
       DELETE FROM star_monitor_entitlements
       WHERE user_id = (
         SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
@@ -258,6 +300,16 @@ function initializeSafetySchema(): void {
         FROM star_monitor_grants g
         WHERE g.user_id = star_monitor_entitlements.user_id
           AND g.refunded_at IS NULL
+      );
+
+      DELETE FROM monitors
+      WHERE telegram_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM star_monitor_entitlements e
+        WHERE e.user_id = monitors.telegram_id
+          AND e.expires_at > CAST(strftime('%s','now') AS INTEGER)
       );
     END;
 
@@ -402,48 +454,6 @@ export function clearStarsMonitorRemovalAuthorization(
   ).run(telegramId, targetId);
 }
 
-async function runStarsMonitorCycle(): Promise<void> {
-  if (monitorCycleRunning) return;
-  monitorCycleRunning = true;
-  try {
-    const now = nowSeconds();
-    const rows = db.prepare(
-      `SELECT m.id
-       FROM monitors m
-       JOIN star_monitor_entitlements e ON e.user_id = m.telegram_id
-       LEFT JOIN users u ON u.telegram_id = m.telegram_id
-       WHERE e.expires_at > ?
-         AND NOT (
-           COALESCE(u.is_premium, 0) = 1
-           AND (u.premium_until IS NULL OR u.premium_until >= ?)
-         )
-       ORDER BY m.id`,
-    ).all(now, now) as { id: number }[];
-
-    if (!rows.length) return;
-    const { checkSingleMonitor } = await import('./monitor-service');
-    for (const row of rows) {
-      await checkSingleMonitor(Number(row.id));
-    }
-  } catch (error) {
-    console.error('[StarsMonitor] Scheduled check failed:', error);
-  } finally {
-    monitorCycleRunning = false;
-  }
-}
-
-function startStarsMonitorLoop(): void {
-  if (monitorTimer) return;
-  const initial = setTimeout(() => {
-    void runStarsMonitorCycle();
-  }, 30_000);
-  initial.unref?.();
-  monitorTimer = setInterval(() => {
-    void runStarsMonitorCycle();
-  }, MONITOR_INTERVAL_MS);
-  monitorTimer.unref?.();
-}
-
 function retainPendingTelegramUpdates(bot: Telegraf<IContextBot>): void {
   if (launchPatched) return;
   launchPatched = true;
@@ -456,5 +466,4 @@ export function initializeStarsModeSafety(bot: Telegraf<IContextBot>): void {
   initializeSafetySchema();
   migrateDefaultPaymentMode();
   retainPendingTelegramUpdates(bot);
-  startStarsMonitorLoop();
 }
