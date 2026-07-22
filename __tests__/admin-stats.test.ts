@@ -7,6 +7,7 @@ jest.mock('../src/config/env-config', () => ({
   BOT_ADMIN_ID: 0,
   BOT_TOKEN: 'token',
   LOG_FILE: '/tmp/test.log',
+  BTC_CONFIGURED: false,
 }));
 
 jest.mock('../src/db', () => {
@@ -17,11 +18,43 @@ jest.mock('../src/db', () => {
       telegram_id TEXT PRIMARY KEY,
       username TEXT,
       created_at TEXT,
-      language TEXT
+      language TEXT,
+      is_premium INTEGER DEFAULT 0,
+      premium_until INTEGER
     );
-    CREATE TABLE payments (paid_at INTEGER);
+    CREATE TABLE payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT,
+      invoice_amount REAL,
+      user_address TEXT,
+      paid_amount REAL DEFAULT 0,
+      expires_at INTEGER,
+      paid_at INTEGER
+    );
+    CREATE TABLE payment_checks (
+      invoice_id INTEGER PRIMARY KEY,
+      next_check INTEGER NOT NULL,
+      check_start INTEGER NOT NULL
+    );
     CREATE TABLE referrals (created_at INTEGER);
-    CREATE TABLE download_queue (status TEXT);
+    CREATE TABLE download_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      telegram_id TEXT,
+      target_username TEXT,
+      status TEXT,
+      enqueued_ts INTEGER,
+      task_details TEXT
+    );
+    CREATE TABLE monitors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      telegram_id TEXT NOT NULL,
+      target_id TEXT,
+      target_username TEXT,
+      target_access_hash TEXT,
+      last_checked INTEGER,
+      last_photo_id TEXT,
+      created_at INTEGER DEFAULT 0
+    );
     CREATE TABLE user_request_log (
       telegram_id TEXT NOT NULL,
       requested_at INTEGER NOT NULL
