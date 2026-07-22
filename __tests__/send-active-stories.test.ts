@@ -17,10 +17,14 @@ jest.mock('lib', () => ({
 const notifyAdmin = jest.fn();
 jest.mock('controllers/send-message', () => ({ notifyAdmin }));
 
+const downloadStories = jest.fn();
 jest.mock('controllers/download-stories', () => ({
-  downloadStories: jest.fn(() => Promise.resolve({ successCount: 1, failed: [], skipped: [] })),
-  mapStories: jest.fn((s: any) => s),
+  downloadStories,
+  mapStories: jest.fn((stories: any) => stories),
 }));
+
+const sendStoryFallbacks = jest.fn();
+jest.mock('controllers/story-fallback', () => ({ sendStoryFallbacks }));
 
 jest.mock('config/userbot', () => ({
   Userbot: { getInstance: jest.fn() },
@@ -28,46 +32,56 @@ jest.mock('config/userbot', () => ({
 
 const bot = {
   telegram: {
-    sendMediaGroup: jest.fn(),
-    sendMessage: jest.fn(),
-    sendPhoto: jest.fn(),
-    sendVideo: jest.fn(),
+    sendMediaGroup: jest.fn(async () => []),
+    sendMessage: jest.fn(async () => ({ message_id: 1 })),
+    sendPhoto: jest.fn(async () => ({ message_id: 1 })),
+    sendVideo: jest.fn(async () => ({ message_id: 1 })),
   },
 } as any;
 jest.mock('index', () => ({ bot }));
 
-jest.mock('lib/i18n', () => ({ t: () => '' }));
+jest.mock('lib/i18n', () => ({ t: (_locale: string, key: string) => key }));
 
 import { sendActiveStories } from '../src/controllers/send-active-stories';
 import { MappedStoryItem, SendStoriesArgs } from '../src/types';
 
-describe('sendActiveStories single story caption', () => {
+function makeStory(overrides: Partial<MappedStoryItem> = {}): MappedStoryItem {
+  return {
+    id: 1,
+    media: {} as any,
+    mediaType: 'photo',
+    date: new Date(),
+    buffer: Buffer.from('x'),
+    bufferSize: 1,
+    caption: 'Original',
+    ...overrides,
+  };
+}
+
+function makeArgs(stories: MappedStoryItem[]): SendStoriesArgs {
+  return {
+    stories,
+    task: {
+      chatId: '1',
+      link: 'user',
+      linkType: 'username',
+      locale: 'en',
+      initTime: 0,
+    } as any,
+  };
+}
+
+describe('sendActiveStories delivery accounting', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    downloadStories.mockResolvedValue({ successCount: 1, failed: [], skipped: [] });
+    sendStoryFallbacks.mockResolvedValue([]);
   });
 
-  test('sends one photo directly with active story info in the caption', async () => {
-    const story: MappedStoryItem = {
-      id: 1,
-      media: {} as any,
-      mediaType: 'photo',
-      date: new Date(),
-      buffer: Buffer.from('x'),
-      bufferSize: 1,
-      caption: 'Original',
-    };
-    const args: SendStoriesArgs = {
-      stories: [story],
-      task: {
-        chatId: '1',
-        link: 'user',
-        linkType: 'username',
-        locale: 'en',
-        initTime: 0,
-      } as any,
-    };
+  test('sends one photo directly and returns its delivered ID', async () => {
+    const story = makeStory();
 
-    await sendActiveStories(args);
+    const deliveredIds = await sendActiveStories(makeArgs([story]));
 
     expect(bot.telegram.sendMediaGroup).not.toHaveBeenCalled();
     expect(bot.telegram.sendPhoto).toHaveBeenCalledWith(
@@ -75,6 +89,56 @@ describe('sendActiveStories single story caption', () => {
       { source: story.buffer },
       { caption: 'Original\n\nActive story from user' },
     );
+    expect(deliveredIds).toEqual([1]);
     expect(sendTemporaryMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test('returns only IDs whose exported fallback links were sent', async () => {
+    const failedStory = makeStory({ id: 2, buffer: undefined, bufferSize: undefined });
+    downloadStories.mockResolvedValue({
+      successCount: 0,
+      failed: [failedStory],
+      skipped: [],
+    });
+    sendStoryFallbacks.mockResolvedValue([2]);
+
+    const deliveredIds = await sendActiveStories(makeArgs([failedStory]));
+
+    expect(sendStoryFallbacks).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: '1' }),
+      expect.arrayContaining([expect.objectContaining({ id: 2 })]),
+    );
+    expect(deliveredIds).toEqual([2]);
+    expect(bot.telegram.sendMessage).not.toHaveBeenCalledWith('1', 'active.none');
+  });
+
+  test('returns no IDs when media and fallback delivery both fail', async () => {
+    const failedStory = makeStory({ id: 3, buffer: undefined, bufferSize: undefined });
+    downloadStories.mockResolvedValue({
+      successCount: 0,
+      failed: [failedStory],
+      skipped: [],
+    });
+    sendStoryFallbacks.mockResolvedValue([]);
+
+    const deliveredIds = await sendActiveStories(makeArgs([failedStory]));
+
+    expect(deliveredIds).toEqual([]);
+    expect(bot.telegram.sendMessage).toHaveBeenCalledWith('1', 'active.none');
+  });
+
+  test('returns the exact successful subset from mixed media and fallback delivery', async () => {
+    const uploaded = makeStory({ id: 4 });
+    const failed = makeStory({ id: 5, buffer: undefined, bufferSize: undefined });
+    downloadStories.mockResolvedValue({
+      successCount: 1,
+      failed: [failed],
+      skipped: [],
+    });
+    sendStoryFallbacks.mockResolvedValue([]);
+
+    const deliveredIds = await sendActiveStories(makeArgs([uploaded, failed]));
+
+    expect(deliveredIds).toEqual([4]);
   });
 });
