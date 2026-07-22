@@ -30,6 +30,20 @@ import {
   refundUndeliverableStarsBundle,
 } from 'services/stars-payment';
 
+function uniqueIds(ids: number[] | undefined): number[] {
+  return [...new Set((ids ?? []).map(Number).filter(Number.isFinite))];
+}
+
+function paidBundleWasFullyDelivered(
+  expectedIds: number[] | undefined,
+  deliveredIds: number[],
+): boolean {
+  const expected = uniqueIds(expectedIds);
+  if (expected.length === 0) return false;
+  const delivered = new Set(uniqueIds(deliveredIds));
+  return expected.every((storyId) => delivered.has(storyId));
+}
+
 /**
  * Main story-delivery orchestrator. Discovery remains free in Stars mode, but
  * non-Premium media is never delivered unless an invoice was paid.
@@ -50,9 +64,6 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
     const requesterId = String(task.user?.id ?? task.chatId);
     const isAdmin = requesterId === String(BOT_ADMIN_ID);
 
-    // A paused paywall is a closed paywall, not free mode. This second guard
-    // protects requests already in the queue when the administrator pauses
-    // Stars after discovery has started.
     if (
       isStarsMode() &&
       !areStarsEnabled() &&
@@ -70,24 +81,25 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       return;
     }
 
-    // Place the Stars boundary after verified discovery and before media.
     if (await maybeOfferStoryUnlock(params)) {
       return;
     }
 
     let storiesWereSent = false;
+    let deliveredStoryIds: number[] = [];
 
     try {
       if (particularStory) {
         await sendParticularStory({ story: particularStory, task });
+        deliveredStoryIds = [particularStory.id];
         storiesWereSent = true;
       }
       else if (paginatedStories && paginatedStories.length > 0) {
-        const deliveredCount = await sendPaginatedStories({
+        deliveredStoryIds = await sendPaginatedStories({
           stories: paginatedStories,
           task,
         });
-        storiesWereSent = deliveredCount > 0;
+        storiesWereSent = deliveredStoryIds.length > 0;
       }
       else if (globalStories && globalStories.length > 0) {
         const mappedGlobalStories: MappedStoryItem[] = mapStories(
@@ -104,8 +116,12 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       else {
         if (activeStories.length > 0) {
           const mappedActiveStories: MappedStoryItem[] = mapStories(activeStories);
-          await sendActiveStories({ stories: mappedActiveStories, task });
-          storiesWereSent = true;
+          const activeDeliveredIds = await sendActiveStories({
+            stories: mappedActiveStories,
+            task,
+          });
+          deliveredStoryIds.push(...activeDeliveredIds);
+          storiesWereSent = storiesWereSent || activeDeliveredIds.length > 0;
           await timeout(2000);
         }
 
@@ -123,10 +139,30 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
         }
       }
 
-      if (storiesWereSent) {
-        if (task.starsBundleId) {
-          markStarsBundleDelivered(task.starsBundleId);
+      if (task.starsBundleId) {
+        const complete = paidBundleWasFullyDelivered(
+          task.starsExpectedStoryIds,
+          deliveredStoryIds,
+        );
+        if (!complete) {
+          const expected = uniqueIds(task.starsExpectedStoryIds);
+          const delivered = uniqueIds(deliveredStoryIds);
+          recordStarsDeliveryFailure(
+            task.starsBundleId,
+            new Error(
+              `Incomplete paid delivery: ${delivered.length}/${expected.length} expected stories delivered`,
+            ),
+          );
+          // Do not leave a customer charged for a partial result bundle. A full
+          // refund is safer than finalizing incomplete fulfillment or retrying
+          // already-delivered media and creating duplicates.
+          await refundUndeliverableStarsBundle(task.starsBundleId);
+          return;
         }
+        markStarsBundleDelivered(task.starsBundleId);
+      }
+
+      if (storiesWereSent) {
         await bot.telegram.sendMessage(
           task.chatId,
           t(task.locale, 'stories.completed', { link: task.link }),
@@ -137,11 +173,6 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
           task,
           baseInfo: `📥 Stories sent for ${task.link} (chatId: ${task.chatId})`,
         } as NotifyAdminParams);
-      }
-      else if (task.starsBundleId) {
-        // The user paid for exact IDs. If neither media nor a valid exported
-        // fallback was delivered, refund instead of declaring success.
-        await refundUndeliverableStarsBundle(task.starsBundleId);
       }
       else {
         await sendTemporaryMessage(
