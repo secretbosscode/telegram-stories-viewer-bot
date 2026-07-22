@@ -56,12 +56,11 @@ function initializeSafetySchema(): void {
       bundle_id TEXT PRIMARY KEY NOT NULL,
       user_id TEXT NOT NULL,
       duration_seconds INTEGER NOT NULL,
+      max_targets INTEGER NOT NULL DEFAULT 3,
+      plan TEXT NOT NULL DEFAULT 'monitor_week',
       granted_at INTEGER NOT NULL,
       refunded_at INTEGER
     );
-
-    CREATE INDEX IF NOT EXISTS star_monitor_grants_user_idx
-      ON star_monitor_grants (user_id, granted_at DESC);
 
     CREATE TABLE IF NOT EXISTS star_monitor_delete_authorizations (
       telegram_id TEXT NOT NULL,
@@ -69,7 +68,50 @@ function initializeSafetySchema(): void {
       authorized_at INTEGER NOT NULL,
       PRIMARY KEY (telegram_id, target_id)
     );
+  `);
 
+  const grantColumns = db.prepare("PRAGMA table_info(star_monitor_grants)").all() as
+    { name?: string }[];
+  if (!grantColumns.some((column) => column.name === 'max_targets')) {
+    db.exec('ALTER TABLE star_monitor_grants ADD COLUMN max_targets INTEGER NOT NULL DEFAULT 3');
+  }
+  if (!grantColumns.some((column) => column.name === 'plan')) {
+    db.exec("ALTER TABLE star_monitor_grants ADD COLUMN plan TEXT NOT NULL DEFAULT 'monitor_week'");
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS star_monitor_grants_user_idx
+      ON star_monitor_grants (user_id, granted_at DESC);
+  `);
+
+  // Backfill immutable purchase details for grants created by earlier revisions.
+  db.exec(`
+    UPDATE star_monitor_grants
+    SET max_targets = COALESCE(
+          (
+            SELECT CASE
+              WHEN b.result_count BETWEEN 1 AND 20 THEN b.result_count
+              ELSE 3
+            END
+            FROM star_result_bundles b
+            WHERE b.id = star_monitor_grants.bundle_id
+          ),
+          max_targets,
+          3
+        ),
+        plan = COALESCE(
+          (
+            SELECT b.request_kind
+            FROM star_result_bundles b
+            WHERE b.id = star_monitor_grants.bundle_id
+              AND b.request_kind IN ('monitor_week', 'monitor_month')
+          ),
+          plan,
+          'monitor_week'
+        );
+  `);
+
+  db.exec(`
     CREATE TRIGGER bind_star_bundle_requesting_user
     AFTER INSERT ON star_result_bundles
     WHEN json_extract(NEW.task_json, '$.user.id') IS NOT NULL
@@ -86,7 +128,7 @@ function initializeSafetySchema(): void {
       AND NEW.request_kind IN ('monitor_week', 'monitor_month')
     BEGIN
       INSERT OR IGNORE INTO star_monitor_grants (
-        bundle_id, user_id, duration_seconds, granted_at, refunded_at
+        bundle_id, user_id, duration_seconds, max_targets, plan, granted_at, refunded_at
       ) VALUES (
         NEW.id,
         NEW.user_id,
@@ -94,6 +136,11 @@ function initializeSafetySchema(): void {
           WHEN 'monitor_week' THEN ${WEEK_SECONDS}
           ELSE ${MONTH_SECONDS}
         END,
+        CASE
+          WHEN NEW.result_count BETWEEN 1 AND 20 THEN NEW.result_count
+          ELSE 3
+        END,
+        NEW.request_kind,
         CAST(strftime('%s','now') AS INTEGER),
         NULL
       );
@@ -156,6 +203,30 @@ function initializeSafetySchema(): void {
               (SELECT duration_seconds FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id),
               0
             )
+          ),
+          max_targets = COALESCE(
+            (
+              SELECT max_targets
+              FROM star_monitor_grants
+              WHERE user_id = star_monitor_entitlements.user_id
+                AND bundle_id <> NEW.bundle_id
+                AND refunded_at IS NULL
+              ORDER BY granted_at DESC, bundle_id DESC
+              LIMIT 1
+            ),
+            max_targets
+          ),
+          plan = COALESCE(
+            (
+              SELECT plan
+              FROM star_monitor_grants
+              WHERE user_id = star_monitor_entitlements.user_id
+                AND bundle_id <> NEW.bundle_id
+                AND refunded_at IS NULL
+              ORDER BY granted_at DESC, bundle_id DESC
+              LIMIT 1
+            ),
+            plan
           ),
           last_bundle_id = COALESCE(
             (
