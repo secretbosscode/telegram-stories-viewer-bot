@@ -292,6 +292,15 @@ export async function processQueue() {
     if (!timedOut) {
       console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, error);
       await markErrorFx({ jobId: job.id, message: error?.message || 'Unknown processing error' });
+      if (currentTask.starsBundleId) {
+        const { finalizeDeferredStarsRefund } = await import('./stars-payment');
+        await finalizeDeferredStarsRefund(currentTask.starsBundleId).catch((refundError) => {
+          console.error(
+            `[QueueManager] Deferred Stars refund failed after error for ${currentTask.starsBundleId}:`,
+            refundError,
+          );
+        });
+      }
       await bot.telegram.sendMessage(
         job.chatId,
         t(currentTask.locale, 'queue.processingError', {

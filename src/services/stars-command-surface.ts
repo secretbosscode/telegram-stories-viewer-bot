@@ -104,12 +104,15 @@ function getLegacyBaseCommands(locale: string) {
   ];
 }
 
-function getLegacyPremiumCommands(locale: string) {
+function getLegacyMonitoringCommands(locale: string) {
   return [
     { command: 'monitor', description: t(locale, 'cmd.monitor') },
     { command: 'unmonitor', description: t(locale, 'cmd.unmonitor') },
-    { command: 'archive', description: t(locale, 'cmd.archive') },
   ];
+}
+
+function getLegacyPremiumCommands(locale: string) {
+  return [{ command: 'archive', description: t(locale, 'cmd.archive') }];
 }
 
 function getLegacyAdminCommands(locale: string) {
@@ -137,7 +140,12 @@ function getLegacyAdminCommands(locale: string) {
 function buildLegacyCommands(locale: string, userId?: string) {
   const commands = [...getLegacyBaseCommands(locale)];
   const admin = userId === String(BOT_ADMIN_ID);
-  if (admin || (userId && isUserPremium(userId))) {
+  const premium = Boolean(userId && isUserPremium(userId));
+  const paidMonitoring = Boolean(userId && getStarsMonitoringEntitlement(userId));
+  if (admin || premium || paidMonitoring) {
+    commands.push(...getLegacyMonitoringCommands(locale));
+  }
+  if (admin || premium) {
     commands.push(...getLegacyPremiumCommands(locale));
   }
   if (admin) commands.push(...getLegacyAdminCommands(locale));
@@ -556,8 +564,6 @@ export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
   registered = true;
 
   bot.use(async (ctx: any, next: () => Promise<void>) => {
-    if (!isStarsMode()) return next();
-
     const rawText = String(ctx.message?.text || '').trim();
     const locale = ctx.from?.language_code || 'en';
     const userId = String(ctx.from?.id ?? '');
@@ -565,7 +571,13 @@ export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
     const commandMatch = rawText.match(/^\/([a-z0-9_]+)(?:@[a-z0-9_]+)?(?:\s|$)/i);
     const command = commandMatch?.[1]?.toLowerCase();
 
-    if (command === 'start') return renderStarsStart(ctx, bot);
+    if (!isStarsMode()) {
+      const paidMonitoring = Boolean(userId && getStarsMonitoringEntitlement(userId));
+      if (paidMonitoring && command === 'monitor') return handleStarsMonitor(ctx, next);
+      if (paidMonitoring && command === 'unmonitor') return handleStarsUnmonitor(ctx, next);
+      return next();
+    }
+if (command === 'start') return renderStarsStart(ctx, bot);
     if (command === 'help') return renderStarsHelp(ctx, bot);
     if (command === 'monitor') return handleStarsMonitor(ctx, next);
     if (command === 'unmonitor') return handleStarsUnmonitor(ctx, next);

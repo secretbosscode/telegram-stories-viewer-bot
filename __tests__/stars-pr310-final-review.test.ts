@@ -10,7 +10,9 @@ describe('PR 310 final review regressions', () => {
     expect(payment).toContain('deferIfProcessing = false');
     expect(payment).toContain("SET status = 'REFUND_PENDING'");
     expect(payment).toContain('export async function finalizeDeferredStarsRefund');
-    expect(queue).toContain('await finalizeDeferredStarsRefund(currentTask.starsBundleId)');
+    expect(
+      queue.match(/await finalizeDeferredStarsRefund\(currentTask\.starsBundleId\)/g)?.length,
+    ).toBeGreaterThanOrEqual(2);
   });
 
   test('monitor purchases remain refundable after fulfillment', () => {

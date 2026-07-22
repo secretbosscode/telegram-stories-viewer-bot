@@ -195,13 +195,40 @@ function initializeSafetySchema(): void {
       )
     BEGIN
       UPDATE star_monitor_entitlements
-      SET expires_at = MAX(
-            CAST(strftime('%s','now') AS INTEGER),
-            expires_at - COALESCE(
-              (SELECT duration_seconds FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id),
-              0
-            )
-          ),
+      SET expires_at = COALESCE(
+             (
+               WITH RECURSIVE
+               ordered_grants AS (
+                 SELECT
+                   g.duration_seconds,
+                   p.paid_at,
+                   ROW_NUMBER() OVER (ORDER BY p.paid_at ASC, p.rowid ASC) AS purchase_order
+                 FROM star_monitor_grants g
+                 JOIN star_payments p ON p.bundle_id = g.bundle_id
+                 WHERE g.user_id = star_monitor_entitlements.user_id
+                   AND g.bundle_id <> NEW.bundle_id
+                   AND g.refunded_at IS NULL
+                   AND p.refunded_at IS NULL
+               ),
+               entitlement_timeline(purchase_order, expires_at) AS (
+                 SELECT purchase_order, paid_at + duration_seconds
+                 FROM ordered_grants
+                 WHERE purchase_order = 1
+                 UNION ALL
+                 SELECT
+                   next_grant.purchase_order,
+                   MAX(entitlement_timeline.expires_at, next_grant.paid_at) + next_grant.duration_seconds
+                 FROM entitlement_timeline
+                 JOIN ordered_grants next_grant
+                   ON next_grant.purchase_order = entitlement_timeline.purchase_order + 1
+               )
+               SELECT expires_at
+               FROM entitlement_timeline
+               ORDER BY purchase_order DESC
+               LIMIT 1
+             ),
+             CAST(strftime('%s','now') AS INTEGER)
+           ),
           max_targets = COALESCE(
             (
               SELECT g.max_targets

@@ -46,6 +46,14 @@ describe('Stars command surface', () => {
     expect(source).not.toContain("scope: { type: 'chat', chat_id: Number(chatId) }");
   });
 
+
+  test('BTC mode preserves controls for active Stars monitoring customers', () => {
+    expect(source).toContain('const paidMonitoring = Boolean(userId && getStarsMonitoringEntitlement(userId))');
+    expect(source).toContain("if (paidMonitoring && command === 'monitor')");
+    expect(source).toContain("if (paidMonitoring && command === 'unmonitor')");
+    expect(source).toContain('commands.push(...getLegacyMonitoringCommands(locale))');
+  });
+
   test('administrators can tune both monitoring prices without environment changes', () => {
     expect(source).toContain("command: 'setmonitorprice'");
     expect(source).toContain("setStarsMonitorPrice(plan, value, String(ctx.from.id))");

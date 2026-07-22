@@ -294,6 +294,30 @@ describe('Stars mode safety migrations', () => {
   });
 
 
+
+  test('refunding an expired earlier grant does not shorten a later renewal', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const expiredWeekPaidAt = now - (8 * 24 * 60 * 60);
+    insertMonitorBundle('expired-week', 'renewed-user', 'monitor_week', 199, expiredWeekPaidAt, 3);
+    payMonitorBundle('expired-week', 'renewed-user', 'expired-week-charge', 199, expiredWeekPaidAt);
+    db.prepare(
+      "UPDATE star_monitor_entitlements SET expires_at = ? WHERE user_id = 'renewed-user'",
+    ).run(expiredWeekPaidAt + (7 * 24 * 60 * 60));
+
+    insertMonitorBundle('later-month', 'renewed-user', 'monitor_month', 499, now, 5);
+    payMonitorBundle('later-month', 'renewed-user', 'later-month-charge', 499, now);
+    const beforeRefund = getStarsMonitoringEntitlement('renewed-user')!;
+
+    db.prepare(
+      "UPDATE star_payments SET refunded_at = ? WHERE telegram_payment_charge_id = 'expired-week-charge'",
+    ).run(now + 1);
+
+    const afterRefund = getStarsMonitoringEntitlement('renewed-user')!;
+    expect(afterRefund.expiresAt).toBe(beforeRefund.expiresAt);
+    expect(afterRefund.plan).toBe('monitor_month');
+    expect(afterRefund.maxTargets).toBe(5);
+  });
+
   test('monitor target limit is enforced atomically by SQLite', () => {
     const now = Math.floor(Date.now() / 1000);
     insertMonitorBundle('atomic-limit', 'atomic-user', 'monitor_week', 199, now, 1);

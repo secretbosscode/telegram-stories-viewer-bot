@@ -110,6 +110,30 @@ test('records both active and pinned keys only after the shared story is deliver
   removeMonitor('user', '456');
 });
 
+
+test('does not resend an earlier active story after it later becomes pinned', async () => {
+  const row = addMonitor('user', '792', 'tester', '999', null);
+  const active = [{ id: 13, date: 130, expireDate: 2000000000 }];
+  const pinned: any[] = [];
+  const invoke = createInvoke(active, pinned);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  const sendActiveStoriesMock = activeSenderMock();
+  sendActiveStoriesMock.mockReset().mockResolvedValue([13]);
+
+  await checkSingleMonitor(row.id);
+  expect(listSentStoryKeys(row.id, 'active')).toContain('13:130');
+
+  active.splice(0, active.length);
+  pinned.push({ id: 13, date: 130 });
+  sendActiveStoriesMock.mockClear();
+
+  await checkSingleMonitor(row.id);
+  expect(sendActiveStoriesMock).not.toHaveBeenCalled();
+
+  removeMonitor('user', '792');
+});
+
 test('does not persist a story key when delivery throws and retries later', async () => {
   const row = addMonitor('user', '789', 'tester', '999', null);
   const invoke = createInvoke([

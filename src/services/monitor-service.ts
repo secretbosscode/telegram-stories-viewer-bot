@@ -321,7 +321,11 @@ export async function checkSingleMonitor(id: number): Promise<void> {
     const newPinned = pinnedStories.filter((story: any) => {
       if (typeof story?.id !== 'number' || typeof story?.date !== 'number') return false;
       const key = storyKey(story);
-      return !persistedPinnedKeys.has(key) && !activeCandidateKeys.has(key);
+      return (
+        !persistedPinnedKeys.has(key) &&
+        !persistedActiveKeys.has(key) &&
+        !activeCandidateKeys.has(key)
+      );
     });
 
     const language = findUserById(monitor.telegram_id)?.language || 'en';
