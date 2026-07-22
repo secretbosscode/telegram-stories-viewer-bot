@@ -1,0 +1,43 @@
+name: Validate pull request
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - agent/stars-result-unlocks
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      PROD_BOT_TOKEN: test-token
+      DEV_BOT_TOKEN: test-token
+      USERBOT_API_ID: 1
+      USERBOT_API_HASH: test-hash
+      USERBOT_PHONE_NUMBER: "+15555550100"
+      USERBOT_PASSWORD: ""
+      USERBOT_PHONE_CODE: ""
+      BOT_ADMIN_ID: 999
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run Jest suite
+        run: npm test -- --runInBand
