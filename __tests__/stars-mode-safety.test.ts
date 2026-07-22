@@ -86,6 +86,38 @@ const bot = {
   telegram: {},
 } as any;
 
+function insertMonitorBundle(
+  id: string,
+  userId: string,
+  kind: 'monitor_week' | 'monitor_month',
+  price: number,
+  now: number,
+): void {
+  db.prepare(`
+    INSERT INTO star_result_bundles (
+      id, user_id, chat_id, target, locale, request_kind, story_ids,
+      task_json, result_count, price_stars, status, created_at, expires_at
+    ) VALUES (?, ?, ?, 'story-monitoring', 'en', ?, '[]', '{}', 3, ?, 'OFFERED', ?, ?)
+  `).run(id, userId, userId, kind, price, now, now + 1800);
+}
+
+function payMonitorBundle(
+  id: string,
+  userId: string,
+  chargeId: string,
+  amount: number,
+  now: number,
+): void {
+  db.prepare(`
+    INSERT INTO star_payments (
+      telegram_payment_charge_id, bundle_id, user_id, amount_stars, paid_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(chargeId, id, userId, amount, now);
+  db.prepare(
+    'UPDATE star_result_bundles SET status = \'PAID\', paid_at = ? WHERE id = ?',
+  ).run(now, id);
+}
+
 describe('Stars mode safety migrations', () => {
   beforeAll(() => {
     initializeStarsModeSafety(bot);
@@ -94,13 +126,61 @@ describe('Stars mode safety migrations', () => {
   beforeEach(() => {
     originalLaunch.mockClear();
     db.prepare('DELETE FROM star_monitor_entitlements').run();
+    db.prepare('DELETE FROM star_monitor_grants').run();
     db.prepare('DELETE FROM star_result_bundles').run();
     db.prepare('DELETE FROM star_payments').run();
+    db.prepare('DELETE FROM payment_checks').run();
+    db.prepare('DELETE FROM payments').run();
+    db.prepare(
+      `INSERT INTO bot_settings (key, value, updated_at, updated_by)
+       VALUES ('payment_mode', 'stars', 0, 'migration')
+       ON CONFLICT(key) DO UPDATE SET value = 'stars', updated_by = 'migration'`,
+    ).run();
   });
 
   test('automatic mode migration defaults to Stars when no BTC invoice is active', () => {
+    initializeStarsModeSafety(bot);
     const row = db.prepare("SELECT value FROM bot_settings WHERE key = 'payment_mode'").get() as any;
     expect(row.value).toBe('stars');
+  });
+
+  test('stale BTC payment checks do not keep the bot in legacy mode', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const result = db.prepare(`
+      INSERT INTO payments (
+        user_id, invoice_amount, user_address, expires_at, paid_at
+      ) VALUES ('legacy', 0.0001, 'address', ?, NULL)
+    `).run(now - 60);
+    db.prepare(`
+      INSERT INTO payment_checks (invoice_id, next_check, check_start)
+      VALUES (?, ?, ?)
+    `).run(result.lastInsertRowid, now - 30, now - 3600);
+    db.prepare(
+      "UPDATE bot_settings SET value = 'btc', updated_by = 'migration' WHERE key = 'payment_mode'",
+    ).run();
+
+    initializeStarsModeSafety(bot);
+
+    const row = db.prepare("SELECT value FROM bot_settings WHERE key = 'payment_mode'").get() as any;
+    expect(row.value).toBe('stars');
+  });
+
+  test('an active unpaid BTC invoice is preserved until it expires', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const result = db.prepare(`
+      INSERT INTO payments (
+        user_id, invoice_amount, user_address, expires_at, paid_at
+      ) VALUES ('legacy', 0.0001, 'address', ?, NULL)
+    `).run(now + 3600);
+    db.prepare(`
+      INSERT INTO payment_checks (invoice_id, next_check, check_start)
+      VALUES (?, ?, ?)
+    `).run(result.lastInsertRowid, now + 60, now);
+
+    initializeStarsModeSafety(bot);
+
+    const row = db.prepare("SELECT value FROM bot_settings WHERE key = 'payment_mode'").get() as any;
+    expect(row.value).toBe('btc');
   });
 
   test('launch wrapper retains pending Telegram payment updates', async () => {
@@ -144,17 +224,8 @@ describe('Stars mode safety migrations', () => {
 
   test('paid weekly monitoring grants three targets and completes without a download job', () => {
     const now = Math.floor(Date.now() / 1000);
-    db.prepare(`
-      INSERT INTO star_result_bundles (
-        id, user_id, chat_id, target, locale, request_kind, story_ids,
-        task_json, result_count, price_stars, status, created_at, expires_at
-      ) VALUES ('monitor-week', '123', '123', 'story-monitoring', 'en',
-        'monitor_week', '[]', '{}', 3, 199, 'OFFERED', ?, ?)
-    `).run(now, now + 1800);
-
-    db.prepare(
-      "UPDATE star_result_bundles SET status = 'PAID', paid_at = ? WHERE id = 'monitor-week'",
-    ).run(now);
+    insertMonitorBundle('monitor-week', '123', 'monitor_week', 199, now);
+    payMonitorBundle('monitor-week', '123', 'charge-week', 199, now);
 
     const entitlement = getStarsMonitoringEntitlement('123');
     expect(entitlement).toBeDefined();
@@ -169,31 +240,35 @@ describe('Stars mode safety migrations', () => {
     expect(bundle.delivered_at).toBeTruthy();
   });
 
-  test('refunding the latest monitoring purchase revokes its entitlement', () => {
+  test('refunding the only monitoring purchase removes its entitlement', () => {
     const now = Math.floor(Date.now() / 1000);
-    db.prepare(`
-      INSERT INTO star_result_bundles (
-        id, user_id, chat_id, target, locale, request_kind, story_ids,
-        task_json, result_count, price_stars, status, created_at, expires_at,
-        paid_at, delivered_at
-      ) VALUES ('monitor-refund', '321', '321', 'story-monitoring', 'en',
-        'monitor_month', '[]', '{}', 3, 499, 'DELIVERED', ?, ?, ?, ?)
-    `).run(now, now + 1800, now, now);
-    db.prepare(`
-      INSERT INTO star_monitor_entitlements (
-        user_id, expires_at, max_targets, plan, last_bundle_id, updated_at
-      ) VALUES ('321', ?, 3, 'monitor_month', 'monitor-refund', ?)
-    `).run(now + 2592000, now);
-    db.prepare(`
-      INSERT INTO star_payments (
-        telegram_payment_charge_id, bundle_id, user_id, amount_stars, paid_at
-      ) VALUES ('charge-1', 'monitor-refund', '321', 499, ?)
-    `).run(now);
+    insertMonitorBundle('monitor-refund', '321', 'monitor_month', 499, now);
+    payMonitorBundle('monitor-refund', '321', 'charge-refund', 499, now);
 
     db.prepare(
-      "UPDATE star_payments SET refunded_at = ? WHERE telegram_payment_charge_id = 'charge-1'",
+      "UPDATE star_payments SET refunded_at = ? WHERE telegram_payment_charge_id = 'charge-refund'",
     ).run(now + 1);
 
     expect(getStarsMonitoringEntitlement('321')).toBeUndefined();
+  });
+
+  test('refunding a stacked month preserves the earlier paid week', () => {
+    const now = Math.floor(Date.now() / 1000);
+    insertMonitorBundle('week-first', '654', 'monitor_week', 199, now);
+    payMonitorBundle('week-first', '654', 'charge-week-first', 199, now);
+    const weekExpiry = getStarsMonitoringEntitlement('654')!.expiresAt;
+
+    insertMonitorBundle('month-second', '654', 'monitor_month', 499, now + 1);
+    payMonitorBundle('month-second', '654', 'charge-month-second', 499, now + 1);
+    expect(getStarsMonitoringEntitlement('654')!.expiresAt).toBeGreaterThan(weekExpiry);
+
+    db.prepare(
+      "UPDATE star_payments SET refunded_at = ? WHERE telegram_payment_charge_id = 'charge-month-second'",
+    ).run(now + 2);
+
+    const remaining = getStarsMonitoringEntitlement('654');
+    expect(remaining).toBeDefined();
+    expect(remaining?.expiresAt).toBeGreaterThanOrEqual(weekExpiry - 1);
+    expect(remaining?.expiresAt).toBeLessThanOrEqual(weekExpiry + 2);
   });
 });
