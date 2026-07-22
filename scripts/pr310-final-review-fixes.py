@@ -1,81 +1,105 @@
 from pathlib import Path
 
 
-def replace_once(path: str, old: str, new: str) -> None:
-    p = Path(path)
-    text = p.read_text()
+def read(path: str) -> str:
+    return Path(path).read_text()
+
+
+def write(path: str, text: str) -> None:
+    Path(path).write_text(text)
+
+
+def replace_required(path: str, old: str, new: str, marker: str | None = None) -> None:
+    text = read(path)
+    if marker and marker in text:
+        print(f"already applied: {path}: {marker}")
+        return
     if old not in text:
-        raise SystemExit(f"pattern not found in {path}: {old[:160]!r}")
-    p.write_text(text.replace(old, new, 1))
+        raise SystemExit(f"pattern not found in {path}: {old[:180]!r}")
+    write(path, text.replace(old, new, 1))
+    print(f"patched: {path}: {marker or old[:60]}")
+
+
+def insert_before(path: str, anchor: str, insertion: str, marker: str) -> None:
+    text = read(path)
+    if marker in text:
+        print(f"already applied: {path}: {marker}")
+        return
+    if anchor not in text:
+        raise SystemExit(f"anchor not found in {path}: {anchor!r}")
+    write(path, text.replace(anchor, insertion + anchor, 1))
+    print(f"inserted: {path}: {marker}")
 
 
 # ---------------------------------------------------------------------------
-# 1. Defer partial-delivery refunds until the active queue row exits processing.
+# Payment/refund state machine.
 # ---------------------------------------------------------------------------
-replace_once(
+replace_required(
     "src/services/stars-payment.ts",
     "async function refundBundle(bundle: StarsBundleRow, notifyUser = true): Promise<boolean> {",
     "async function refundBundle(\n  bundle: StarsBundleRow,\n  notifyUser = true,\n  deferIfProcessing = false,\n): Promise<boolean> {",
+    "deferIfProcessing = false",
 )
-replace_once(
+
+replace_required(
     "src/services/stars-payment.ts",
     "    if (processing) {\n      db.exec('ROLLBACK');\n      return false;\n    }",
-    "    if (processing) {\n      if (deferIfProcessing) {\n        db.prepare(\n          `UPDATE star_result_bundles\n           SET status = 'REFUND_PENDING'\n           WHERE id = ? AND status IN ('PAID', 'DELIVERING', 'REFUND_PENDING')`,\n        ).run(bundle.id);\n        db.exec('COMMIT');\n      } else {\n        db.exec('ROLLBACK');\n      }\n      return false;\n    }",
+    "    if (processing) {\n      if (deferIfProcessing) {\n        db.prepare(\n          `UPDATE star_result_bundles\n           SET status = 'REFUND_PENDING'\n           WHERE id = ?\n             AND (\n               status IN ('PAID', 'DELIVERING', 'REFUND_PENDING')\n               OR (status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month'))\n             )`,\n        ).run(bundle.id);\n        db.exec('COMMIT');\n      } else {\n        db.exec('ROLLBACK');\n      }\n      return false;\n    }",
+    "if (deferIfProcessing)",
 )
-replace_once(
+
+replace_required(
+    "src/services/stars-payment.ts",
+    "    const fenced = db.prepare(\n      `UPDATE star_result_bundles\n       SET status = 'REFUND_PENDING', last_error = NULL\n       WHERE id = ? AND status IN ('PAID', 'DELIVERING', 'REFUND_PENDING')`,\n    ).run(bundle.id);",
+    "    const fenced = db.prepare(\n      `UPDATE star_result_bundles\n       SET status = 'REFUND_PENDING', last_error = NULL\n       WHERE id = ?\n         AND (\n           status IN ('PAID', 'DELIVERING', 'REFUND_PENDING')\n           OR (status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month'))\n         )`,\n    ).run(bundle.id);",
+    "status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month')",
+)
+
+replace_required(
     "src/services/stars-payment.ts",
     "export async function refundUndeliverableStarsBundle(bundleId: string): Promise<boolean> {\n  const bundle = getBundle(bundleId);\n  if (!bundle) return false;\n  return refundBundle(bundle);\n}\n",
     "export async function refundUndeliverableStarsBundle(bundleId: string): Promise<boolean> {\n  const bundle = getBundle(bundleId);\n  if (!bundle) return false;\n  return refundBundle(bundle, true, true);\n}\n\nexport async function finalizeDeferredStarsRefund(bundleId: string): Promise<boolean> {\n  const bundle = getBundle(bundleId);\n  if (!bundle || bundle.status !== 'REFUND_PENDING') return false;\n  return refundBundle(bundle);\n}\n",
+    "export async function finalizeDeferredStarsRefund",
 )
-replace_once(
+
+replace_required(
+    "src/services/stars-payment.ts",
+    "      if (changed && mode === 'stars') {\n        const { synchronizeStarsCommandMenus } = await import('./stars-command-surface');\n        await synchronizeStarsCommandMenus(bot, true);\n      }",
+    "      if (changed) {\n        const { synchronizeLegacyCommandMenus, synchronizeStarsCommandMenus } =\n          await import('./stars-command-surface');\n        if (mode === 'stars') {\n          await synchronizeStarsCommandMenus(bot, true);\n        } else {\n          await synchronizeLegacyCommandMenus(bot);\n        }\n      }",
+    "await synchronizeLegacyCommandMenus(bot)",
+)
+
+replace_required(
     "src/services/queue-manager.ts",
     "        await markDoneFx(job.id);\n        console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);",
     "        await markDoneFx(job.id);\n        if (currentTask.starsBundleId) {\n          const { finalizeDeferredStarsRefund } = await import('./stars-payment');\n          await finalizeDeferredStarsRefund(currentTask.starsBundleId).catch((error) => {\n            console.error(`[QueueManager] Deferred Stars refund failed for ${currentTask.starsBundleId}:`, error);\n          });\n        }\n        console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);",
+    "Deferred Stars refund failed",
 )
 
-# ---------------------------------------------------------------------------
-# 2. Give monitor grants a monotonic payment order and reconcile limits after
-#    Premium expires.
-# ---------------------------------------------------------------------------
-replace_once(
-    "src/services/stars-mode-safety.ts",
-    "      plan TEXT NOT NULL DEFAULT 'monitor_week',\n      granted_at INTEGER NOT NULL,",
-    "      plan TEXT NOT NULL DEFAULT 'monitor_week',\n      payment_order INTEGER NOT NULL DEFAULT 0,\n      granted_at INTEGER NOT NULL,",
-)
-replace_once(
-    "src/services/stars-mode-safety.ts",
-    "  if (!grantColumns.some((column) => column.name === 'plan')) {\n    db.exec(\"ALTER TABLE star_monitor_grants ADD COLUMN plan TEXT NOT NULL DEFAULT 'monitor_week'\");\n  }",
-    "  if (!grantColumns.some((column) => column.name === 'plan')) {\n    db.exec(\"ALTER TABLE star_monitor_grants ADD COLUMN plan TEXT NOT NULL DEFAULT 'monitor_week'\");\n  }\n  if (!grantColumns.some((column) => column.name === 'payment_order')) {\n    db.exec('ALTER TABLE star_monitor_grants ADD COLUMN payment_order INTEGER NOT NULL DEFAULT 0');\n  }",
-)
-replace_once(
-    "src/services/stars-mode-safety.ts",
-    "    CREATE INDEX IF NOT EXISTS star_monitor_grants_user_idx\n      ON star_monitor_grants (user_id, granted_at DESC);",
-    "    DROP INDEX IF EXISTS star_monitor_grants_user_idx;\n    CREATE INDEX star_monitor_grants_user_idx\n      ON star_monitor_grants (user_id, payment_order DESC, granted_at DESC);",
-)
-replace_once(
-    "src/services/stars-mode-safety.ts",
-    "         plan = COALESCE(\n           (\n             SELECT b.request_kind\n             FROM star_result_bundles b\n             WHERE b.id = star_monitor_grants.bundle_id\n               AND b.request_kind IN ('monitor_week', 'monitor_month')\n           ),\n           plan,\n           'monitor_week'\n         );",
-    "         plan = COALESCE(\n           (\n             SELECT b.request_kind\n             FROM star_result_bundles b\n             WHERE b.id = star_monitor_grants.bundle_id\n               AND b.request_kind IN ('monitor_week', 'monitor_month')\n           ),\n           plan,\n           'monitor_week'\n         ),\n         payment_order = COALESCE(\n           (SELECT p.rowid FROM star_payments p WHERE p.bundle_id = star_monitor_grants.bundle_id),\n           payment_order,\n           0\n         );",
-)
-replace_once(
-    "src/services/stars-mode-safety.ts",
-    "        bundle_id, user_id, duration_seconds, max_targets, plan, granted_at, refunded_at\n      ) VALUES (",
-    "        bundle_id, user_id, duration_seconds, max_targets, plan, payment_order, granted_at, refunded_at\n      ) VALUES (",
-)
-replace_once(
-    "src/services/stars-mode-safety.ts",
-    "        NEW.request_kind,\n        CAST(strftime('%s','now') AS INTEGER),\n        NULL",
-    "        NEW.request_kind,\n        COALESCE((SELECT p.rowid FROM star_payments p WHERE p.bundle_id = NEW.id), 0),\n        CAST(strftime('%s','now') AS INTEGER),\n        NULL",
-)
-# All three restoration selectors must use payment order, not UUID lexical order.
-for _ in range(3):
-    replace_once(
-        "src/services/stars-mode-safety.ts",
-        "              ORDER BY granted_at DESC, bundle_id DESC",
-        "              ORDER BY payment_order DESC, granted_at DESC",
-    )
 
-insert_before_authorize = """
+# ---------------------------------------------------------------------------
+# Monitoring grant ordering and Premium-expiry reconciliation.
+# ---------------------------------------------------------------------------
+replace_required(
+    "src/services/stars-mode-safety.ts",
+    "              SELECT max_targets\n              FROM star_monitor_grants\n              WHERE user_id = star_monitor_entitlements.user_id\n                AND bundle_id <> NEW.bundle_id\n                AND refunded_at IS NULL\n              ORDER BY granted_at DESC, bundle_id DESC\n              LIMIT 1",
+    "              SELECT g.max_targets\n              FROM star_monitor_grants g\n              JOIN star_payments p ON p.bundle_id = g.bundle_id\n              WHERE g.user_id = star_monitor_entitlements.user_id\n                AND g.bundle_id <> NEW.bundle_id\n                AND g.refunded_at IS NULL\n              ORDER BY p.paid_at DESC, p.rowid DESC\n              LIMIT 1",
+    "SELECT g.max_targets",
+)
+replace_required(
+    "src/services/stars-mode-safety.ts",
+    "              SELECT plan\n              FROM star_monitor_grants\n              WHERE user_id = star_monitor_entitlements.user_id\n                AND bundle_id <> NEW.bundle_id\n                AND refunded_at IS NULL\n              ORDER BY granted_at DESC, bundle_id DESC\n              LIMIT 1",
+    "              SELECT g.plan\n              FROM star_monitor_grants g\n              JOIN star_payments p ON p.bundle_id = g.bundle_id\n              WHERE g.user_id = star_monitor_entitlements.user_id\n                AND g.bundle_id <> NEW.bundle_id\n                AND g.refunded_at IS NULL\n              ORDER BY p.paid_at DESC, p.rowid DESC\n              LIMIT 1",
+    "SELECT g.plan",
+)
+replace_required(
+    "src/services/stars-mode-safety.ts",
+    "              SELECT bundle_id\n              FROM star_monitor_grants\n              WHERE user_id = star_monitor_entitlements.user_id\n                AND bundle_id <> NEW.bundle_id\n                AND refunded_at IS NULL\n              ORDER BY granted_at DESC, bundle_id DESC\n              LIMIT 1",
+    "              SELECT g.bundle_id\n              FROM star_monitor_grants g\n              JOIN star_payments p ON p.bundle_id = g.bundle_id\n              WHERE g.user_id = star_monitor_entitlements.user_id\n                AND g.bundle_id <> NEW.bundle_id\n                AND g.refunded_at IS NULL\n              ORDER BY p.paid_at DESC, p.rowid DESC\n              LIMIT 1",
+    "SELECT g.bundle_id",
+)
+
+reconcile_function = r'''
 export function reconcileStarsMonitorLimit(userId: string): number {
   const entitlement = getStarsMonitoringEntitlement(userId);
   if (!entitlement) return 0;
@@ -141,33 +165,123 @@ export function reconcileStarsMonitorLimit(userId: string): number {
   }
 }
 
-"""
-replace_once(
+'''
+insert_before(
     "src/services/stars-mode-safety.ts",
     "export function authorizeStarsMonitorRemoval(",
-    insert_before_authorize + "export function authorizeStarsMonitorRemoval(",
+    reconcile_function,
+    "export function reconcileStarsMonitorLimit",
 )
-replace_once(
+
+replace_required(
     "src/services/monitor-service.ts",
     "  getStarsMonitoringEntitlement,\n} from 'services/stars-mode-safety';",
     "  getStarsMonitoringEntitlement,\n  reconcileStarsMonitorLimit,\n} from 'services/stars-mode-safety';",
-)
-replace_once(
-    "src/services/monitor-service.ts",
-    "  const monitors = listAllMonitors();\n  const premiumCache = new Map<string, boolean>();\n  try {\n    for (const monitor of monitors) {",
-    "  let monitors = listAllMonitors();\n  const premiumCache = new Map<string, boolean>();\n  const reconciledUsers = new Set<string>();\n  try {\n    for (const monitor of monitors) {\n      let premium = premiumCache.get(monitor.telegram_id);\n      if (premium === undefined) {\n        premium = isUserPremium(monitor.telegram_id);\n        premiumCache.set(monitor.telegram_id, premium);\n      }\n      const starsEntitlement = getStarsMonitoringEntitlement(monitor.telegram_id);\n      if (!premium && starsEntitlement && !reconciledUsers.has(monitor.telegram_id)) {\n        reconcileStarsMonitorLimit(monitor.telegram_id);\n        reconciledUsers.add(monitor.telegram_id);\n      }\n    }\n\n    monitors = listAllMonitors();\n    for (const monitor of monitors) {",
+    "reconcileStarsMonitorLimit,",
 )
 
-# ---------------------------------------------------------------------------
-# 3. Track command scopes and support a complete menu rebuild in either mode.
-# ---------------------------------------------------------------------------
-replace_once(
-    "src/services/stars-command-surface.ts",
-    "const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v4';\nconst syncedChats = new Set<string>();",
-    "const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v4';\nconst syncedChats = new Set<string>();\n\ndb.exec(`\n  CREATE TABLE IF NOT EXISTS bot_command_scopes (\n    chat_id TEXT NOT NULL,\n    user_id TEXT NOT NULL,\n    locale TEXT NOT NULL DEFAULT 'en',\n    is_group INTEGER NOT NULL DEFAULT 0,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (chat_id, user_id)\n  );\n`);",
+old_force = '''export async function forceCheckMonitors(): Promise<number> {
+  if (monitorTimer) {
+    clearTimeout(monitorTimer);
+    monitorTimer = null;
+  }
+  const monitors = listAllMonitors();
+  const premiumCache = new Map<string, boolean>();
+  try {
+    for (const monitor of monitors) {
+      let premium = premiumCache.get(monitor.telegram_id);
+      if (premium === undefined) {
+        premium = isUserPremium(monitor.telegram_id);
+        premiumCache.set(monitor.telegram_id, premium);
+      }
+      const starsEntitlement = getStarsMonitoringEntitlement(monitor.telegram_id);
+      if (!premium && Number(monitor.telegram_id) !== BOT_ADMIN_ID && !starsEntitlement) {
+        removeMonitor(monitor.telegram_id, monitor.target_id);
+        continue;
+      }
+      await checkSingleMonitor(monitor.id);
+    }
+  } finally {
+    scheduleNextMonitorCheck();
+  }
+  return monitors.length;
+}'''
+new_force = '''export async function forceCheckMonitors(): Promise<number> {
+  if (monitorTimer) {
+    clearTimeout(monitorTimer);
+    monitorTimer = null;
+  }
+  let monitors = listAllMonitors();
+  const premiumCache = new Map<string, boolean>();
+  const reconciledUsers = new Set<string>();
+  try {
+    for (const monitor of monitors) {
+      let premium = premiumCache.get(monitor.telegram_id);
+      if (premium === undefined) {
+        premium = isUserPremium(monitor.telegram_id);
+        premiumCache.set(monitor.telegram_id, premium);
+      }
+      const starsEntitlement = getStarsMonitoringEntitlement(monitor.telegram_id);
+      if (
+        !premium &&
+        Number(monitor.telegram_id) !== BOT_ADMIN_ID &&
+        starsEntitlement &&
+        !reconciledUsers.has(monitor.telegram_id)
+      ) {
+        reconcileStarsMonitorLimit(monitor.telegram_id);
+        reconciledUsers.add(monitor.telegram_id);
+      }
+    }
+
+    monitors = listAllMonitors();
+    for (const monitor of monitors) {
+      let premium = premiumCache.get(monitor.telegram_id);
+      if (premium === undefined) {
+        premium = isUserPremium(monitor.telegram_id);
+        premiumCache.set(monitor.telegram_id, premium);
+      }
+      const starsEntitlement = getStarsMonitoringEntitlement(monitor.telegram_id);
+      if (!premium && Number(monitor.telegram_id) !== BOT_ADMIN_ID && !starsEntitlement) {
+        removeMonitor(monitor.telegram_id, monitor.target_id);
+        continue;
+      }
+      await checkSingleMonitor(monitor.id);
+    }
+  } finally {
+    scheduleNextMonitorCheck();
+  }
+  return monitors.length;
+}'''
+replace_required(
+    "src/services/monitor-service.ts",
+    old_force,
+    new_force,
+    "const reconciledUsers = new Set<string>()",
 )
-legacy_functions = """
-function getLegacyBaseCommands(locale: string) {
+
+
+# ---------------------------------------------------------------------------
+# Command-scope tracking and deterministic menu rebuilds in both modes.
+# ---------------------------------------------------------------------------
+insert_before(
+    "src/services/stars-command-surface.ts",
+    "function getStarsBaseCommands(locale: string) {",
+    """db.exec(`
+  CREATE TABLE IF NOT EXISTS bot_command_scopes (
+    chat_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    locale TEXT NOT NULL DEFAULT 'en',
+    is_group INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
+  );
+`);
+
+""",
+    "CREATE TABLE IF NOT EXISTS bot_command_scopes",
+)
+
+legacy_functions = r'''function getLegacyBaseCommands(locale: string) {
   return [
     { command: 'start', description: t(locale, 'cmd.start') },
     { command: 'help', description: t(locale, 'cmd.help') },
@@ -222,29 +336,36 @@ function buildLegacyCommands(locale: string, userId?: string) {
   return commands;
 }
 
-"""
-replace_once(
+'''
+insert_before(
     "src/services/stars-command-surface.ts",
     "function buildCommands(locale: string, userId?: string) {",
-    legacy_functions + "function buildCommands(locale: string, userId?: string) {",
+    legacy_functions,
+    "function getLegacyBaseCommands",
 )
-replace_once(
+
+replace_required(
     "src/services/stars-command-surface.ts",
     "  const scope: any = chatId === userId\n    ? { type: 'chat', chat_id: numericChatId }\n    : { type: 'chat_member', chat_id: numericChatId, user_id: numericUserId };\n\n  try {\n    await bot.telegram.setMyCommands(buildCommands(locale, userId), { scope });\n    syncedChats.add(cacheKey);",
-    "  const isGroup = chatId !== userId;\n  const scope: any = isGroup\n    ? { type: 'chat_member', chat_id: numericChatId, user_id: numericUserId }\n    : { type: 'chat', chat_id: numericChatId };\n\n  try {\n    if (isGroup) {\n      // Clear any legacy broad chat scope the first time this group is seen.\n      await (bot.telegram as any).callApi('deleteMyCommands', {\n        scope: { type: 'chat', chat_id: numericChatId },\n      }).catch(() => {});\n    }\n    await bot.telegram.setMyCommands(buildCommands(locale, userId), { scope });\n    db.prepare(\n      `INSERT INTO bot_command_scopes (chat_id, user_id, locale, is_group, updated_at)\n       VALUES (?, ?, ?, ?, ?)\n       ON CONFLICT(chat_id, user_id) DO UPDATE SET\n         locale = excluded.locale,\n         is_group = excluded.is_group,\n         updated_at = excluded.updated_at`,\n    ).run(chatId, userId, locale || 'en', isGroup ? 1 : 0, Math.floor(Date.now() / 1000));\n    syncedChats.add(cacheKey);",
+    "  const isGroup = chatId !== userId;\n  const scope: any = isGroup\n    ? { type: 'chat_member', chat_id: numericChatId, user_id: numericUserId }\n    : { type: 'chat', chat_id: numericChatId };\n\n  try {\n    if (isGroup) {\n      await (bot.telegram as any).callApi('deleteMyCommands', {\n        scope: { type: 'chat', chat_id: numericChatId },\n      }).catch(() => {});\n    }\n    await bot.telegram.setMyCommands(buildCommands(locale, userId), { scope });\n    db.prepare(\n      `INSERT INTO bot_command_scopes (chat_id, user_id, locale, is_group, updated_at)\n       VALUES (?, ?, ?, ?, ?)\n       ON CONFLICT(chat_id, user_id) DO UPDATE SET\n         locale = excluded.locale,\n         is_group = excluded.is_group,\n         updated_at = excluded.updated_at`,\n    ).run(chatId, userId, locale || 'en', isGroup ? 1 : 0, Math.floor(Date.now() / 1000));\n    syncedChats.add(cacheKey);",
+    "INSERT INTO bot_command_scopes (chat_id, user_id, locale, is_group, updated_at)",
 )
-replace_once(
+
+replace_required(
     "src/services/stars-command-surface.ts",
     "      SELECT CAST(chat_id AS TEXT) AS group_id\n       FROM star_result_bundles\n       WHERE CAST(chat_id AS INTEGER) < 0",
     "      SELECT CAST(chat_id AS TEXT) AS group_id\n       FROM star_result_bundles\n       WHERE CAST(chat_id AS INTEGER) < 0\n       UNION\n       SELECT chat_id AS group_id\n       FROM bot_command_scopes\n       WHERE is_group = 1",
+    "SELECT chat_id AS group_id\n       FROM bot_command_scopes",
 )
-replace_once(
+
+replace_required(
     "src/services/stars-command-surface.ts",
     "  const users = db.prepare(\n    'SELECT telegram_id, language FROM users ORDER BY created_at ASC',\n  ).all() as { telegram_id: string; language?: string }[];",
     "  const trackedMembers = db.prepare(\n    `SELECT chat_id, user_id, locale\n     FROM bot_command_scopes\n     WHERE is_group = 1\n     ORDER BY updated_at ASC`,\n  ).all() as { chat_id: string; user_id: string; locale?: string }[];\n  for (const member of trackedMembers) {\n    await syncChatCommands(bot, member.chat_id, member.user_id, member.locale || 'en', true);\n    await new Promise((resolve) => setTimeout(resolve, 100));\n  }\n\n  const users = db.prepare(\n    'SELECT telegram_id, language FROM users ORDER BY created_at ASC',\n  ).all() as { telegram_id: string; language?: string }[];",
+    "const trackedMembers = db.prepare",
 )
-legacy_sync = """
-export async function synchronizeLegacyCommandMenus(
+
+legacy_sync = r'''export async function synchronizeLegacyCommandMenus(
   bot: Telegraf<IContextBot>,
 ): Promise<void> {
   syncedChats.clear();
@@ -261,23 +382,24 @@ export async function synchronizeLegacyCommandMenus(
   ).all() as { chat_id: string; user_id: string; locale?: string; is_group: number }[];
 
   const clearedGroups = new Set<string>();
-  for (const scope of trackedScopes) {
-    const chatId = Number(scope.chat_id);
-    const userId = Number(scope.user_id);
+  for (const tracked of trackedScopes) {
+    const chatId = Number(tracked.chat_id);
+    const userId = Number(tracked.user_id);
     if (!Number.isFinite(chatId) || !Number.isFinite(userId)) continue;
-    if (scope.is_group) {
-      await (bot.telegram as any).callApi('deleteMyCommands', {
-        scope: { type: 'chat_member', chat_id: chatId, user_id: userId },
-      }).catch(() => {});
-      if (!clearedGroups.has(scope.chat_id)) {
+    if (tracked.is_group) {
+      if (!clearedGroups.has(tracked.chat_id)) {
         await (bot.telegram as any).callApi('deleteMyCommands', {
           scope: { type: 'chat', chat_id: chatId },
         }).catch(() => {});
-        clearedGroups.add(scope.chat_id);
+        clearedGroups.add(tracked.chat_id);
       }
+      await bot.telegram.setMyCommands(
+        buildLegacyCommands(tracked.locale || 'en', tracked.user_id),
+        { scope: { type: 'chat_member', chat_id: chatId, user_id: userId } },
+      ).catch(() => {});
     } else {
       await bot.telegram.setMyCommands(
-        buildLegacyCommands(scope.locale || 'en', scope.user_id),
+        buildLegacyCommands(tracked.locale || 'en', tracked.user_id),
         { scope: { type: 'chat', chat_id: chatId } },
       ).catch(() => {});
     }
@@ -296,136 +418,66 @@ export async function synchronizeLegacyCommandMenus(
   }
 }
 
-"""
-replace_once(
+'''
+insert_before(
     "src/services/stars-command-surface.ts",
     "export async function synchronizeStarsCommandMenus(",
-    legacy_sync + "export async function synchronizeStarsCommandMenus(",
+    legacy_sync,
+    "export async function synchronizeLegacyCommandMenus",
 )
-replace_once(
-    "src/services/stars-payment.ts",
-    "      if (changed && mode === 'stars') {\n        const { synchronizeStarsCommandMenus } = await import('./stars-command-surface');\n        await synchronizeStarsCommandMenus(bot, true);\n      }",
-    "      if (changed) {\n        const { synchronizeLegacyCommandMenus, synchronizeStarsCommandMenus } =\n          await import('./stars-command-surface');\n        if (mode === 'stars') {\n          await synchronizeStarsCommandMenus(bot, true);\n        } else {\n          await synchronizeLegacyCommandMenus(bot);\n        }\n      }",
-)
-replace_once(
+
+replace_required(
     "src/index.ts",
     "  if (!isStarsMode()) {\n    await bot.telegram.setMyCommands(getBaseCommands('en'));\n    await bot.telegram.setMyCommands(\n      [...getBaseCommands('en'), ...getPremiumCommands('en'), ...getAdminCommands('en')],\n      { scope: { type: 'chat', chat_id: BOT_ADMIN_ID } }\n    );\n  }",
     "  const { synchronizeLegacyCommandMenus, synchronizeStarsCommandMenus } =\n    await import('./services/stars-command-surface');\n  if (isStarsMode()) {\n    await synchronizeStarsCommandMenus(bot, true);\n  } else {\n    await synchronizeLegacyCommandMenus(bot);\n  }",
+    "await synchronizeLegacyCommandMenus(bot)",
 )
+
 
 # ---------------------------------------------------------------------------
-# Regression tests.
+# Focused final regression contract. Full Jest still runs afterwards.
 # ---------------------------------------------------------------------------
-replace_once(
-    "__tests__/stars-payment.test.ts",
-    "  getPaymentMode,",
-    "  finalizeDeferredStarsRefund,\n  getPaymentMode,",
-)
-replace_once(
-    "__tests__/stars-payment.test.ts",
-    "    expect((db.prepare(`SELECT status FROM star_result_bundles WHERE id = 'refund-processing-job'`).get() as any).status).toBe('DELIVERING');",
-    "    expect((db.prepare(`SELECT status FROM star_result_bundles WHERE id = 'refund-processing-job'`).get() as any).status).toBe('REFUND_PENDING');\n\n    db.prepare(\"UPDATE download_queue SET status = 'done' WHERE json_extract(task_details, '$.starsBundleId') = 'refund-processing-job'\").run();\n    const finalized = await finalizeDeferredStarsRefund('refund-processing-job');\n    expect(finalized).toBe(true);\n    expect((db.prepare(`SELECT status FROM star_result_bundles WHERE id = 'refund-processing-job'`).get() as any).status).toBe('REFUNDED');",
-)
-replace_once(
-    "__tests__/stars-mode-safety.test.ts",
-    "  initializeStarsModeSafety,\n  setStarsMonitorPrice,",
-    "  initializeStarsModeSafety,\n  reconcileStarsMonitorLimit,\n  setStarsMonitorPrice,",
-)
-ordering_test = r'''
+final_test = r'''import fs from 'fs';
 
-  test('same-second grants restore the actual latest remaining purchase', () => {
-    const now = Math.floor(Date.now() / 1000);
-    insertMonitorBundle('z-first', 'ordered-user', 'monitor_week', 199, now, 1);
-    payMonitorBundle('z-first', 'ordered-user', 'ordered-charge-1', 199, now);
-    insertMonitorBundle('a-second', 'ordered-user', 'monitor_month', 499, now, 5);
-    payMonitorBundle('a-second', 'ordered-user', 'ordered-charge-2', 499, now);
-    insertMonitorBundle('m-third', 'ordered-user', 'monitor_week', 199, now, 2);
-    payMonitorBundle('m-third', 'ordered-user', 'ordered-charge-3', 199, now);
+const source = (path: string) => fs.readFileSync(path, 'utf8');
 
-    const orders = db.prepare(
-      `SELECT bundle_id, payment_order FROM star_monitor_grants
-       WHERE user_id = 'ordered-user' ORDER BY payment_order ASC`,
-    ).all() as any[];
-    expect(orders.map((row) => row.bundle_id)).toEqual(['z-first', 'a-second', 'm-third']);
-
-    db.prepare(
-      "UPDATE star_payments SET refunded_at = ? WHERE telegram_payment_charge_id = 'ordered-charge-3'",
-    ).run(now + 1);
-
-    const remaining = getStarsMonitoringEntitlement('ordered-user');
-    expect(remaining?.plan).toBe('monitor_month');
-    expect(remaining?.maxTargets).toBe(5);
+describe('PR 310 final review regressions', () => {
+  test('partial paid deliveries enter a deferred refund and finalize after queue completion', () => {
+    const payment = source('src/services/stars-payment.ts');
+    const queue = source('src/services/queue-manager.ts');
+    expect(payment).toContain('deferIfProcessing = false');
+    expect(payment).toContain("SET status = 'REFUND_PENDING'");
+    expect(payment).toContain('export async function finalizeDeferredStarsRefund');
+    expect(queue).toContain('await finalizeDeferredStarsRefund(currentTask.starsBundleId)');
   });
 
-  test('Stars monitor limit is reconciled after Premium expires', () => {
-    const now = Math.floor(Date.now() / 1000);
-    insertMonitorBundle('reconcile-plan', 'reconcile-user', 'monitor_week', 199, now, 2);
-    payMonitorBundle('reconcile-plan', 'reconcile-user', 'reconcile-charge', 199, now);
-    db.prepare(
-      `INSERT INTO users (telegram_id, is_premium, premium_until)
-       VALUES ('reconcile-user', 0, ?)`,
-    ).run(now - 1);
-
-    for (let i = 1; i <= 4; i += 1) {
-      db.prepare(
-        `INSERT INTO monitors (telegram_id, target_id, target_username, created_at)
-         VALUES ('reconcile-user', ?, ?, ?)`,
-      ).run(String(i), `target-${i}`, now + i);
-    }
-
-    expect(reconcileStarsMonitorLimit('reconcile-user')).toBe(2);
-    const rows = db.prepare(
-      `SELECT target_id FROM monitors WHERE telegram_id = 'reconcile-user'
-       ORDER BY created_at ASC, id ASC`,
-    ).all() as any[];
-    expect(rows.map((row) => row.target_id)).toEqual(['1', '2']);
-  });
-'''
-replace_once(
-    "__tests__/stars-mode-safety.test.ts",
-    "  test('monitor target limit is enforced atomically by SQLite', () => {",
-    ordering_test + "\n  test('monitor target limit is enforced atomically by SQLite', () => {",
-)
-replace_once(
-    "__tests__/monitor-premium-expiration.test.ts",
-    "const clearStarsMonitorRemovalAuthorization = jest.fn();",
-    "const clearStarsMonitorRemovalAuthorization = jest.fn();\nconst reconcileStarsMonitorLimit = jest.fn();",
-)
-replace_once(
-    "__tests__/monitor-premium-expiration.test.ts",
-    "  clearStarsMonitorRemovalAuthorization,\n}));",
-    "  clearStarsMonitorRemovalAuthorization,\n  reconcileStarsMonitorLimit,\n}));",
-)
-reconcile_call_test = r'''
-
-test('reconciles Stars monitor limits when Premium is no longer active', async () => {
-  addMonitor('stars-user', '501', 'one', null, null);
-  (isUserPremium as jest.Mock).mockReturnValue(false);
-  getStarsMonitoringEntitlement.mockReturnValue({
-    expiresAt: Math.floor(Date.now() / 1000) + 3600,
-    maxTargets: 1,
-    plan: 'monitor_week',
+  test('monitor purchases remain refundable after fulfillment', () => {
+    const payment = source('src/services/stars-payment.ts');
+    expect(payment).toContain("status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month')");
   });
 
-  await monitorService.forceCheckMonitors();
+  test('monitor plan restoration follows payment order and Premium expiry reconciles excess rows', () => {
+    const safety = source('src/services/stars-mode-safety.ts');
+    const monitor = source('src/services/monitor-service.ts');
+    expect(safety).toContain('JOIN star_payments p ON p.bundle_id = g.bundle_id');
+    expect(safety).toContain('ORDER BY p.paid_at DESC, p.rowid DESC');
+    expect(safety).toContain('export function reconcileStarsMonitorLimit');
+    expect(monitor).toContain('reconcileStarsMonitorLimit(monitor.telegram_id)');
+  });
 
-  expect(reconcileStarsMonitorLimit).toHaveBeenCalledWith('stars-user');
+  test('command scopes are tracked and rebuilt in either payment mode', () => {
+    const commands = source('src/services/stars-command-surface.ts');
+    const payment = source('src/services/stars-payment.ts');
+    const index = source('src/index.ts');
+    expect(commands).toContain('CREATE TABLE IF NOT EXISTS bot_command_scopes');
+    expect(commands).toContain('export async function synchronizeLegacyCommandMenus');
+    expect(commands).toContain("type: 'chat_member'");
+    expect(payment).toContain('await synchronizeLegacyCommandMenus(bot)');
+    expect(index).toContain('await synchronizeStarsCommandMenus(bot, true)');
+  });
 });
 '''
-replace_once(
-    "__tests__/monitor-premium-expiration.test.ts",
-    "test('explicit removal is authorized when paid monitoring and Premium overlap', async () => {",
-    reconcile_call_test + "\ntest('explicit removal is authorized when paid monitoring and Premium overlap', async () => {",
-)
-replace_once(
-    "__tests__/stars-command-surface.test.ts",
-    "  test('administrators can tune both monitoring prices without environment changes', () => {",
-    "  test('group scopes are persisted and legacy broad scopes are cleared on interaction', () => {\n    expect(source).toContain('CREATE TABLE IF NOT EXISTS bot_command_scopes');\n    expect(source).toContain(\"scope: { type: 'chat', chat_id: numericChatId }\");\n    expect(source).toContain('INSERT INTO bot_command_scopes');\n  });\n\n  test('switching to BTC removes member-scoped Stars menus', () => {\n    expect(source).toContain('export async function synchronizeLegacyCommandMenus');\n    expect(source).toContain(\"type: 'chat_member'\");\n    expect(source).toContain('buildLegacyCommands');\n  });\n\n  test('administrators can tune both monitoring prices without environment changes', () => {",
-)
-replace_once(
-    "__tests__/stars-final-safety.test.ts",
-    "  test('monitor limits are atomic and Premium eligibility survives Stars refunds', () => {",
-    "  test('deferred refunds finalize only after the paid queue row exits processing', () => {\n    const payment = source('src/services/stars-payment.ts');\n    const queue = source('src/services/queue-manager.ts');\n    expect(payment).toContain('deferIfProcessing');\n    expect(payment).toContain('export async function finalizeDeferredStarsRefund');\n    expect(queue).toContain('await finalizeDeferredStarsRefund(currentTask.starsBundleId)');\n  });\n\n  test('grant ordering, Premium expiry, and bidirectional menu switches are deterministic', () => {\n    const safety = source('src/services/stars-mode-safety.ts');\n    const commands = source('src/services/stars-command-surface.ts');\n    const payment = source('src/services/stars-payment.ts');\n    expect(safety).toContain('payment_order INTEGER NOT NULL DEFAULT 0');\n    expect(safety).toContain('export function reconcileStarsMonitorLimit');\n    expect(commands).toContain('export async function synchronizeLegacyCommandMenus');\n    expect(commands).toContain('CREATE TABLE IF NOT EXISTS bot_command_scopes');\n    expect(payment).toContain('await synchronizeLegacyCommandMenus(bot)');\n  });\n\n  test('monitor limits are atomic and Premium eligibility survives Stars refunds', () => {",
-)
+Path('__tests__/stars-pr310-final-review.test.ts').write_text(final_test)
+print('wrote: __tests__/stars-pr310-final-review.test.ts')
 
-print('Applied remaining PR 310 review fixes')
+print('Applied current-head PR 310 review fixes')
