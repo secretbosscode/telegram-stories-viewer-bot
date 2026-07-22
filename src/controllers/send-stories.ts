@@ -3,18 +3,17 @@
 import { createEffect } from 'effector';
 import { timeout } from 'lib';
 import { sendTemporaryMessage } from 'lib/helpers';
-import { t } from "lib/i18n";
-import { bot } from 'index'; // Import the bot instance for sending messages
+import { t } from 'lib/i18n';
+import { bot } from 'index';
 import { notifyAdmin } from 'controllers/send-message';
+import { BOT_ADMIN_ID } from 'config/env-config';
 
-// Types are correctly imported from a central file.
 import {
   SendStoriesFxParams,
   MappedStoryItem,
   NotifyAdminParams,
 } from 'types';
 
-// Downstream controller functions are imported.
 import { sendActiveStories } from 'controllers/send-active-stories';
 import { sendPaginatedStories } from 'controllers/send-paginated-stories';
 import { sendParticularStory } from 'controllers/send-particular-story';
@@ -23,6 +22,8 @@ import { sendGlobalStories } from 'controllers/send-global-stories';
 import { sendArchivedStories } from 'controllers/send-archived-stories';
 import { mapStories } from 'controllers/download-stories';
 import {
+  areStarsEnabled,
+  isStarsMode,
   markStarsBundleDelivered,
   maybeOfferStoryUnlock,
   recordStarsDeliveryFailure,
@@ -30,10 +31,8 @@ import {
 } from 'services/stars-payment';
 
 /**
- * This is the main orchestrator effect for sending stories.
- * It receives a payload with different types of stories and decides which
- * specialized sending function to call. It also handles mapping data
- * and providing final feedback to the user.
+ * Main story-delivery orchestrator. Discovery remains free in Stars mode, but
+ * non-Premium media is never delivered unless an invoice was paid.
  */
 export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
   async (params) => {
@@ -48,41 +47,66 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       task,
     } = params;
 
-    // In Stars mode discovery remains free. The payment boundary sits here,
-    // after Telegram confirmed that results exist but before any media is sent.
-    // Paid, Premium and administrator tasks bypass this gate.
+    const requesterId = String(task.user?.id ?? task.chatId);
+    const isAdmin = requesterId === String(BOT_ADMIN_ID);
+
+    // A paused paywall is a closed paywall, not free mode. This second guard
+    // protects requests already in the queue when the administrator pauses
+    // Stars after discovery has started.
+    if (
+      isStarsMode() &&
+      !areStarsEnabled() &&
+      !task.starsUnlocked &&
+      !task.isPremium &&
+      !isAdmin &&
+      task.storyRequestType !== 'archived' &&
+      task.storyRequestType !== 'global' &&
+      task.storyRequestType !== 'paginated'
+    ) {
+      await bot.telegram.sendMessage(
+        task.chatId,
+        t(task.locale, 'stars.paymentUnavailable'),
+      );
+      return;
+    }
+
+    // Place the Stars boundary after verified discovery and before media.
     if (await maybeOfferStoryUnlock(params)) {
       return;
     }
 
-    // This flag will track if we actually sent any media to the user.
     let storiesWereSent = false;
 
     try {
-      // 1. Handle a request for one specific story. This has the highest priority.
       if (particularStory) {
         await sendParticularStory({ story: particularStory, task });
         storiesWereSent = true;
-      } 
-      // 2. Handle a request for a "page" of stories (from a "next" button).
+      }
       else if (paginatedStories && paginatedStories.length > 0) {
-        await sendPaginatedStories({ stories: paginatedStories, task });
-        storiesWereSent = true;
+        const deliveredCount = await sendPaginatedStories({
+          stories: paginatedStories,
+          task,
+        });
+        storiesWereSent = deliveredCount > 0;
       }
       else if (globalStories && globalStories.length > 0) {
-        const mappedGlobalStories: MappedStoryItem[] = mapStories(globalStories, globalStoryOwnersById);
-        await sendGlobalStories({ stories: mappedGlobalStories, task, storyOwnersById: globalStoryOwnersById });
+        const mappedGlobalStories: MappedStoryItem[] = mapStories(
+          globalStories,
+          globalStoryOwnersById,
+        );
+        await sendGlobalStories({
+          stories: mappedGlobalStories,
+          task,
+          storyOwnersById: globalStoryOwnersById,
+        });
         storiesWereSent = true;
       }
-      // 3. Handle the general case of active and pinned stories.
       else {
         if (activeStories.length > 0) {
-          // PROCESS COMMENT: This is a critical fix from your new version. The raw
-          // API data must be mapped to our internal MappedStoryItem format.
           const mappedActiveStories: MappedStoryItem[] = mapStories(activeStories);
           await sendActiveStories({ stories: mappedActiveStories, task });
           storiesWereSent = true;
-          await timeout(2000); // Wait after sending active stories
+          await timeout(2000);
         }
 
         if (pinnedStories.length > 0) {
@@ -99,37 +123,32 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
         }
       }
 
-      // =========================================================================
-      // FINAL FIX: Provide clear feedback to the user based on what happened.
-      // This solves the "confusing silence" problem.
-      // =========================================================================
       if (storiesWereSent) {
         if (task.starsBundleId) {
           markStarsBundleDelivered(task.starsBundleId);
         }
-        // If we actually sent one or more stories, send the completion message.
         await bot.telegram.sendMessage(
           task.chatId,
           t(task.locale, 'stories.completed', { link: task.link }),
-          { link_preview_options: { is_disabled: true } }
+          { link_preview_options: { is_disabled: true } },
         );
         notifyAdmin({
           status: 'info',
           task,
           baseInfo: `📥 Stories sent for ${task.link} (chatId: ${task.chatId})`,
         } as NotifyAdminParams);
-      } else if (task.starsBundleId) {
-        // A user was charged only for a known result set. If those exact story
-        // IDs disappeared before delivery, refund automatically rather than
-        // sending the normal no-results response.
+      }
+      else if (task.starsBundleId) {
+        // The user paid for exact IDs. If neither media nor a valid exported
+        // fallback was delivered, refund instead of declaring success.
         await refundUndeliverableStarsBundle(task.starsBundleId);
-      } else {
-        // If we went through all the logic and sent nothing, inform the user.
+      }
+      else {
         await sendTemporaryMessage(
           bot,
           task.chatId,
           t(task.locale, 'stories.noneFound', { link: task.link }),
-          { link_preview_options: { is_disabled: true } }
+          { link_preview_options: { is_disabled: true } },
         );
         notifyAdmin({
           status: 'info',
@@ -137,20 +156,21 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
           baseInfo: `ℹ️ No stories found for ${task.link} (chatId: ${task.chatId})`,
         } as NotifyAdminParams);
       }
-
-    } catch (error: any) {
+    }
+    catch (error: any) {
       if (task.starsBundleId) {
         recordStarsDeliveryFailure(task.starsBundleId, error);
       }
-      console.error(`[sendStoriesFx] Unhandled error during task for link "${params.task.link}" (User: ${params.task.chatId}):`, error);
+      console.error(
+        `[sendStoriesFx] Unhandled error during task for link "${params.task.link}" (User: ${params.task.chatId}):`,
+        error,
+      );
       notifyAdmin({
         status: 'error',
         task,
         errorInfo: { cause: error },
       } as NotifyAdminParams);
-      // Re-throw the error so the main service can catch it with .fail.watch()
-      // and mark the task as failed in the database.
       throw error;
     }
-  }
+  },
 );
