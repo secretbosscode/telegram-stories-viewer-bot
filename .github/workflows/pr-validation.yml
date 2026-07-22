@@ -57,7 +57,7 @@ jobs:
       - name: Run Jest suite
         run: |
           set +e
-          timeout 180s npm test -- --runInBand --silent --detectOpenHandles > jest.log 2>&1
+          timeout 180s npm test -- --runInBand --silent > jest.log 2>&1
           status=$?
           tail -n 260 jest.log
           exit $status
