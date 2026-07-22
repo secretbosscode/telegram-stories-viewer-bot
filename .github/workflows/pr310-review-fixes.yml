@@ -1,0 +1,622 @@
+name: Apply PR 310 review fixes
+
+on:
+  push:
+    branches:
+      - hotfix/stars-payment-safety
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr310-review-fixes
+  cancel-in-progress: false
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/stars-payment-safety
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Apply targeted review fixes and regression tests
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path: str) -> str:
+              return Path(path).read_text()
+
+          def write(path: str, text: str) -> None:
+              Path(path).write_text(text)
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              text = read(path)
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{path}: expected exactly one match, found {count}: {old[:100]!r}')
+              write(path, text.replace(old, new, 1))
+
+          def replace_count(path: str, old: str, new: str, expected: int) -> None:
+              text = read(path)
+              count = text.count(old)
+              if count != expected:
+                  raise RuntimeError(f'{path}: expected {expected} matches, found {count}: {old[:100]!r}')
+              write(path, text.replace(old, new))
+
+          def regex_once(path: str, pattern: str, replacement: str) -> None:
+              text = read(path)
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise RuntimeError(f'{path}: regex expected one match, found {count}: {pattern[:100]!r}')
+              write(path, updated)
+
+          def append_before_last(path: str, marker: str, block: str) -> None:
+              text = read(path)
+              index = text.rfind(marker)
+              if index < 0:
+                  raise RuntimeError(f'{path}: final marker not found')
+              write(path, text[:index] + block + text[index:])
+
+          # Paid Stars recovery must complete even after checkout mode changes to BTC.
+          replace_once(
+              'src/services/stars-payment.ts',
+              'async function recoverPaidBundles(): Promise<void> {\n  if (recoveryRunning || !botInstance || !isStarsMode()) return;',
+              'export async function recoverPaidBundles(): Promise<void> {\n  if (recoveryRunning || !botInstance) return;',
+          )
+
+          # Active delivery: paid jobs and monitoring deliver all pages, and partial albums
+          # carry exact delivered IDs so paid jobs refund instead of duplicating on retry.
+          replace_once(
+              'src/controllers/send-active-stories.ts',
+              "import { sendStoryFallbacks } from 'controllers/story-fallback';\n",
+              "import { sendStoryFallbacks } from 'controllers/story-fallback';\nimport { PartialStoryDeliveryError } from 'controllers/send-paginated-stories';\n",
+          )
+          replace_once(
+              'src/controllers/send-active-stories.ts',
+              '  const deliveredStoryIds = new Set<number>();\n\n  let hasMorePages = false;',
+              "  const deliveredStoryIds = new Set<number>();\n  const deliverAllStories = Boolean(\n    task.starsUnlocked || task.starsBundleId || (task as any).deliverAllStories,\n  );\n\n  let hasMorePages = false;",
+          )
+          replace_once(
+              'src/controllers/send-active-stories.ts',
+              '  if (stories.length > PER_PAGE) {',
+              '  if (!deliverAllStories && stories.length > PER_PAGE) {',
+          )
+          replace_once(
+              'src/controllers/send-active-stories.ts',
+              "    } catch (_) {\n      // Ignore notification failures; the original delivery error is rethrown.\n    }\n    throw error;",
+              "    } catch (_) {\n      // Ignore notification failures; the original delivery error is rethrown.\n    }\n    if ((task as any).monitorDelivery && deliveredStoryIds.size > 0) {\n      console.warn(\n        `[sendActiveStories] Partial monitor delivery for ${task.link}; undelivered stories will retry next cycle.`,\n      );\n      return [...deliveredStoryIds];\n    }\n    if (deliveredStoryIds.size > 0 && !(error instanceof PartialStoryDeliveryError)) {\n      throw new PartialStoryDeliveryError(error, [...deliveredStoryIds]);\n    }\n    throw error;",
+          )
+
+          # Pinned delivery now returns exact IDs, bypasses pagination/limits for paid jobs,
+          # handles one-item albums, and includes oversized media in fallback accounting.
+          replace_once(
+              'src/controllers/send-pinned-stories.ts',
+              "import { sendStoryFallbacks } from 'controllers/story-fallback';\n",
+              "import { sendStoryFallbacks } from 'controllers/story-fallback';\nimport { PartialStoryDeliveryError } from 'controllers/send-paginated-stories';\n",
+          )
+          replace_once(
+              'src/controllers/send-pinned-stories.ts',
+              'export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Promise<void> {\n  try {',
+              'export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Promise<number[]> {\n  const deliveredStoryIds = new Set<number>();\n  try {',
+          )
+          replace_once(
+              'src/controllers/send-pinned-stories.ts',
+              '    const isPrivileged = task.isPremium || isAdmin;',
+              '    const isPrivileged = task.isPremium || isAdmin || Boolean(task.starsUnlocked);',
+          )
+          replace_once(
+              'src/controllers/send-pinned-stories.ts',
+              '    if ((task.isPremium || isAdmin) && mapped.length > PER_PAGE) {',
+              '    if (isPrivileged && !task.starsUnlocked && mapped.length > PER_PAGE) {',
+          )
+          replace_once(
+              'src/controllers/send-pinned-stories.ts',
+              '    const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);',
+              "    const fallbackCandidates = mapped.filter(\n      (story) => !story.buffer || Number(story.bufferSize ?? 0) > 50,\n    );",
+          )
+          regex_once(
+              'src/controllers/send-pinned-stories.ts',
+              r"      const chunkedList = chunkMediafiles\(uploadableStories\);\n      for \(let i = 0; i < chunkedList\.length; i\+\+\) \{[\s\S]*?        await timeout\(500\);\n      \}",
+              """      const chunkedList = chunkMediafiles(uploadableStories);
+      for (let i = 0; i < chunkedList.length; i++) {
+        const album = chunkedList[i];
+        try {
+          if (album.length === 1) {
+            const single = album[0];
+            const media = { source: single.buffer! };
+            const extra = {
+              caption: buildPinnedCaption(single.caption, `Pinned story from ${task.link}`),
+            };
+            if (single.mediaType === 'photo') {
+              await bot.telegram.sendPhoto(task.chatId, media, extra);
+            } else {
+              await bot.telegram.sendVideo(task.chatId, media, extra);
+            }
+          } else {
+            await bot.telegram.sendMediaGroup(
+              task.chatId,
+              album.map((story: MappedStoryItem) => ({
+                media: { source: story.buffer! },
+                type: story.mediaType!,
+                caption: buildPinnedCaption(story.caption, `Pinned story from ${task.link}`),
+              })),
+            );
+          }
+          album.forEach((story: MappedStoryItem) => deliveredStoryIds.add(story.id));
+        } catch (sendError) {
+          console.error(
+            `[SendPinnedStories] [${task.link}] Error sending media chunk ${i + 1}:`,
+            sendError,
+          );
+          throw sendError;
+        }
+        await timeout(500);
+      }""",
+          )
+          replace_once(
+              'src/controllers/send-pinned-stories.ts',
+              "    if (failedDownloads.length > 0) {\n      await sendStoryFallbacks(task, failedDownloads);\n    }",
+              "    if (fallbackCandidates.length > 0) {\n      const fallbackIds = await sendStoryFallbacks(task, fallbackCandidates);\n      fallbackIds.forEach((storyId) => deliveredStoryIds.add(storyId));\n    }",
+          )
+          replace_once(
+              'src/controllers/send-pinned-stories.ts',
+              '      baseInfo: `📥 ${uploadableStories.length} Pinned stories uploaded for user ${task.link} (chatId: ${task.chatId})!`,',
+              '      baseInfo: `📥 ${deliveredStoryIds.size} Pinned stories delivered for user ${task.link} (chatId: ${task.chatId})!`,',
+          )
+          replace_once(
+              'src/controllers/send-pinned-stories.ts',
+              '    console.log(`[SendPinnedStories] [${task.link}] Processing finished successfully.`);\n\n  } catch (error: any) {',
+              '    console.log(`[SendPinnedStories] [${task.link}] Processing finished successfully.`);\n    return [...deliveredStoryIds];\n\n  } catch (error: any) {',
+          )
+          replace_once(
+              'src/controllers/send-pinned-stories.ts',
+              '    } catch (e) { /* ignore */}\n    throw error;',
+              "    } catch (e) { /* ignore */}\n    if (deliveredStoryIds.size > 0 && !(error instanceof PartialStoryDeliveryError)) {\n      throw new PartialStoryDeliveryError(error, [...deliveredStoryIds]);\n    }\n    throw error;",
+          )
+
+          # The orchestrator must include pinned confirmations in paid completeness.
+          replace_once(
+              'src/controllers/send-stories.ts',
+              '          const mappedPinnedStories: MappedStoryItem[] = mapStories(pinnedStories);\n          await sendPinnedStories({ stories: mappedPinnedStories, task });\n          storiesWereSent = true;',
+              '          const mappedPinnedStories: MappedStoryItem[] = mapStories(pinnedStories);\n          const pinnedDeliveredIds = await sendPinnedStories({\n            stories: mappedPinnedStories,\n            task,\n          });\n          deliveredStoryIds.push(...pinnedDeliveredIds);\n          storiesWereSent = storiesWereSent || pinnedDeliveredIds.length > 0;',
+          )
+
+          # Fold Stars monitoring into the existing stoppable scheduler and force full,
+          # non-interactive delivery for monitoring alerts.
+          replace_once(
+              'src/services/monitor-service.ts',
+              '      if (!premium && Number(monitor.telegram_id) !== BOT_ADMIN_ID) {\n        removeMonitor(monitor.telegram_id, monitor.target_id);\n        continue;\n      }',
+              "      const starsEntitlement = getStarsMonitoringEntitlement(monitor.telegram_id);\n      if (!premium && Number(monitor.telegram_id) !== BOT_ADMIN_ID && !starsEntitlement) {\n        removeMonitor(monitor.telegram_id, monitor.target_id);\n        continue;\n      }",
+          )
+          replace_count(
+              'src/services/monitor-service.ts',
+              '            initTime: Date.now(),\n',
+              '            initTime: Date.now(),\n            deliverAllStories: true,\n            monitorDelivery: true,\n',
+              2,
+          )
+
+          # Remove the independent paid-monitor timer; /stopmonitor now stops all checks.
+          replace_once(
+              'src/services/stars-mode-safety.ts',
+              'const MONTH_SECONDS = 30 * 24 * 60 * 60;\nconst MONITOR_INTERVAL_MS = 60 * 60 * 1000;\n\nlet monitorTimer: NodeJS.Timeout | null = null;\nlet monitorCycleRunning = false;\nlet launchPatched = false;',
+              'const MONTH_SECONDS = 30 * 24 * 60 * 60;\n\nlet launchPatched = false;',
+          )
+          regex_once(
+              'src/services/stars-mode-safety.ts',
+              r"\nasync function runStarsMonitorCycle\(\): Promise<void> \{[\s\S]*?\nfunction retainPendingTelegramUpdates",
+              '\nfunction retainPendingTelegramUpdates',
+          )
+          replace_once(
+              'src/services/stars-mode-safety.ts',
+              '  retainPendingTelegramUpdates(bot);\n  startStarsMonitorLoop();',
+              '  retainPendingTelegramUpdates(bot);',
+          )
+
+          # A refund that restores a lower target limit must immediately reconcile
+          # monitor rows, not merely change the entitlement metadata.
+          replace_once(
+              'src/services/stars-mode-safety.ts',
+              "      UPDATE star_monitor_grants\n      SET refunded_at = NEW.refunded_at\n      WHERE bundle_id = NEW.bundle_id AND refunded_at IS NULL;\n\n      DELETE FROM star_monitor_entitlements",
+              """      UPDATE star_monitor_grants
+      SET refunded_at = NEW.refunded_at
+      WHERE bundle_id = NEW.bundle_id AND refunded_at IS NULL;
+
+      INSERT OR REPLACE INTO star_monitor_delete_authorizations (
+        telegram_id, target_id, authorized_at
+      )
+      SELECT m.telegram_id, m.target_id, CAST(strftime('%s','now') AS INTEGER)
+      FROM monitors m
+      JOIN star_monitor_entitlements e ON e.user_id = m.telegram_id
+      WHERE e.user_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      )
+      AND (
+        SELECT COUNT(*)
+        FROM monitors earlier
+        WHERE earlier.telegram_id = m.telegram_id
+          AND (
+            COALESCE(earlier.created_at, 0) < COALESCE(m.created_at, 0)
+            OR (
+              COALESCE(earlier.created_at, 0) = COALESCE(m.created_at, 0)
+              AND earlier.id <= m.id
+            )
+          )
+      ) > e.max_targets;
+
+      DELETE FROM monitors
+      WHERE telegram_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      )
+      AND (
+        SELECT COUNT(*)
+        FROM monitors earlier
+        WHERE earlier.telegram_id = monitors.telegram_id
+          AND (
+            COALESCE(earlier.created_at, 0) < COALESCE(monitors.created_at, 0)
+            OR (
+              COALESCE(earlier.created_at, 0) = COALESCE(monitors.created_at, 0)
+              AND earlier.id <= monitors.id
+            )
+          )
+      ) > COALESCE(
+        (
+          SELECT max_targets
+          FROM star_monitor_entitlements e
+          WHERE e.user_id = monitors.telegram_id
+        ),
+        0
+      );
+
+      DELETE FROM star_monitor_delete_authorizations
+      WHERE telegram_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      );
+
+      DELETE FROM star_monitor_entitlements""",
+          )
+          replace_once(
+              'src/services/stars-mode-safety.ts',
+              "      AND NOT EXISTS (\n        SELECT 1\n        FROM star_monitor_grants g\n        WHERE g.user_id = star_monitor_entitlements.user_id\n          AND g.refunded_at IS NULL\n      );\n    END;",
+              """      AND NOT EXISTS (
+        SELECT 1
+        FROM star_monitor_grants g
+        WHERE g.user_id = star_monitor_entitlements.user_id
+          AND g.refunded_at IS NULL
+      );
+
+      DELETE FROM monitors
+      WHERE telegram_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM star_monitor_entitlements e
+        WHERE e.user_id = monitors.telegram_id
+          AND e.expires_at > CAST(strftime('%s','now') AS INTEGER)
+      );
+    END;""",
+          )
+
+          # Migrate stale group-wide menus to member scopes and rerun migration v4.
+          replace_once(
+              'src/services/stars-command-surface.ts',
+              "const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v3';",
+              "const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v4';",
+          )
+          replace_once(
+              'src/services/stars-command-surface.ts',
+              "  const users = db.prepare(\n    'SELECT telegram_id, language FROM users ORDER BY created_at ASC',\n  ).all() as { telegram_id: string; language?: string }[];",
+              """  const legacyGroups = db.prepare(`
+    SELECT DISTINCT group_id
+    FROM (
+      SELECT CAST(telegram_id AS TEXT) AS group_id
+      FROM download_queue
+      WHERE CAST(telegram_id AS INTEGER) < 0
+      UNION
+      SELECT CAST(json_extract(task_details, '$.chatId') AS TEXT) AS group_id
+      FROM download_queue
+      WHERE json_valid(task_details)
+        AND CAST(json_extract(task_details, '$.chatId') AS INTEGER) < 0
+    )
+    WHERE group_id IS NOT NULL
+    ORDER BY group_id
+  `).all() as { group_id: string }[];
+
+  for (const row of legacyGroups) {
+    const groupId = Number(row.group_id);
+    if (!Number.isFinite(groupId)) continue;
+    try {
+      await (bot.telegram as any).callApi('deleteMyCommands', {
+        scope: { type: 'chat', chat_id: groupId },
+      });
+    } catch (error) {
+      console.warn(`[Stars] Could not clear legacy group command scope ${row.group_id}:`, error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  const users = db.prepare(
+    'SELECT telegram_id, language FROM users ORDER BY created_at ASC',
+  ).all() as { telegram_id: string; language?: string }[];""",
+          )
+
+          # Regression tests: active paid pagination and partial delivery.
+          replace_once(
+              '__tests__/send-active-stories.test.ts',
+              "import { sendActiveStories } from '../src/controllers/send-active-stories';\n",
+              "import { sendActiveStories } from '../src/controllers/send-active-stories';\nimport { PartialStoryDeliveryError } from '../src/controllers/send-paginated-stories';\n",
+          )
+          replace_once(
+              '__tests__/send-active-stories.test.ts',
+              '    jest.clearAllMocks();\n    downloadStories.mockResolvedValue',
+              "    jest.clearAllMocks();\n    (bot.telegram.sendMediaGroup as jest.Mock).mockReset().mockResolvedValue([]);\n    downloadStories.mockResolvedValue",
+          )
+          append_before_last(
+              '__tests__/send-active-stories.test.ts',
+              '\n});',
+              """
+
+  test('paid bundles bypass interactive pagination and deliver every active story', async () => {
+    const stories = Array.from({ length: 6 }, (_, index) => makeStory({ id: index + 1 }));
+    downloadStories.mockResolvedValue({ successCount: 6, failed: [], skipped: [] });
+    const args = makeArgs(stories);
+    (args.task as any).starsUnlocked = true;
+    (args.task as any).starsBundleId = 'paid-bundle';
+
+    const deliveredIds = await sendActiveStories(args);
+
+    expect(deliveredIds.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(sendTemporaryMessage).not.toHaveBeenCalledWith(
+      bot,
+      '1',
+      'active.uploadedBatch',
+      expect.anything(),
+    );
+  });
+
+  test('paid multi-album failures expose already delivered IDs', async () => {
+    const stories = Array.from({ length: 20 }, (_, index) => makeStory({ id: index + 1 }));
+    downloadStories.mockResolvedValue({ successCount: 20, failed: [], skipped: [] });
+    (bot.telegram.sendMediaGroup as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('second album failed'));
+    const args = makeArgs(stories);
+    (args.task as any).starsUnlocked = true;
+    (args.task as any).starsBundleId = 'paid-bundle';
+
+    let caught: any;
+    try {
+      await sendActiveStories(args);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(PartialStoryDeliveryError);
+    expect(caught.deliveredStoryIds.length).toBeGreaterThan(0);
+  });
+
+  test('monitor partial delivery returns confirmed IDs and retries the remainder later', async () => {
+    const stories = Array.from({ length: 20 }, (_, index) => makeStory({ id: index + 1 }));
+    downloadStories.mockResolvedValue({ successCount: 20, failed: [], skipped: [] });
+    (bot.telegram.sendMediaGroup as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('second album failed'));
+    const args = makeArgs(stories);
+    (args.task as any).deliverAllStories = true;
+    (args.task as any).monitorDelivery = true;
+
+    const deliveredIds = await sendActiveStories(args);
+
+    expect(deliveredIds.length).toBeGreaterThan(0);
+    expect(deliveredIds.length).toBeLessThan(20);
+  });
+""",
+          )
+
+          # Regression: pinned IDs count toward paid completion.
+          replace_once(
+              '__tests__/send-stories.test.ts',
+              'const sendPinnedStories = jest.fn();',
+              'const sendPinnedStories: any = jest.fn();',
+          )
+          replace_once(
+              '__tests__/send-stories.test.ts',
+              '    sendActiveStories.mockResolvedValue([]);\n',
+              '    sendActiveStories.mockResolvedValue([]);\n    sendPinnedStories.mockResolvedValue([]);\n',
+          )
+          append_before_last(
+              '__tests__/send-stories.test.ts',
+              '\n});',
+              """
+
+  test('counts confirmed pinned IDs before settling a paid current bundle', async () => {
+    sendPinnedStories.mockResolvedValue([201, 202]);
+
+    await sendStoriesFx({
+      pinnedStories: [{ id: 201 }, { id: 202 }] as any,
+      task: {
+        chatId: '201',
+        link: '@target',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+        starsUnlocked: true,
+        starsBundleId: 'bundle-pinned',
+        starsExpectedStoryIds: [201, 202],
+      },
+    } as any);
+
+    expect(markStarsBundleDelivered).toHaveBeenCalledWith('bundle-pinned');
+    expect(refundUndeliverableStarsBundle).not.toHaveBeenCalled();
+  });
+""",
+          )
+
+          # Regression: restored target limits remove excess rows immediately.
+          replace_once(
+              '__tests__/stars-mode-safety.test.ts',
+              "    db.prepare('DELETE FROM star_payments').run();\n",
+              "    db.prepare('DELETE FROM star_payments').run();\n    db.prepare('DELETE FROM monitors').run();\n",
+          )
+          replace_once(
+              '__tests__/stars-mode-safety.test.ts',
+              "    expect(stacked.maxTargets).toBe(5);\n    expect(stacked.plan).toBe('monitor_month');\n\n    db.prepare(",
+              """    expect(stacked.maxTargets).toBe(5);
+    expect(stacked.plan).toBe('monitor_month');
+
+    for (let index = 0; index < 5; index++) {
+      db.prepare(
+        `INSERT INTO monitors (telegram_id, target_id, target_username, created_at)
+         VALUES ('654', ?, ?, ?)`,
+      ).run(String(index + 1), `target${index + 1}`, index);
+    }
+
+    db.prepare(""",
+          )
+          replace_once(
+              '__tests__/stars-mode-safety.test.ts',
+              "    expect(remaining?.maxTargets).toBe(3);\n    expect(remaining?.plan).toBe('monitor_week');",
+              """    expect(remaining?.maxTargets).toBe(3);
+    expect(remaining?.plan).toBe('monitor_week');
+    const monitorCount = db.prepare(
+      "SELECT COUNT(*) AS count FROM monitors WHERE telegram_id = '654'",
+    ).get() as any;
+    expect(Number(monitorCount.count)).toBe(3);""",
+          )
+
+          # Regression: the existing scheduler retains active Stars monitors.
+          append_before_last(
+              '__tests__/monitor-premium-expiration.test.ts',
+              '\n});' if '\n});' in read('__tests__/monitor-premium-expiration.test.ts') else '\n',
+              '',
+          ) if False else None
+          with open('__tests__/monitor-premium-expiration.test.ts', 'a') as handle:
+              handle.write("""
+
+test('keeps a non-Premium monitor while a Stars monitoring entitlement is active', async () => {
+  const row = addMonitor('stars-user', '789', 'tester3', null, null);
+  (isUserPremium as jest.Mock).mockReturnValue(false);
+  getStarsMonitoringEntitlement.mockReturnValue({
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    maxTargets: 3,
+    plan: 'monitor_week',
+  });
+
+  await monitorService.forceCheckMonitors();
+
+  expect(getMonitor(row.id)).toBeDefined();
+});
+""")
+
+          # Regression: migration explicitly clears old broad group scopes.
+          append_before_last(
+              '__tests__/stars-command-surface.test.ts',
+              '\n});',
+              """
+
+  test('migration clears legacy group-wide command scopes before member menus', () => {
+    expect(source).toContain("stars_command_scope_v4");
+    expect(source).toContain("callApi('deleteMyCommands'");
+    expect(source).toContain("scope: { type: 'chat', chat_id: groupId }");
+  });
+""",
+          )
+
+          # Regression: paid Stars obligations recover even when new checkout mode is BTC.
+          replace_once(
+              '__tests__/stars-payment.test.ts',
+              "jest.mock('../src/db/effects', () => ({\n  enqueueDownloadFx: jest.fn(async () => 1),\n}));",
+              """jest.mock('../src/db/effects', () => ({
+  enqueueDownloadFx: jest.fn(async () => 1),
+}));
+
+jest.mock('../src/services/queue-manager', () => ({
+  processQueue: jest.fn(async () => undefined),
+}));""",
+          )
+          replace_once(
+              '__tests__/stars-payment.test.ts',
+              "import { db } from '../src/db';\n",
+              "import { db } from '../src/db';\nimport { enqueueDownloadFx } from '../src/db/effects';\n",
+          )
+          replace_once(
+              '__tests__/stars-payment.test.ts',
+              '  registerStarsPayments,\n  setPaymentMode,',
+              '  registerStarsPayments,\n  recoverPaidBundles,\n  setPaymentMode,',
+          )
+          append_before_last(
+              '__tests__/stars-payment.test.ts',
+              '\n});',
+              """
+
+  test('recovers an already-paid Stars obligation after switching checkout mode to BTC', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const task = makeParams().task;
+    db.prepare(`
+      INSERT INTO star_result_bundles (
+        id, user_id, chat_id, target, locale, request_kind, story_ids,
+        task_json, result_count, price_stars, status, created_at, expires_at,
+        paid_at, attempt_count, last_attempt_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAID', ?, ?, ?, 0, ?)
+    `).run(
+      'recover-in-btc', '123', '123', '@target', 'en', 'current', '[101]',
+      JSON.stringify(task), 1, 25, now - 2000, now + 2000, now - 2000, now - 2000,
+    );
+    db.prepare(`
+      INSERT INTO star_payments (
+        telegram_payment_charge_id, bundle_id, user_id, amount_stars, paid_at
+      ) VALUES ('charge-recover', 'recover-in-btc', '123', 25, ?)
+    `).run(now - 2000);
+    setPaymentMode('btc', 'test');
+    (enqueueDownloadFx as jest.Mock).mockClear();
+
+    await recoverPaidBundles();
+
+    expect(enqueueDownloadFx).toHaveBeenCalledWith(
+      expect.objectContaining({ telegram_id: '123', target_username: '@target' }),
+    );
+  });
+""",
+          )
+
+          print('Applied PR 310 review fixes successfully.')
+          PY
+
+      - name: Prepare writable data directory
+        run: |
+          sudo mkdir -p /data
+          sudo chmod 777 /data
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run full Jest suite
+        run: timeout 300s npm test -- --runInBand --forceExit
+
+      - name: Commit validated fixes
+        shell: bash
+        run: |
+          rm -f .github/workflows/pr310-review-fixes.yml
+          git config user.name "chatgpt-codex-connector[bot]"
+          git config user.email "199175422+chatgpt-codex-connector[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes produced"
+            exit 1
+          fi
+          git commit -m "fix(stars): resolve remaining payment and monitor review findings"
+          git push origin HEAD:hotfix/stars-payment-safety
