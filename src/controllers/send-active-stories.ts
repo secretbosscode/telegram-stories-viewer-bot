@@ -119,12 +119,13 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       if (uploadableStories.length === 1) {
         const single = uploadableStories[0];
         const captionText = `${single.caption ? single.caption + '\n\n' : ''}Active story from ${task.link}`;
-        const media: any = {
-          media: { source: single.buffer! },
-          type: single.mediaType,
-          caption: captionText.slice(0, 1024),
-        };
-        await bot.telegram.sendMediaGroup(task.chatId, [media]);
+        const media = { source: single.buffer! };
+        const extra = { caption: captionText.slice(0, 1024) };
+        if (single.mediaType === 'photo') {
+          await bot.telegram.sendPhoto(task.chatId, media, extra);
+        } else {
+          await bot.telegram.sendVideo(task.chatId, media, extra);
+        }
       } else {
         // --- Send in chunks (albums) ---
         const chunkedList = chunkMediafiles(uploadableStories);
