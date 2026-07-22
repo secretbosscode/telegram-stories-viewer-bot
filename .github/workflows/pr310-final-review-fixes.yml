@@ -33,7 +33,9 @@ jobs:
           cache: npm
 
       - name: Apply remaining review fixes
-        run: python3 scripts/pr310-final-review-fixes.py
+        run: |
+          set -o pipefail
+          python3 scripts/pr310-final-review-fixes.py 2>&1 | tee patch.log
 
       - name: Prepare runtime data directory
         run: |
@@ -44,16 +46,32 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Build TypeScript
-        run: npm run build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
 
       - name: Run full Jest suite
-        run: timeout 360s npm test -- --runInBand --forceExit
+        run: |
+          set -o pipefail
+          timeout 360s npm test -- --runInBand --forceExit 2>&1 | tee jest.log
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr310-final-review-logs
+          path: |
+            patch.log
+            build.log
+            jest.log
+          if-no-files-found: ignore
 
       - name: Commit validated fixes
         shell: bash
         run: |
           rm -f .github/workflows/pr310-final-review-fixes.yml
           rm -f scripts/pr310-final-review-fixes.py
+          rm -f patch.log build.log jest.log
           git config user.name "chatgpt-codex-connector[bot]"
           git config user.email "199175422+chatgpt-codex-connector[bot]@users.noreply.github.com"
           git add -A
