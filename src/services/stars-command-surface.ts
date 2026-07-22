@@ -27,9 +27,10 @@ import {
   getStarsMonitorPrice,
   getStarsMonitorTargetLimit,
   initializeStarsModeSafety,
+  setStarsMonitorPrice,
 } from './stars-mode-safety';
 
-const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v2';
+const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v3';
 const syncedChats = new Set<string>();
 let registered = false;
 
@@ -55,6 +56,7 @@ function getAdminCommands(locale: string) {
   return [
     { command: 'starsadmin', description: t(locale, 'cmd.starsadmin') },
     { command: 'setstarsprice', description: 'Set the Stars result price' },
+    { command: 'setmonitorprice', description: 'Set week/month monitoring price' },
     { command: 'refundstars', description: 'Refund a Stars charge' },
     { command: 'setpremium', description: t(locale, 'cmd.setpremium') },
     { command: 'unsetpremium', description: t(locale, 'cmd.unsetpremium') },
@@ -100,13 +102,22 @@ async function syncChatCommands(
   if (!isStarsMode()) return;
   const cacheKey = `${chatId}:${userId}`;
   if (!force && syncedChats.has(cacheKey)) return;
+
+  const numericChatId = Number(chatId);
+  const numericUserId = Number(userId);
+  if (!Number.isFinite(numericChatId) || !Number.isFinite(numericUserId)) return;
+
+  // Private chats can use a chat scope. Group and supergroup menus must use a
+  // member scope so one admin/Premium user cannot replace everyone else's menu.
+  const scope: any = chatId === userId
+    ? { type: 'chat', chat_id: numericChatId }
+    : { type: 'chat_member', chat_id: numericChatId, user_id: numericUserId };
+
   try {
-    await bot.telegram.setMyCommands(buildCommands(locale, userId), {
-      scope: { type: 'chat', chat_id: Number(chatId) },
-    });
+    await bot.telegram.setMyCommands(buildCommands(locale, userId), { scope });
     syncedChats.add(cacheKey);
   } catch (error) {
-    console.warn(`[Stars] Could not update command menu for ${chatId}:`, error);
+    console.warn(`[Stars] Could not update command menu for ${chatId}/${userId}:`, error);
   }
 }
 
@@ -231,6 +242,25 @@ async function handleStarsUnmonitor(ctx: any, next: () => Promise<void>): Promis
   return ctx.reply(t(locale, 'stars.monitorStopped', { target: input }));
 }
 
+async function handleSetMonitorPrice(ctx: any): Promise<void> {
+  const locale = ctx.from?.language_code || 'en';
+  const args = String(ctx.message?.text || '').trim().split(/\s+/).slice(1);
+  const plan = args[0] === 'week' || args[0] === 'month' ? args[0] : undefined;
+  const value = Number(args[1]);
+
+  if (!plan || !Number.isInteger(value) || value < 1 || value > 10_000) {
+    await ctx.reply('Usage: /setmonitorprice <week|month> <1-10000>');
+    return;
+  }
+
+  const old = getStarsMonitorPrice(plan);
+  if (!setStarsMonitorPrice(plan, value, String(ctx.from.id))) {
+    await ctx.reply(t(locale, 'stars.adminInvalidPrice'));
+    return;
+  }
+  await ctx.reply(`✅ ${plan === 'week' ? '7-day' : '30-day'} monitoring changed from ⭐${old} to ⭐${value}. Existing invoices keep their original price.`);
+}
+
 async function createMonitorInvoice(ctx: any, plan: 'week' | 'month'): Promise<void> {
   const locale = ctx.from?.language_code || 'en';
   if (!isStarsMode() || !areStarsEnabled()) {
@@ -339,6 +369,9 @@ export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
     if (command === 'help') return renderStarsHelp(ctx, bot);
     if (command === 'monitor') return handleStarsMonitor(ctx, next);
     if (command === 'unmonitor') return handleStarsUnmonitor(ctx, next);
+    if (command === 'setmonitorprice' && ctx.from?.id === BOT_ADMIN_ID) {
+      return handleSetMonitorPrice(ctx);
+    }
 
     if (command && !allowedCommandNames(locale, userId).has(command)) {
       await ctx.reply(t(locale, 'stars.commandUnavailable'));
