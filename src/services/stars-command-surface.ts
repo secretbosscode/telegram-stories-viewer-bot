@@ -1,30 +1,45 @@
+import { randomUUID } from 'crypto';
 import type { Telegraf } from 'telegraf';
 import { BOT_ADMIN_ID } from 'config/env-config';
 import { IContextBot } from 'config/context-interface';
 import { db } from 'db';
 import { t } from 'lib/i18n';
-import { isStarsMode } from './stars-payment';
+import { saveUser } from '../repositories/user-repository';
+import { isUserPremium } from './premium-service';
+import {
+  addProfileMonitor,
+  formatMonitorTarget,
+  listUserMonitors,
+  refreshMonitorUsername,
+  removeProfileMonitor,
+  userMonitorCount,
+} from './monitor-service';
+import {
+  areStarsEnabled,
+  getBundleTtlMinutes,
+  getStarsPrice,
+  isStarsMode,
+} from './stars-payment';
+import {
+  authorizeStarsMonitorRemoval,
+  clearStarsMonitorRemovalAuthorization,
+  getStarsMonitoringEntitlement,
+  getStarsMonitorPrice,
+  getStarsMonitorTargetLimit,
+  initializeStarsModeSafety,
+} from './stars-mode-safety';
 
-const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v1';
+const COMMAND_SCOPE_MIGRATION_KEY = 'stars_command_scope_v2';
 const syncedChats = new Set<string>();
 let registered = false;
-
-function isPremium(userId: string): boolean {
-  const row = db
-    .prepare('SELECT is_premium, premium_until FROM users WHERE telegram_id = ?')
-    .get(userId) as { is_premium?: number; premium_until?: number | null } | undefined;
-  if (!row?.is_premium) return false;
-  return !row.premium_until || row.premium_until >= Math.floor(Date.now() / 1000);
-}
 
 function getStarsBaseCommands(locale: string) {
   return [
     { command: 'start', description: t(locale, 'cmd.start') },
     { command: 'help', description: t(locale, 'cmd.help') },
-    { command: 'premium', description: t(locale, 'cmd.premium') },
-    { command: 'upgrade', description: t(locale, 'cmd.upgrade') },
+    { command: 'monitor', description: t(locale, 'cmd.monitor') },
+    { command: 'unmonitor', description: t(locale, 'cmd.unmonitor') },
     { command: 'queue', description: t(locale, 'cmd.queue') },
-    { command: 'invite', description: t(locale, 'cmd.invite') },
     { command: 'profile', description: t(locale, 'cmd.profile') },
     { command: 'bugs', description: t(locale, 'cmd.bugs') },
     { command: 'paysupport', description: t(locale, 'cmd.paysupport') },
@@ -33,11 +48,7 @@ function getStarsBaseCommands(locale: string) {
 }
 
 function getPremiumCommands(locale: string) {
-  return [
-    { command: 'monitor', description: t(locale, 'cmd.monitor') },
-    { command: 'unmonitor', description: t(locale, 'cmd.unmonitor') },
-    { command: 'archive', description: t(locale, 'cmd.archive') },
-  ];
+  return [{ command: 'archive', description: t(locale, 'cmd.archive') }];
 }
 
 function getAdminCommands(locale: string) {
@@ -68,97 +79,227 @@ function getAdminCommands(locale: string) {
 function buildCommands(locale: string, userId?: string) {
   const commands = [...getStarsBaseCommands(locale)];
   const admin = userId === String(BOT_ADMIN_ID);
-  if (admin || (userId && isPremium(userId))) {
+  if (admin || (userId && isUserPremium(userId))) {
     commands.push(...getPremiumCommands(locale));
   }
   if (admin) commands.push(...getAdminCommands(locale));
   return commands;
 }
 
+function allowedCommandNames(locale: string, userId?: string): Set<string> {
+  return new Set(buildCommands(locale, userId).map((item) => item.command));
+}
+
 async function syncChatCommands(
   bot: Telegraf<IContextBot>,
   chatId: string,
+  userId: string,
   locale: string,
   force = false,
 ): Promise<void> {
   if (!isStarsMode()) return;
-  if (!force && syncedChats.has(chatId)) return;
+  const cacheKey = `${chatId}:${userId}`;
+  if (!force && syncedChats.has(cacheKey)) return;
   try {
-    await bot.telegram.setMyCommands(buildCommands(locale, chatId), {
+    await bot.telegram.setMyCommands(buildCommands(locale, userId), {
       scope: { type: 'chat', chat_id: Number(chatId) },
     });
-    syncedChats.add(chatId);
+    syncedChats.add(cacheKey);
   } catch (error) {
     console.warn(`[Stars] Could not update command menu for ${chatId}:`, error);
   }
 }
 
-async function renderStarsHelp(ctx: any): Promise<void> {
+function prices() {
+  return {
+    resultPrice: getStarsPrice(),
+    weekPrice: getStarsMonitorPrice('week'),
+    monthPrice: getStarsMonitorPrice('month'),
+    maxTargets: getStarsMonitorTargetLimit(),
+  };
+}
+
+async function renderStarsStart(ctx: any, bot: Telegraf<IContextBot>): Promise<void> {
+  if (ctx.from) await saveUser(ctx.from);
   const locale = ctx.from?.language_code || 'en';
   const userId = String(ctx.from?.id ?? '');
-  const admin = userId === String(BOT_ADMIN_ID);
-  const premium = isPremium(userId);
-  let text = t(locale, 'help.header') + '\n\n';
-  text += t(locale, 'help.generalStars', {
-    cmdStart: t(locale, 'cmd.start'),
-    cmdHelp: t(locale, 'cmd.help'),
-    cmdPremium: t(locale, 'cmd.premium'),
-    cmdUpgrade: t(locale, 'cmd.upgrade'),
-    cmdQueue: t(locale, 'cmd.queue'),
-    cmdInvite: t(locale, 'cmd.invite'),
-    cmdProfile: t(locale, 'cmd.profile'),
-    cmdBugs: t(locale, 'cmd.bugs'),
-    cmdPaysupport: t(locale, 'cmd.paysupport'),
-    cmdTerms: t(locale, 'cmd.terms'),
+  const chatId = String(ctx.chat?.id ?? ctx.from?.id ?? '');
+  await ctx.reply(t(locale, 'stars.startText', prices()), { parse_mode: 'Markdown' });
+  await syncChatCommands(bot, chatId, userId, locale, true);
+}
+
+async function renderStarsHelp(ctx: any, bot: Telegraf<IContextBot>): Promise<void> {
+  const locale = ctx.from?.language_code || 'en';
+  const userId = String(ctx.from?.id ?? '');
+  const chatId = String(ctx.chat?.id ?? ctx.from?.id ?? '');
+  await ctx.reply(t(locale, 'stars.helpText', prices()), { parse_mode: 'Markdown' });
+  await syncChatCommands(bot, chatId, userId, locale, true);
+}
+
+function monitorPlanKeyboard(locale: string) {
+  const weekPrice = getStarsMonitorPrice('week');
+  const monthPrice = getStarsMonitorPrice('month');
+  return {
+    inline_keyboard: [
+      [{ text: `7d • ⭐${weekPrice}`, callback_data: 'starsmonitor:buy:week' }],
+      [{ text: `30d • ⭐${monthPrice}`, callback_data: 'starsmonitor:buy:month' }],
+    ],
+  };
+}
+
+async function showMonitorPlans(ctx: any): Promise<void> {
+  const locale = ctx.from?.language_code || 'en';
+  await ctx.reply(t(locale, 'stars.monitorPlans', prices()), {
+    parse_mode: 'Markdown',
+    reply_markup: monitorPlanKeyboard(locale),
   });
-  if (admin || premium) {
-    text += '\n' + t(locale, 'help.premium', {
-      cmdMonitor: t(locale, 'cmd.monitor'),
-      cmdUnmonitor: t(locale, 'cmd.unmonitor'),
-      cmdArchive: t(locale, 'cmd.archive'),
-    });
+}
+
+function formatExpiry(locale: string, epoch: number): string {
+  try {
+    return new Date(epoch * 1000).toLocaleString(locale || 'en');
+  } catch {
+    return new Date(epoch * 1000).toLocaleString();
   }
-  if (admin) {
-    text += '\n' + t(locale, 'help.admin', {
-      cmdSetpremium: t(locale, 'cmd.setpremium'),
-      cmdUnsetpremium: t(locale, 'cmd.unsetpremium'),
-      cmdIspremium: t(locale, 'cmd.ispremium'),
-      cmdListpremium: t(locale, 'cmd.listpremium'),
-      cmdUsers: t(locale, 'cmd.users'),
-      cmdHistory: t(locale, 'cmd.history'),
-      cmdBlock: t(locale, 'cmd.block'),
-      cmdUnblock: t(locale, 'cmd.unblock'),
-      cmdBlocklist: t(locale, 'cmd.blocklist'),
-      cmdStatus: t(locale, 'cmd.status'),
-      cmdWelcome: t(locale, 'cmd.welcome'),
-      cmdRestart: t(locale, 'cmd.restart'),
-      cmdFlush: t(locale, 'cmd.flush'),
-      cmdForcemonitor: t(locale, 'cmd.forcemonitor'),
-      cmdStopmonitor: t(locale, 'cmd.stopmonitor'),
-      cmdGlobalstories: t(locale, 'cmd.globalstories'),
-      cmdListbugs: t(locale, 'cmd.listbugs'),
-      globalHiddenHint: t(locale, 'global.hiddenHint'),
-      neverExpires: t(locale, 'premium.neverExpires'),
-    });
-    text += `\n/starsadmin - ${t(locale, 'cmd.starsadmin')}`;
+}
+
+async function showActiveMonitoring(ctx: any, userId: string): Promise<void> {
+  const locale = ctx.from?.language_code || 'en';
+  const entitlement = getStarsMonitoringEntitlement(userId);
+  if (!entitlement) return showMonitorPlans(ctx);
+
+  let monitors = listUserMonitors(userId);
+  for (const monitor of monitors) {
+    await refreshMonitorUsername(monitor);
   }
-  await syncChatCommands(ctx.telegram ? ({ telegram: ctx.telegram } as Telegraf<IContextBot>) : ctx, userId, locale, true);
+  monitors = listUserMonitors(userId);
+
+  let text = t(locale, 'stars.monitorActive', {
+    expires: formatExpiry(locale, entitlement.expiresAt),
+    count: monitors.length,
+    maxTargets: entitlement.maxTargets,
+  });
+  text += monitors.length
+    ? `\n\n${t(locale, 'stars.monitorList', {
+        list: monitors.map((monitor, index) => `${index + 1}. ${formatMonitorTarget(monitor)}`).join('\n'),
+      })}`
+    : `\n\n${t(locale, 'stars.monitorNoTargets')}`;
   await ctx.reply(text, { parse_mode: 'Markdown' });
+}
+
+async function handleStarsMonitor(ctx: any, next: () => Promise<void>): Promise<void> {
+  const userId = String(ctx.from?.id ?? '');
+  if (ctx.from?.id === BOT_ADMIN_ID || isUserPremium(userId)) return next();
+
+  const locale = ctx.from?.language_code || 'en';
+  const entitlement = getStarsMonitoringEntitlement(userId);
+  const args = String(ctx.message?.text || '').split(/\s+/).slice(1);
+  if (!args.length) return showActiveMonitoring(ctx, userId);
+  if (!entitlement) return showMonitorPlans(ctx);
+  if (userMonitorCount(userId) >= entitlement.maxTargets) {
+    return ctx.reply(t(locale, 'stars.monitorLimit', { maxTargets: entitlement.maxTargets }));
+  }
+
+  const input = args[0];
+  const username = input.replace(/^@/, '');
+  const added = await addProfileMonitor(userId, username);
+  if (!added) return ctx.reply(t(locale, 'stars.monitorAlready'));
+  return ctx.reply(t(locale, 'stars.monitorStarted', { target: input }));
+}
+
+async function handleStarsUnmonitor(ctx: any, next: () => Promise<void>): Promise<void> {
+  const userId = String(ctx.from?.id ?? '');
+  if (ctx.from?.id === BOT_ADMIN_ID || isUserPremium(userId)) return next();
+
+  const locale = ctx.from?.language_code || 'en';
+  const args = String(ctx.message?.text || '').split(/\s+/).slice(1);
+  if (!args.length) return showActiveMonitoring(ctx, userId);
+
+  const input = args[0];
+  const username = input.replace(/^@/, '');
+  const existing = listUserMonitors(userId).find(
+    (monitor) =>
+      monitor.target_username?.replace(/^@/, '').toLowerCase() === username.toLowerCase() ||
+      monitor.target_id === username,
+  );
+  if (existing) authorizeStarsMonitorRemoval(userId, existing.target_id);
+  try {
+    await removeProfileMonitor(userId, username);
+  } finally {
+    if (existing) clearStarsMonitorRemovalAuthorization(userId, existing.target_id);
+  }
+  return ctx.reply(t(locale, 'stars.monitorStopped', { target: input }));
+}
+
+async function createMonitorInvoice(ctx: any, plan: 'week' | 'month'): Promise<void> {
+  const locale = ctx.from?.language_code || 'en';
+  if (!isStarsMode() || !areStarsEnabled()) {
+    await ctx.answerCbQuery(t(locale, 'stars.paymentUnavailable'), { show_alert: true });
+    return;
+  }
+
+  const userId = String(ctx.from?.id ?? '');
+  const chatId = String(ctx.chat?.id ?? ctx.from?.id ?? '');
+  const id = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const price = getStarsMonitorPrice(plan);
+  const maxTargets = getStarsMonitorTargetLimit();
+  const duration = plan === 'week' ? '7d' : '30d';
+  const requestKind = plan === 'week' ? 'monitor_week' : 'monitor_month';
+
+  db.prepare(
+    `INSERT INTO star_result_bundles (
+       id, user_id, chat_id, target, locale, request_kind, story_ids,
+       task_json, result_count, price_stars, status, created_at, expires_at
+     ) VALUES (?, ?, ?, 'story-monitoring', ?, ?, '[]', ?, ?, ?, 'OFFERED', ?, ?)`,
+  ).run(
+    id,
+    userId,
+    chatId,
+    locale,
+    requestKind,
+    JSON.stringify({
+      chatId,
+      link: 'story-monitoring',
+      linkType: 'username',
+      locale,
+      initTime: Date.now(),
+      user: ctx.from,
+      monitorPlan: plan,
+    }),
+    maxTargets,
+    price,
+    now,
+    now + getBundleTtlMinutes() * 60,
+  );
+
+  await (ctx.telegram as any).callApi('sendInvoice', {
+    chat_id: chatId,
+    title: t(locale, 'stars.monitorInvoiceTitle'),
+    description: t(locale, 'stars.monitorInvoiceDescription', { duration, maxTargets }),
+    payload: id,
+    currency: 'XTR',
+    prices: [{
+      label: t(locale, 'stars.monitorInvoiceLabel', { duration }),
+      amount: price,
+    }],
+    start_parameter: `monitor_${plan}_${id.replace(/-/g, '')}`,
+  });
+  await ctx.answerCbQuery();
 }
 
 async function migrateExistingCommandScopes(bot: Telegraf<IContextBot>): Promise<void> {
   if (!isStarsMode()) return;
-  const done = db
-    .prepare('SELECT value FROM bot_settings WHERE key = ?')
-    .get(COMMAND_SCOPE_MIGRATION_KEY) as { value?: string } | undefined;
+  const done = db.prepare('SELECT value FROM bot_settings WHERE key = ?').get(
+    COMMAND_SCOPE_MIGRATION_KEY,
+  ) as { value?: string } | undefined;
   if (done?.value === '1') return;
 
-  const users = db
-    .prepare('SELECT telegram_id, language FROM users ORDER BY created_at ASC')
-    .all() as { telegram_id: string; language?: string }[];
-
+  const users = db.prepare(
+    'SELECT telegram_id, language FROM users ORDER BY created_at ASC',
+  ).all() as { telegram_id: string; language?: string }[];
   for (const user of users) {
-    await syncChatCommands(bot, user.telegram_id, user.language || 'en', true);
+    await syncChatCommands(bot, user.telegram_id, user.telegram_id, user.language || 'en', true);
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
 
@@ -169,44 +310,62 @@ async function migrateExistingCommandScopes(bot: Telegraf<IContextBot>): Promise
   ).run(COMMAND_SCOPE_MIGRATION_KEY, Math.floor(Date.now() / 1000));
 }
 
+function looksLikeStoryRequest(text: string): boolean {
+  return (
+    text.startsWith('@') ||
+    text.startsWith('+') ||
+    /^https?:\/\//i.test(text) ||
+    text.includes('t.me/')
+  );
+}
+
 export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
-  // Existing Jest suites build lightweight bot/database mocks and are not
-  // integration tests for Telegram command menus. Avoid delayed production
-  // migrations in that environment.
+  initializeStarsModeSafety(bot);
   if (process.env.NODE_ENV === 'test') return;
   if (registered) return;
   registered = true;
 
-  // This middleware is registered before the legacy command handlers. In Stars
-  // mode it consumes only the obsolete BTC/trial commands and the help command;
-  // all proven bot behavior continues through next().
   bot.use(async (ctx: any, next: () => Promise<void>) => {
     if (!isStarsMode()) return next();
-    const text = String(ctx.message?.text || '').split('@')[0].trim();
-    const locale = ctx.from?.language_code || 'en';
-    const userId = ctx.from?.id ? String(ctx.from.id) : undefined;
 
-    if (text === '/help') {
-      await renderStarsHelp(ctx);
+    const rawText = String(ctx.message?.text || '').trim();
+    const locale = ctx.from?.language_code || 'en';
+    const userId = String(ctx.from?.id ?? '');
+    const chatId = String(ctx.chat?.id ?? ctx.from?.id ?? '');
+    const commandMatch = rawText.match(/^\/([a-z0-9_]+)(?:@[a-z0-9_]+)?(?:\s|$)/i);
+    const command = commandMatch?.[1]?.toLowerCase();
+
+    if (command === 'start') return renderStarsStart(ctx, bot);
+    if (command === 'help') return renderStarsHelp(ctx, bot);
+    if (command === 'monitor') return handleStarsMonitor(ctx, next);
+    if (command === 'unmonitor') return handleStarsUnmonitor(ctx, next);
+
+    if (command && !allowedCommandNames(locale, userId).has(command)) {
+      await ctx.reply(t(locale, 'stars.commandUnavailable'));
+      await syncChatCommands(bot, chatId, userId, locale, true);
       return;
     }
-    if (text === '/freetrial') {
-      await ctx.reply(t(locale, 'stars.trialDisabled'));
-      if (userId) await syncChatCommands(bot, userId, locale, true);
-      return;
-    }
-    if (text === '/verify' || text.startsWith('/verify ')) {
-      await ctx.reply(t(locale, 'stars.verifyDisabled'));
-      if (userId) await syncChatCommands(bot, userId, locale, true);
+
+    if (
+      !command &&
+      looksLikeStoryRequest(rawText) &&
+      !areStarsEnabled() &&
+      ctx.from?.id !== BOT_ADMIN_ID &&
+      !isUserPremium(userId)
+    ) {
+      await ctx.reply(t(locale, 'stars.requestPaused'));
       return;
     }
 
     await next();
-    if (userId) await syncChatCommands(bot, userId, locale);
+    if (userId && chatId) await syncChatCommands(bot, chatId, userId, locale);
   });
 
-  // index.ts currently writes the legacy global menu during startup. Reapply
-  // the Stars menu immediately afterward without changing that proven file.
+  bot.action(/^starsmonitor:buy:(week|month)$/, async (ctx: any) => {
+    if (!isStarsMode()) return ctx.answerCbQuery();
+    await createMonitorInvoice(ctx, ctx.match[1] as 'week' | 'month');
+  });
+
   setTimeout(async () => {
     if (!isStarsMode()) return;
     try {
