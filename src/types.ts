@@ -22,6 +22,14 @@ export interface UserInfo {
   globalStoriesState?: string;
   globalStoriesShouldUseNext?: boolean;
   globalStoriesHasMore?: boolean;
+  /** Bypasses the Stars offer because Telegram already confirmed payment. */
+  starsUnlocked?: boolean;
+  /** Persistent result bundle associated with a paid delivery. */
+  starsBundleId?: string;
+  /** Telegram charge ID retained for refunds and idempotency. */
+  starsPaymentChargeId?: string;
+  /** Exact story IDs shown in the original paid offer. */
+  starsExpectedStoryIds?: number[];
 }
 
 // DownloadQueueItem: An item in the download queue (DB structure)
