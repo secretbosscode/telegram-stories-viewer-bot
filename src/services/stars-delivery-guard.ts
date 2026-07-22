@@ -1,3 +1,4 @@
+import { BOT_ADMIN_ID } from 'config/env-config';
 import { db } from 'db';
 
 // Telegram can redeliver successful_payment updates, and the bot can restart
@@ -6,6 +7,7 @@ import { db } from 'db';
 // error. This preserves idempotent delivery without changing queue-manager.
 db.exec(`
   DROP TRIGGER IF EXISTS route_star_delivery_to_bundle_chat;
+  DROP TRIGGER IF EXISTS preserve_star_requester_entitlement;
 
   CREATE TRIGGER IF NOT EXISTS preserve_active_star_attempt_budget
   BEFORE UPDATE OF attempt_count ON star_result_bundles
@@ -32,6 +34,31 @@ db.exec(`
     )
   BEGIN
     SELECT RAISE(IGNORE);
+  END;
+
+  -- Queue lookups join users through telegram_id, which is the delivery chat.
+  -- For group requests that loses the member's Premium/admin entitlement. Restore
+  -- the entitlement from the preserved requester identity before processing.
+  CREATE TRIGGER preserve_star_requester_entitlement
+  AFTER INSERT ON download_queue
+  WHEN json_extract(NEW.task_details, '$.user.id') IS NOT NULL
+    AND (
+      CAST(json_extract(NEW.task_details, '$.user.id') AS TEXT) = '${BOT_ADMIN_ID}'
+      OR EXISTS (
+        SELECT 1
+        FROM users u
+        WHERE u.telegram_id = CAST(json_extract(NEW.task_details, '$.user.id') AS TEXT)
+          AND COALESCE(u.is_premium, 0) = 1
+          AND (
+            u.premium_until IS NULL
+            OR u.premium_until >= CAST(strftime('%s','now') AS INTEGER)
+          )
+      )
+    )
+  BEGIN
+    UPDATE download_queue
+    SET task_details = json_set(task_details, '$.isPremium', 1)
+    WHERE id = NEW.id;
   END;
 
   -- Queue ownership and payment ownership are deliberately different for group
