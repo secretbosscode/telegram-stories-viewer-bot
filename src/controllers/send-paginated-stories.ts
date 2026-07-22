@@ -112,7 +112,7 @@ export async function sendPaginatedStories({
     }
 
     if (fallbackCandidates.length > 0) {
-      deliveredCount += await sendStoryFallbacks(task, fallbackCandidates);
+      deliveredCount += (await sendStoryFallbacks(task, fallbackCandidates)).length;
     }
 
     if (deliveredCount === 0) {
