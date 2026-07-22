@@ -11,11 +11,15 @@ import { SendStoriesArgs, MappedStoryItem, StoriesModel, NotifyAdminParams } fro
 import { downloadStories, mapStories } from 'controllers/download-stories';
 import { notifyAdmin } from 'controllers/send-message';
 import { sendStoryFallbacks } from 'controllers/story-fallback';
+import { PartialStoryDeliveryError } from 'controllers/send-paginated-stories';
 import { ensureStealthMode } from 'services/stealth-mode';
 
 /**
- * Sends active stories and returns the exact story IDs that were delivered as
- * Telegram media or as valid exported fallback links.
+ * Sends active stories and returns the exact story IDs delivered as Telegram
+ * media or valid exported fallback links.
+ *
+ * Paid Stars bundles and monitoring alerts always deliver the complete input
+ * set in one job. Ordinary interactive requests retain the five-item paging UI.
  */
 export async function sendActiveStories({
   stories,
@@ -27,8 +31,9 @@ export async function sendActiveStories({
   let hasMorePages = false;
   const nextStories: Record<string, number[]> = {};
   const PER_PAGE = 5;
+  const deliverAll = Boolean(task.starsBundleId || (task as any).monitorDelivery);
 
-  if (stories.length > PER_PAGE) {
+  if (!deliverAll && stories.length > PER_PAGE) {
     hasMorePages = true;
     const currentStories: MappedStoryItem[] = mapped.slice(0, PER_PAGE);
     for (let i = PER_PAGE; i < mapped.length; i += PER_PAGE) {
@@ -36,25 +41,23 @@ export async function sendActiveStories({
       const to = Math.min(i + PER_PAGE, mapped.length);
       nextStories[`${from}-${to}`] = mapped
         .slice(i, i + PER_PAGE)
-        .map((x: MappedStoryItem) => x.id);
+        .map((story: MappedStoryItem) => story.id);
     }
     mapped = currentStories;
   }
 
-  const storiesWithoutMedia: MappedStoryItem[] = mapped.filter(
-    (x: MappedStoryItem) => !x.media,
-  );
+  const storiesWithoutMedia = mapped.filter((story: MappedStoryItem) => !story.media);
   if (storiesWithoutMedia.length > 0) {
-    mapped = mapped.filter((x: MappedStoryItem) => Boolean(x.media));
+    mapped = mapped.filter((story: MappedStoryItem) => Boolean(story.media));
     try {
       const client = await Userbot.getInstance();
       const entity = await client.getEntity(task.link!);
-      const ids = storiesWithoutMedia.map((x: MappedStoryItem) => x.id);
+      const ids = storiesWithoutMedia.map((story: MappedStoryItem) => story.id);
       await ensureStealthMode();
-      const storiesWithMediaApi = await client.invoke(
+      const response = await client.invoke(
         new Api.stories.GetStoriesByID({ id: ids, peer: entity }),
       );
-      mapped.push(...mapStories(storiesWithMediaApi.stories));
+      mapped.push(...mapStories(response.stories));
     } catch (error) {
       console.error('[sendActiveStories] Error re-fetching stories without media:', error);
     }
@@ -75,18 +78,17 @@ export async function sendActiveStories({
       t(task.locale, 'active.downloading', { user: task.link }),
     ).catch((error) => {
       console.error(
-        `[sendActiveStories] Failed to send 'Downloading Active stories' message to ${task.chatId}:`,
+        `[sendActiveStories] Failed to send downloading message to ${task.chatId}:`,
         error,
       );
     });
 
     const downloadResult = await downloadStories(mapped, 'active');
-
-    const uploadableStories: MappedStoryItem[] = mapped.filter(
-      (story: MappedStoryItem) => story.buffer && story.bufferSize! <= 47,
+    const uploadableStories = mapped.filter(
+      (story: MappedStoryItem) => story.buffer && Number(story.bufferSize ?? 0) <= 47,
     );
     const oversizeStories = mapped.filter(
-      (story: MappedStoryItem) => story.buffer && story.bufferSize! > 47,
+      (story: MappedStoryItem) => story.buffer && Number(story.bufferSize ?? 0) > 47,
     );
     const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
     const fallbackCandidates = [
@@ -105,15 +107,12 @@ export async function sendActiveStories({
           user: task.link,
         }),
       ).catch((error) => {
-        console.error(
-          `[sendActiveStories] Failed to send 'Uploading' message to ${task.chatId}:`,
-          error,
-        );
+        console.error(`[sendActiveStories] Failed to send uploading message to ${task.chatId}:`, error);
       });
 
       if (uploadableStories.length === 1) {
         const single = uploadableStories[0];
-        const captionText = `${single.caption ? single.caption + '\n\n' : ''}Active story from ${task.link}`;
+        const captionText = `${single.caption ? `${single.caption}\n\n` : ''}Active story from ${task.link}`;
         const media = { source: single.buffer! };
         const extra = { caption: captionText.slice(0, 1024) };
         if (single.mediaType === 'photo') {
@@ -123,8 +122,7 @@ export async function sendActiveStories({
         }
         deliveredStoryIds.add(single.id);
       } else {
-        const chunkedList = chunkMediafiles(uploadableStories);
-        for (const album of chunkedList) {
+        for (const album of chunkMediafiles(uploadableStories)) {
           await bot.telegram.sendMediaGroup(
             task.chatId,
             album.map((story: MappedStoryItem) => {
@@ -151,18 +149,16 @@ export async function sendActiveStories({
     }
 
     if (hasMorePages) {
-      const btns = Object.entries(nextStories).map(
-        ([pages, nextStoriesIds]: [string, number[]]) => ({
-          text: `📥 ${pages} 📥`,
-          callback_data: `${task.link}&${JSON.stringify(nextStoriesIds)}`,
-        }),
-      );
-      const keyboard = btns.reduce(
-        (acc: InlineKeyboardButton[][], curr: InlineKeyboardButton, index: number) => {
-          const chunkIndex = Math.floor(index / 3);
-          if (!acc[chunkIndex]) acc[chunkIndex] = [];
-          acc[chunkIndex].push(curr);
-          return acc;
+      const buttons = Object.entries(nextStories).map(([pages, ids]) => ({
+        text: `📥 ${pages} 📥`,
+        callback_data: `${task.link}&${JSON.stringify(ids)}`,
+      }));
+      const keyboard = buttons.reduce(
+        (rows: InlineKeyboardButton[][], button: InlineKeyboardButton, index: number) => {
+          const row = Math.floor(index / 3);
+          if (!rows[row]) rows[row] = [];
+          rows[row].push(button);
+          return rows;
         },
         [],
       );
@@ -185,24 +181,18 @@ export async function sendActiveStories({
     } as NotifyAdminParams);
 
     return [...deliveredStoryIds];
-  } catch (error: any) {
+  } catch (error) {
     notifyAdmin({
       task,
       status: 'error',
       errorInfo: { cause: error },
     } as NotifyAdminParams);
     console.error('[sendActiveStories] Error sending ACTIVE stories:', error);
-    try {
-      await bot.telegram
-        .sendMessage(task.chatId, t(task.locale, 'active.error'))
-        .catch((notifyError) => {
-          console.error(
-            `[sendActiveStories] Failed to notify ${task.chatId} about general error:`,
-            notifyError,
-          );
-        });
-    } catch (_) {
-      // Ignore notification failures; the original delivery error is rethrown.
+    await bot.telegram.sendMessage(task.chatId, t(task.locale, 'active.error')).catch(() => {});
+
+    const partialIds = [...deliveredStoryIds];
+    if (partialIds.length > 0) {
+      throw new PartialStoryDeliveryError(error, partialIds);
     }
     throw error;
   }
