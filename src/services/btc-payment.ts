@@ -27,6 +27,8 @@ import { extendPremium, getPremiumDaysLeft, calcPremiumDays } from './premium-se
 import type { Telegraf } from 'telegraf';
 import { t } from 'lib/i18n';
 import { findUserById } from '../repositories/user-repository';
+import { isStarsMode, registerStarsPayments } from './stars-payment';
+import { registerStarsCommandSurface } from './stars-command-surface';
 const bip32 = BIP32Factory(ecc);
 
 const DEFAULT_FETCH_TIMEOUT = 15_000; // 15 seconds
@@ -58,6 +60,11 @@ function normalizeXpub(xpub: string): string {
 var botInstance: Telegraf<IContextBot> | null = null;
 export function setBotInstance(b: Telegraf<IContextBot>): void {
   botInstance = b;
+  // Reuse the existing payment bootstrap rather than modifying the bot's large
+  // and proven index.ts. Stars handlers are mode-aware and remain dormant in
+  // legacy BTC mode.
+  registerStarsPayments(b);
+  registerStarsCommandSurface(b);
 }
 
 export interface PaymentCheckResult {
@@ -81,6 +88,8 @@ function scheduleInvoiceCheck(
   checkStart: number,
   nextCheck?: number,
 ): void {
+  if (isStarsMode()) return;
+
   const doCheck = async () => {
     const inv = getInvoice(invoice.id);
     if (!inv) {
@@ -310,6 +319,9 @@ export async function createInvoice(
   userId: string,
   expectedUsd: number,
 ): Promise<PaymentRow> {
+  if (isStarsMode()) {
+    throw new Error('BTC invoices are disabled in Telegram Stars mode');
+  }
   const price = await getBtcPriceUsd();
   const invoiceAmount = Math.round((expectedUsd / price) * 1e8) / 1e8;
   const expires = Math.floor(Date.now() / 1000) + 60 * 60;
@@ -367,6 +379,7 @@ export async function checkPayment(
   invoice: PaymentRow,
   checkStart = 0,
 ): Promise<PaymentCheckResult> {
+  if (isStarsMode()) return { invoice: null };
   const balance = await queryAddressBalance(invoice.user_address);
   let receivedFromUser = 0;
   const unexpected = new Set<string>();
@@ -442,6 +455,7 @@ export async function checkPayment(
 }
 
 export async function verifyPaymentByTxid(txid: string): Promise<PaymentRow | null> {
+  if (isStarsMode()) return null;
   if (isTxidUsed(txid)) return null;
   const tx = await fetchTransactionById(txid);
   if (!tx) return null;
@@ -488,6 +502,7 @@ export async function verifyPaymentByTxid(txid: string): Promise<PaymentRow | nu
 }
 
 export function schedulePaymentCheck(ctx: IContextBot): void {
+  if (isStarsMode()) return;
   const state = ctx.session?.upgrade;
   if (!state || !state.fromAddress) return;
 
@@ -501,6 +516,7 @@ export function schedulePaymentCheck(ctx: IContextBot): void {
 }
 
 export function resumePendingChecks(): void {
+  if (isStarsMode()) return;
   const rows = listPaymentChecks();
   for (const row of rows) {
     const inv = getInvoice(row.invoice_id);
