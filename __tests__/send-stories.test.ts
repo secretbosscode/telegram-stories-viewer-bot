@@ -8,10 +8,22 @@ jest.mock('../src/config/env-config', () => ({
   LOG_FILE: '/tmp/test.log',
 }));
 
-const sendParticularStory = jest.fn();
+const sendParticularStory: any = jest.fn(async () => [1]);
 jest.mock('../src/controllers/send-particular-story', () => ({ sendParticularStory }));
+
+class PartialStoryDeliveryError extends Error {
+  deliveredStoryIds: number[];
+  constructor(deliveredStoryIds: number[]) {
+    super('partial batch failure');
+    this.deliveredStoryIds = deliveredStoryIds;
+  }
+}
 const sendPaginatedStories: any = jest.fn(async () => [1]);
-jest.mock('../src/controllers/send-paginated-stories', () => ({ sendPaginatedStories }));
+jest.mock('../src/controllers/send-paginated-stories', () => ({
+  sendPaginatedStories,
+  PartialStoryDeliveryError,
+}));
+
 const sendActiveStories: any = jest.fn(async () => []);
 jest.mock('../src/controllers/send-active-stories', () => ({ sendActiveStories }));
 const sendPinnedStories = jest.fn();
@@ -53,6 +65,7 @@ describe('sendStoriesFx', () => {
     maybeOfferStoryUnlock.mockResolvedValue(false);
     isStarsMode.mockReturnValue(false);
     areStarsEnabled.mockReturnValue(true);
+    sendParticularStory.mockResolvedValue([1]);
     sendPaginatedStories.mockResolvedValue([1]);
     sendActiveStories.mockResolvedValue([]);
   });
@@ -124,6 +137,27 @@ describe('sendStoriesFx', () => {
     );
   });
 
+  test('refunds a paid particular story when Telegram received no media', async () => {
+    sendParticularStory.mockResolvedValue([]);
+
+    await sendStoriesFx({
+      particularStory: { id: 66 } as any,
+      task: {
+        chatId: '66',
+        link: '@target',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+        starsUnlocked: true,
+        starsBundleId: 'bundle-particular',
+        starsExpectedStoryIds: [66],
+      },
+    } as any);
+
+    expect(markStarsBundleDelivered).not.toHaveBeenCalled();
+    expect(refundUndeliverableStarsBundle).toHaveBeenCalledWith('bundle-particular');
+  });
+
   test('refunds a paid bundle when no media or fallback was sent', async () => {
     sendPaginatedStories.mockResolvedValue([]);
 
@@ -169,11 +203,31 @@ describe('sendStoriesFx', () => {
       expect.objectContaining({ message: expect.stringContaining('1/2') }),
     );
     expect(refundUndeliverableStarsBundle).toHaveBeenCalledWith('bundle-partial');
-    expect(bot.telegram.sendMessage).not.toHaveBeenCalledWith(
-      '88',
-      expect.stringContaining('completed'),
-      expect.anything(),
+  });
+
+  test('refunds instead of retrying when a later media batch throws', async () => {
+    sendPaginatedStories.mockRejectedValue(new PartialStoryDeliveryError([88]));
+
+    await sendStoriesFx({
+      paginatedStories: [{ id: 88 }, { id: 89 }] as any,
+      task: {
+        chatId: '88',
+        link: '@target',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+        starsUnlocked: true,
+        starsBundleId: 'bundle-batch-error',
+        starsExpectedStoryIds: [88, 89],
+      },
+    } as any);
+
+    expect(recordStarsDeliveryFailure).toHaveBeenCalledWith(
+      'bundle-batch-error',
+      expect.any(PartialStoryDeliveryError),
     );
+    expect(refundUndeliverableStarsBundle).toHaveBeenCalledWith('bundle-batch-error');
+    expect(markStarsBundleDelivered).not.toHaveBeenCalled();
   });
 
   test('marks a paid bundle delivered only when every purchased ID was delivered', async () => {
