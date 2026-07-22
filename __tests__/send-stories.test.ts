@@ -38,6 +38,7 @@ const recordStarsDeliveryFailure = jest.fn();
 const refundUndeliverableStarsBundle = jest.fn(async () => true);
 const isStarsMode = jest.fn(() => false);
 const areStarsEnabled = jest.fn(() => true);
+const isStarsBundleDeliverable = jest.fn(() => true);
 jest.mock('../src/services/stars-payment', () => ({
   maybeOfferStoryUnlock,
   markStarsBundleDelivered,
@@ -45,6 +46,7 @@ jest.mock('../src/services/stars-payment', () => ({
   refundUndeliverableStarsBundle,
   isStarsMode,
   areStarsEnabled,
+  isStarsBundleDeliverable,
 }));
 
 const sendTemporaryMessage = jest.fn();
@@ -65,6 +67,7 @@ describe('sendStoriesFx', () => {
     maybeOfferStoryUnlock.mockResolvedValue(false);
     isStarsMode.mockReturnValue(false);
     areStarsEnabled.mockReturnValue(true);
+    isStarsBundleDeliverable.mockReturnValue(true);
     sendParticularStory.mockResolvedValue([1]);
     sendPaginatedStories.mockResolvedValue([1]);
     sendActiveStories.mockResolvedValue([]);
@@ -135,6 +138,30 @@ describe('sendStoriesFx', () => {
       '55',
       expect.stringContaining('paused'),
     );
+  });
+
+
+
+  test('does not send paid media after refund fencing begins', async () => {
+    isStarsBundleDeliverable.mockReturnValue(false);
+
+    await sendStoriesFx({
+      particularStory: { id: 88 } as any,
+      task: {
+        chatId: '88',
+        link: '@target',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+        starsUnlocked: true,
+        starsBundleId: 'bundle-refunding',
+        starsExpectedStoryIds: [88],
+      },
+    } as any);
+
+    expect(sendParticularStory).not.toHaveBeenCalled();
+    expect(markStarsBundleDelivered).not.toHaveBeenCalled();
+    expect(refundUndeliverableStarsBundle).not.toHaveBeenCalled();
   });
 
   test('refunds a paid particular story when Telegram received no media', async () => {

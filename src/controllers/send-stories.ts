@@ -27,6 +27,7 @@ import { mapStories } from 'controllers/download-stories';
 import {
   areStarsEnabled,
   isStarsMode,
+  isStarsBundleDeliverable,
   markStarsBundleDelivered,
   maybeOfferStoryUnlock,
   recordStarsDeliveryFailure,
@@ -66,6 +67,11 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
 
     const requesterId = String(task.user?.id ?? task.chatId);
     const isAdmin = requesterId === String(BOT_ADMIN_ID);
+
+    if (task.starsBundleId && !isStarsBundleDeliverable(task.starsBundleId)) {
+      console.warn(`[Stars] Skipping delivery for non-deliverable bundle ${task.starsBundleId}`);
+      return;
+    }
 
     if (
       isStarsMode() &&

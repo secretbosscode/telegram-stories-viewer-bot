@@ -326,12 +326,15 @@ async function createMonitorInvoice(ctx: any, plan: 'week' | 'month'): Promise<v
   await ctx.answerCbQuery();
 }
 
-async function migrateExistingCommandScopes(bot: Telegraf<IContextBot>): Promise<void> {
+async function migrateExistingCommandScopes(
+  bot: Telegraf<IContextBot>,
+  force = false,
+): Promise<void> {
   if (!isStarsMode()) return;
   const done = db.prepare('SELECT value FROM bot_settings WHERE key = ?').get(
     COMMAND_SCOPE_MIGRATION_KEY,
   ) as { value?: string } | undefined;
-  if (done?.value === '1') return;
+  if (!force && done?.value === '1') return;
 
   const legacyGroups = db.prepare(`
     SELECT DISTINCT group_id
@@ -390,6 +393,18 @@ function looksLikeStoryRequest(text: string): boolean {
   );
 }
 
+export async function synchronizeStarsCommandMenus(
+  bot: Telegraf<IContextBot>,
+  force = false,
+): Promise<void> {
+  if (!isStarsMode()) return;
+  await bot.telegram.setMyCommands(getStarsBaseCommands('en'));
+  await bot.telegram.setMyCommands(buildCommands('en', String(BOT_ADMIN_ID)), {
+    scope: { type: 'chat', chat_id: BOT_ADMIN_ID },
+  });
+  await migrateExistingCommandScopes(bot, force);
+}
+
 export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
   initializeStarsModeSafety(bot);
   if (process.env.NODE_ENV === 'test') return;
@@ -443,11 +458,7 @@ export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
   setTimeout(async () => {
     if (!isStarsMode()) return;
     try {
-      await bot.telegram.setMyCommands(getStarsBaseCommands('en'));
-      await bot.telegram.setMyCommands(buildCommands('en', String(BOT_ADMIN_ID)), {
-        scope: { type: 'chat', chat_id: BOT_ADMIN_ID },
-      });
-      await migrateExistingCommandScopes(bot);
+      await synchronizeStarsCommandMenus(bot);
     } catch (error) {
       console.error('[Stars] Failed to synchronize command menus:', error);
     }

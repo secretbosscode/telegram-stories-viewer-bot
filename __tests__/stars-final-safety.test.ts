@@ -42,6 +42,14 @@ describe('final Stars safety invariants', () => {
     expect(index).toContain('if (!isStarsMode()) {');
   });
 
+  test('switching to Stars forces an immediate command-menu rebuild', () => {
+    const payment = source('src/services/stars-payment.ts');
+    const commands = source('src/services/stars-command-surface.ts');
+    expect(commands).toContain('export async function synchronizeStarsCommandMenus');
+    expect(commands).toContain('migrateExistingCommandScopes(bot, force)');
+    expect(payment).toContain('await synchronizeStarsCommandMenus(bot, true)');
+  });
+
   test('monitor limits are atomic and Premium eligibility survives Stars refunds', () => {
     const safety = source('src/services/stars-mode-safety.ts');
     const commands = source('src/services/stars-command-surface.ts');
