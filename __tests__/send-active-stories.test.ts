@@ -26,7 +26,14 @@ jest.mock('config/userbot', () => ({
   Userbot: { getInstance: jest.fn() },
 }));
 
-const bot = { telegram: { sendMediaGroup: jest.fn(), sendMessage: jest.fn() } } as any;
+const bot = {
+  telegram: {
+    sendMediaGroup: jest.fn(),
+    sendMessage: jest.fn(),
+    sendPhoto: jest.fn(),
+    sendVideo: jest.fn(),
+  },
+} as any;
 jest.mock('index', () => ({ bot }));
 
 jest.mock('lib/i18n', () => ({ t: () => '' }));
@@ -39,7 +46,7 @@ describe('sendActiveStories single story caption', () => {
     jest.clearAllMocks();
   });
 
-  test('includes active story info in caption for single story', async () => {
+  test('sends one photo directly with active story info in the caption', async () => {
     const story: MappedStoryItem = {
       id: 1,
       media: {} as any,
@@ -62,10 +69,12 @@ describe('sendActiveStories single story caption', () => {
 
     await sendActiveStories(args);
 
-    expect(bot.telegram.sendMediaGroup).toHaveBeenCalledTimes(1);
-    const media = (bot.telegram.sendMediaGroup as jest.Mock).mock.calls[0][1] as any[];
-    expect(media[0].caption).toBe('Original\n\nActive story from user');
+    expect(bot.telegram.sendMediaGroup).not.toHaveBeenCalled();
+    expect(bot.telegram.sendPhoto).toHaveBeenCalledWith(
+      '1',
+      { source: story.buffer },
+      { caption: 'Original\n\nActive story from user' },
+    );
     expect(sendTemporaryMessage).toHaveBeenCalledTimes(2);
   });
 });
-
