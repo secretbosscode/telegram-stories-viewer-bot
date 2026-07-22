@@ -34,6 +34,15 @@ function getSetting(key: string): string | undefined {
 
 function initializeSafetySchema(): void {
   const now = nowSeconds();
+
+  // Recreate these triggers so upgrades always receive the latest safety rules.
+  db.exec(`
+    DROP TRIGGER IF EXISTS bind_star_bundle_requesting_user;
+    DROP TRIGGER IF EXISTS fulfill_star_monitor_purchase;
+    DROP TRIGGER IF EXISTS revoke_latest_star_monitor_refund;
+    DROP TRIGGER IF EXISTS preserve_active_star_monitors;
+  `);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS star_monitor_entitlements (
       user_id TEXT PRIMARY KEY NOT NULL,
@@ -44,6 +53,17 @@ function initializeSafetySchema(): void {
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS star_monitor_grants (
+      bundle_id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL,
+      duration_seconds INTEGER NOT NULL,
+      granted_at INTEGER NOT NULL,
+      refunded_at INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS star_monitor_grants_user_idx
+      ON star_monitor_grants (user_id, granted_at DESC);
+
     CREATE TABLE IF NOT EXISTS star_monitor_delete_authorizations (
       telegram_id TEXT NOT NULL,
       target_id TEXT NOT NULL,
@@ -51,7 +71,7 @@ function initializeSafetySchema(): void {
       PRIMARY KEY (telegram_id, target_id)
     );
 
-    CREATE TRIGGER IF NOT EXISTS bind_star_bundle_requesting_user
+    CREATE TRIGGER bind_star_bundle_requesting_user
     AFTER INSERT ON star_result_bundles
     WHEN json_extract(NEW.task_json, '$.user.id') IS NOT NULL
     BEGIN
@@ -60,11 +80,25 @@ function initializeSafetySchema(): void {
       WHERE id = NEW.id;
     END;
 
-    CREATE TRIGGER IF NOT EXISTS fulfill_star_monitor_purchase
+    CREATE TRIGGER fulfill_star_monitor_purchase
     AFTER UPDATE OF status ON star_result_bundles
     WHEN NEW.status = 'PAID'
+      AND OLD.status <> 'PAID'
       AND NEW.request_kind IN ('monitor_week', 'monitor_month')
     BEGIN
+      INSERT OR IGNORE INTO star_monitor_grants (
+        bundle_id, user_id, duration_seconds, granted_at, refunded_at
+      ) VALUES (
+        NEW.id,
+        NEW.user_id,
+        CASE NEW.request_kind
+          WHEN 'monitor_week' THEN ${WEEK_SECONDS}
+          ELSE ${MONTH_SECONDS}
+        END,
+        CAST(strftime('%s','now') AS INTEGER),
+        NULL
+      );
+
       INSERT INTO star_monitor_entitlements (
         user_id, expires_at, max_targets, plan, last_bundle_id, updated_at
       ) VALUES (
@@ -102,15 +136,56 @@ function initializeSafetySchema(): void {
       WHERE id = NEW.id;
     END;
 
-    CREATE TRIGGER IF NOT EXISTS revoke_latest_star_monitor_refund
+    CREATE TRIGGER revoke_latest_star_monitor_refund
     AFTER UPDATE OF refunded_at ON star_payments
-    WHEN NEW.refunded_at IS NOT NULL
+    WHEN OLD.refunded_at IS NULL
+      AND NEW.refunded_at IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM star_monitor_grants g WHERE g.bundle_id = NEW.bundle_id
+      )
     BEGIN
+      UPDATE star_monitor_entitlements
+      SET expires_at = MAX(
+            CAST(strftime('%s','now') AS INTEGER),
+            expires_at - COALESCE(
+              (SELECT duration_seconds FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id),
+              0
+            )
+          ),
+          last_bundle_id = COALESCE(
+            (
+              SELECT bundle_id
+              FROM star_monitor_grants
+              WHERE user_id = star_monitor_entitlements.user_id
+                AND bundle_id <> NEW.bundle_id
+                AND refunded_at IS NULL
+              ORDER BY granted_at DESC, bundle_id DESC
+              LIMIT 1
+            ),
+            ''
+          ),
+          updated_at = CAST(strftime('%s','now') AS INTEGER)
+      WHERE user_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      );
+
+      UPDATE star_monitor_grants
+      SET refunded_at = NEW.refunded_at
+      WHERE bundle_id = NEW.bundle_id AND refunded_at IS NULL;
+
       DELETE FROM star_monitor_entitlements
-      WHERE last_bundle_id = NEW.bundle_id;
+      WHERE user_id = (
+        SELECT user_id FROM star_monitor_grants WHERE bundle_id = NEW.bundle_id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM star_monitor_grants g
+        WHERE g.user_id = star_monitor_entitlements.user_id
+          AND g.refunded_at IS NULL
+      );
     END;
 
-    CREATE TRIGGER IF NOT EXISTS preserve_active_star_monitors
+    CREATE TRIGGER preserve_active_star_monitors
     BEFORE DELETE ON monitors
     WHEN EXISTS (
       SELECT 1 FROM star_monitor_entitlements e
@@ -165,9 +240,15 @@ function migrateDefaultPaymentMode(): void {
      WHERE paid_at IS NULL
        AND COALESCE(expires_at, 0) >= ?`,
   ).get(now) as { count?: number } | undefined;
+
   const activeCheck = db.prepare(
-    'SELECT COUNT(*) AS count FROM payment_checks',
-  ).get() as { count?: number } | undefined;
+    `SELECT COUNT(*) AS count
+     FROM payment_checks c
+     JOIN payments p ON p.id = c.invoice_id
+     WHERE p.paid_at IS NULL
+       AND COALESCE(p.expires_at, c.check_start + 86400) >= ?`,
+  ).get(now) as { count?: number } | undefined;
+
   const hasActiveLegacyPayment =
     Number(activeInvoice?.count ?? 0) > 0 || Number(activeCheck?.count ?? 0) > 0;
 
