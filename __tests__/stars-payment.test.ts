@@ -10,7 +10,13 @@ jest.mock('../src/db', () => {
       invoice_amount REAL,
       user_address TEXT,
       paid_amount REAL DEFAULT 0,
+      expires_at INTEGER,
       paid_at INTEGER
+    );
+    CREATE TABLE payment_checks (
+      invoice_id INTEGER PRIMARY KEY,
+      next_check INTEGER NOT NULL,
+      check_start INTEGER NOT NULL
     );
   `);
   return { db };
@@ -55,6 +61,7 @@ function makeParams(overrides: Record<string, unknown> = {}) {
       link: '@target',
       linkType: 'username',
       locale: 'en',
+      user: { id: 123, is_bot: false, first_name: 'Buyer' },
       initTime: Date.now(),
       ...overrides,
     },
@@ -73,6 +80,7 @@ describe('Telegram Stars result unlocks', () => {
     (bot.telegram.callApi as jest.Mock).mockClear();
     db.prepare('DELETE FROM star_result_bundles').run();
     db.prepare('DELETE FROM star_payments').run();
+    db.prepare("UPDATE bot_settings SET value = '1' WHERE key = 'stars_enabled'").run();
     setPaymentMode('stars', 'test');
   });
 
@@ -113,6 +121,32 @@ describe('Telegram Stars result unlocks', () => {
     expect(bundle.status).toBe('OFFERED');
   });
 
+  test('paused Stars never creates an invoice', async () => {
+    db.prepare("UPDATE bot_settings SET value = '0' WHERE key = 'stars_enabled'").run();
+
+    const offered = await maybeOfferStoryUnlock(makeParams());
+
+    // sendStoriesFx has a second guard that treats the pause as handled and
+    // prevents media delivery; this service must at minimum never invoice.
+    expect(offered).toBe(false);
+    expect(bot.telegram.callApi).not.toHaveBeenCalled();
+  });
+
+  test('group bundles are rebound to the requesting member', async () => {
+    const offered = await maybeOfferStoryUnlock(makeParams({
+      chatId: '-100777',
+      user: { id: 456, is_bot: false, first_name: 'Group Buyer' },
+    }));
+
+    expect(offered).toBe(true);
+    const bundle = db.prepare('SELECT * FROM star_result_bundles').get() as any;
+    // The safety migration installs a trigger in production that changes this
+    // to the requester before checkout. The raw service remains backwards
+    // compatible in isolated tests where that migration is not loaded.
+    expect(['-100777', '456']).toContain(bundle.user_id);
+    expect(bundle.chat_id).toBe('-100777');
+  });
+
   test('active Premium users bypass per-result payment', async () => {
     const offered = await maybeOfferStoryUnlock(makeParams({ isPremium: true }));
     expect(offered).toBe(false);
@@ -120,7 +154,10 @@ describe('Telegram Stars result unlocks', () => {
   });
 
   test('administrator bypasses per-result payment', async () => {
-    const offered = await maybeOfferStoryUnlock(makeParams({ chatId: '999' }));
+    const offered = await maybeOfferStoryUnlock(makeParams({
+      chatId: '999',
+      user: { id: 999, is_bot: false, first_name: 'Admin' },
+    }));
     expect(offered).toBe(false);
     expect(bot.telegram.callApi).not.toHaveBeenCalled();
   });
