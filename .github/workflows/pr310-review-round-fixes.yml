@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pr310-review-round-fixes-v3
+  group: pr310-review-round-fixes-v4
   cancel-in-progress: true
 
 jobs:
@@ -31,6 +31,19 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Make patch replacements literal
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/pr310-review-round-fixes.py')
+          text = path.read_text()
+          old = 'updated, count = re.subn(pattern, replacement, text, count=1, flags=flags)'
+          new = 'updated, count = re.subn(pattern, lambda _match: replacement, text, count=1, flags=flags)'
+          if old not in text:
+              raise SystemExit('regex replacement engine marker not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
 
       - name: Apply review-round fixes
         shell: bash
