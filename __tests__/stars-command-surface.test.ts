@@ -39,4 +39,16 @@ describe('Stars command surface', () => {
     expect(source).not.toContain('monitor_day');
     expect(source).not.toContain('monitor_year');
   });
+
+  test('group command menus are scoped to the requesting member', () => {
+    expect(source).toContain("type: 'chat_member'");
+    expect(source).toContain('user_id: numericUserId');
+    expect(source).not.toContain("scope: { type: 'chat', chat_id: Number(chatId) }");
+  });
+
+  test('administrators can tune both monitoring prices without environment changes', () => {
+    expect(source).toContain("command: 'setmonitorprice'");
+    expect(source).toContain("setStarsMonitorPrice(plan, value, String(ctx.from.id))");
+    expect(source).toContain('Usage: /setmonitorprice <week|month> <1-10000>');
+  });
 });
