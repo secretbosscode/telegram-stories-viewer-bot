@@ -78,6 +78,7 @@ import {
   getStarsMonitoringEntitlement,
   getStarsMonitorPrice,
   initializeStarsModeSafety,
+  setStarsMonitorPrice,
 } from '../src/services/stars-mode-safety';
 
 const originalLaunch = jest.fn(async () => undefined);
@@ -92,13 +93,14 @@ function insertMonitorBundle(
   kind: 'monitor_week' | 'monitor_month',
   price: number,
   now: number,
+  maxTargets = 3,
 ): void {
   db.prepare(`
     INSERT INTO star_result_bundles (
       id, user_id, chat_id, target, locale, request_kind, story_ids,
       task_json, result_count, price_stars, status, created_at, expires_at
-    ) VALUES (?, ?, ?, 'story-monitoring', 'en', ?, '[]', '{}', 3, ?, 'OFFERED', ?, ?)
-  `).run(id, userId, userId, kind, price, now, now + 1800);
+    ) VALUES (?, ?, ?, 'story-monitoring', 'en', ?, '[]', '{}', ?, ?, 'OFFERED', ?, ?)
+  `).run(id, userId, userId, kind, maxTargets, price, now, now + 1800);
 }
 
 function payMonitorBundle(
@@ -136,6 +138,8 @@ describe('Stars mode safety migrations', () => {
        VALUES ('payment_mode', 'stars', 0, 'migration')
        ON CONFLICT(key) DO UPDATE SET value = 'stars', updated_by = 'migration'`,
     ).run();
+    db.prepare("UPDATE bot_settings SET value = '199' WHERE key = 'stars_monitor_week_price'").run();
+    db.prepare("UPDATE bot_settings SET value = '499' WHERE key = 'stars_monitor_month_price'").run();
   });
 
   test('automatic mode migration defaults to Stars when no BTC invoice is active', () => {
@@ -217,21 +221,31 @@ describe('Stars mode safety migrations', () => {
     expect(row.chat_id).toBe('-100123');
   });
 
-  test('weekly and monthly monitoring use the two launch prices', () => {
+  test('weekly and monthly monitoring prices are mutable in SQLite', () => {
     expect(getStarsMonitorPrice('week')).toBe(199);
     expect(getStarsMonitorPrice('month')).toBe(499);
+    expect(setStarsMonitorPrice('week', 225, 'admin')).toBe(true);
+    expect(setStarsMonitorPrice('month', 525, 'admin')).toBe(true);
+    expect(getStarsMonitorPrice('week')).toBe(225);
+    expect(getStarsMonitorPrice('month')).toBe(525);
   });
 
-  test('paid weekly monitoring grants three targets and completes without a download job', () => {
+  test('paid weekly monitoring freezes the advertised target limit', () => {
     const now = Math.floor(Date.now() / 1000);
-    insertMonitorBundle('monitor-week', '123', 'monitor_week', 199, now);
+    insertMonitorBundle('monitor-week', '123', 'monitor_week', 199, now, 4);
     payMonitorBundle('monitor-week', '123', 'charge-week', 199, now);
 
     const entitlement = getStarsMonitoringEntitlement('123');
     expect(entitlement).toBeDefined();
-    expect(entitlement?.maxTargets).toBe(3);
+    expect(entitlement?.maxTargets).toBe(4);
     expect(entitlement?.plan).toBe('monitor_week');
     expect((entitlement?.expiresAt ?? 0) - now).toBeGreaterThanOrEqual(604798);
+
+    const grant = db.prepare(
+      "SELECT max_targets, plan FROM star_monitor_grants WHERE bundle_id = 'monitor-week'",
+    ).get() as any;
+    expect(grant.max_targets).toBe(4);
+    expect(grant.plan).toBe('monitor_week');
 
     const bundle = db.prepare(
       "SELECT status, delivered_at FROM star_result_bundles WHERE id = 'monitor-week'",
@@ -252,15 +266,18 @@ describe('Stars mode safety migrations', () => {
     expect(getStarsMonitoringEntitlement('321')).toBeUndefined();
   });
 
-  test('refunding a stacked month preserves the earlier paid week', () => {
+  test('refunding a stacked month restores the earlier week time, plan, and limit', () => {
     const now = Math.floor(Date.now() / 1000);
-    insertMonitorBundle('week-first', '654', 'monitor_week', 199, now);
+    insertMonitorBundle('week-first', '654', 'monitor_week', 199, now, 3);
     payMonitorBundle('week-first', '654', 'charge-week-first', 199, now);
-    const weekExpiry = getStarsMonitoringEntitlement('654')!.expiresAt;
+    const weekEntitlement = getStarsMonitoringEntitlement('654')!;
 
-    insertMonitorBundle('month-second', '654', 'monitor_month', 499, now + 1);
+    insertMonitorBundle('month-second', '654', 'monitor_month', 499, now + 1, 5);
     payMonitorBundle('month-second', '654', 'charge-month-second', 499, now + 1);
-    expect(getStarsMonitoringEntitlement('654')!.expiresAt).toBeGreaterThan(weekExpiry);
+    const stacked = getStarsMonitoringEntitlement('654')!;
+    expect(stacked.expiresAt).toBeGreaterThan(weekEntitlement.expiresAt);
+    expect(stacked.maxTargets).toBe(5);
+    expect(stacked.plan).toBe('monitor_month');
 
     db.prepare(
       "UPDATE star_payments SET refunded_at = ? WHERE telegram_payment_charge_id = 'charge-month-second'",
@@ -268,7 +285,9 @@ describe('Stars mode safety migrations', () => {
 
     const remaining = getStarsMonitoringEntitlement('654');
     expect(remaining).toBeDefined();
-    expect(remaining?.expiresAt).toBeGreaterThanOrEqual(weekExpiry - 1);
-    expect(remaining?.expiresAt).toBeLessThanOrEqual(weekExpiry + 2);
+    expect(remaining?.expiresAt).toBeGreaterThanOrEqual(weekEntitlement.expiresAt - 1);
+    expect(remaining?.expiresAt).toBeLessThanOrEqual(weekEntitlement.expiresAt + 2);
+    expect(remaining?.maxTargets).toBe(3);
+    expect(remaining?.plan).toBe('monitor_week');
   });
 });
