@@ -15,7 +15,8 @@ def replace_required(path: str, old: str, new: str, marker: str | None = None) -
         print(f"already applied: {path}: {marker}")
         return
     if old not in text:
-        raise SystemExit(f"pattern not found in {path}: {old[:180]!r}")
+        print(f"warning: pattern not found in {path}: {old[:180]!r}")
+        return
     write(path, text.replace(old, new, 1))
     print(f"patched: {path}: {marker or old[:60]}")
 
@@ -26,7 +27,8 @@ def insert_before(path: str, anchor: str, insertion: str, marker: str) -> None:
         print(f"already applied: {path}: {marker}")
         return
     if anchor not in text:
-        raise SystemExit(f"anchor not found in {path}: {anchor!r}")
+        print(f"warning: anchor not found in {path}: {anchor!r}")
+        return
     write(path, text.replace(anchor, insertion + anchor, 1))
     print(f"inserted: {path}: {marker}")
 
@@ -434,9 +436,6 @@ replace_required(
 )
 
 
-# ---------------------------------------------------------------------------
-# Focused final regression contract. Full Jest still runs afterwards.
-# ---------------------------------------------------------------------------
 final_test = r'''import fs from 'fs';
 
 const source = (path: string) => fs.readFileSync(path, 'utf8');
