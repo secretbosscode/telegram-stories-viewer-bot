@@ -35,7 +35,6 @@ describe('final Stars safety invariants', () => {
     expect(commands).toContain("type: 'chat_member'");
   });
 
-
   test('Stars menus cannot be overwritten by legacy startup or per-user updates', () => {
     const index = source('src/index.ts');
     expect(index).toContain("import { isStarsMode } from './services/stars-payment'");
