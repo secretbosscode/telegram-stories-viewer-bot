@@ -1,3 +1,7 @@
+jest.mock('../src/services/stars-payment', () => ({
+  isStarsMode: jest.fn(() => false),
+}));
+
 import {
   addPremiumUser,
   isUserPremium,
@@ -69,7 +73,7 @@ describe('premium-service', () => {
     expect(daysLeft).toBeLessThanOrEqual(2);
   });
 
-  test('grantFreeTrial sets premium and marks trial used', () => {
+  test('grantFreeTrial sets premium and marks trial used in legacy mode', () => {
     grantFreeTrial('5');
     const row = db.prepare('SELECT * FROM users WHERE telegram_id = ?').get('5') as any;
     expect(row.is_premium).toBe(1);
