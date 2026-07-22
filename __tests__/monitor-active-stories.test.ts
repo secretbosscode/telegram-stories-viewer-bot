@@ -48,7 +48,7 @@ test('fetches pinned stories once and avoids resending on retries', async () => 
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
 
   const { sendActiveStories } = require('../src/controllers/send-active-stories');
-  const sendActiveStoriesMock = sendActiveStories as jest.Mock;
+  const sendActiveStoriesMock = sendActiveStories as any;
   sendActiveStoriesMock.mockReset().mockResolvedValue(undefined);
 
   await checkSingleMonitor(row.id);
@@ -87,7 +87,7 @@ test('does not resend active story when pinned entry uses the same key', async (
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
 
   const { sendActiveStories } = require('../src/controllers/send-active-stories');
-  const sendActiveStoriesMock = sendActiveStories as jest.Mock;
+  const sendActiveStoriesMock = sendActiveStories as any;
   sendActiveStoriesMock.mockReset().mockResolvedValue(undefined);
 
   await checkSingleMonitor(row.id);
@@ -116,7 +116,7 @@ test('does not persist a story key until delivery succeeds', async () => {
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
 
   const { sendActiveStories } = require('../src/controllers/send-active-stories');
-  const sendActiveStoriesMock = sendActiveStories as jest.Mock;
+  const sendActiveStoriesMock = sendActiveStories as any;
   sendActiveStoriesMock
     .mockReset()
     .mockRejectedValueOnce(new Error('Telegram unavailable'))
