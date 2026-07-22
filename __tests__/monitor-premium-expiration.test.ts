@@ -29,6 +29,15 @@ jest.mock('../src/services/premium-service', () => ({
   isUserPremium: jest.fn(),
 }));
 
+const getStarsMonitoringEntitlement = jest.fn();
+const authorizeStarsMonitorRemoval = jest.fn();
+const clearStarsMonitorRemovalAuthorization = jest.fn();
+jest.mock('../src/services/stars-mode-safety', () => ({
+  getStarsMonitoringEntitlement,
+  authorizeStarsMonitorRemoval,
+  clearStarsMonitorRemovalAuthorization,
+}));
+
 import { addMonitor, getMonitor } from '../src/db';
 import { isUserPremium } from '../src/services/premium-service';
 
@@ -36,6 +45,7 @@ const monitorService = require('../src/services/monitor-service');
 
 afterEach(() => {
   monitorService.stopMonitorLoop();
+  jest.clearAllMocks();
 });
 
 test('removes monitor when user is not premium', async () => {
@@ -47,5 +57,20 @@ test('removes monitor when user is not premium', async () => {
   await monitorService.forceCheckMonitors();
 
   expect(spy).not.toHaveBeenCalled();
+  expect(getMonitor(row.id)).toBeUndefined();
+});
+
+test('explicit removal is authorized when paid monitoring and Premium overlap', async () => {
+  const row = addMonitor('premium-user', '456', 'tester2', null, null);
+  getStarsMonitoringEntitlement.mockReturnValue({
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    maxTargets: 3,
+    plan: 'monitor_week',
+  });
+
+  await monitorService.removeProfileMonitor('premium-user', 'tester2');
+
+  expect(authorizeStarsMonitorRemoval).toHaveBeenCalledWith('premium-user', '456');
+  expect(clearStarsMonitorRemovalAuthorization).toHaveBeenCalledWith('premium-user', '456');
   expect(getMonitor(row.id)).toBeUndefined();
 });
