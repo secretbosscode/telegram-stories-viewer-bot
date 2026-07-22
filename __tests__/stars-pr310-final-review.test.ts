@@ -37,6 +37,27 @@ describe('PR 310 final review regressions', () => {
     expect(monitor).toContain('reconcileStarsMonitorLimit(monitor.telegram_id)');
   });
 
+  test('refund reconciliation rebuilds expiry from remaining purchases', () => {
+    const safety = source('src/services/stars-mode-safety.ts');
+    expect(safety).toContain('WITH RECURSIVE');
+    expect(safety).toContain('ordered_grants AS');
+    expect(safety).toContain('entitlement_timeline(purchase_order, expires_at)');
+    expect(safety).toContain('AND p.refunded_at IS NULL');
+  });
+
+  test('paid monitoring remains controllable in BTC mode', () => {
+    const commands = source('src/services/stars-command-surface.ts');
+    expect(commands).toContain('function getLegacyMonitoringCommands');
+    expect(commands).toContain('const paidMonitoring = Boolean(userId && getStarsMonitoringEntitlement(userId))');
+    expect(commands).toContain("if (paidMonitoring && command === 'monitor')");
+    expect(commands).toContain("if (paidMonitoring && command === 'unmonitor')");
+  });
+
+  test('monitoring deduplicates stories that move from active to pinned', () => {
+    const monitor = source('src/services/monitor-service.ts');
+    expect(monitor).toContain('!persistedActiveKeys.has(key)');
+  });
+
   test('command scopes are tracked and rebuilt in either payment mode', () => {
     const commands = source('src/services/stars-command-surface.ts');
     const payment = source('src/services/stars-payment.ts');
