@@ -4,14 +4,20 @@ import { getActiveInvoiceForUser } from 'db';
 import { bot } from 'index';
 import { sendTemporaryMessage } from 'lib';
 import { t } from 'lib/i18n';
+import { isStarsMode } from 'services/stars-payment';
 
 /**
- * Handle the `/upgrade` command. Creates a BTC invoice and stores
- * the invoice information in the session so the payment can be
- * tracked later.
+ * Handle the `/upgrade` command. Stars mode explains the pay-per-result flow;
+ * legacy BTC mode preserves the existing Premium invoice behavior.
  */
 export async function handleUpgrade(ctx: IContextBot): Promise<void> {
   try {
+    const locale = ctx.from?.language_code || 'en';
+    if (isStarsMode()) {
+      await ctx.reply(t(locale, 'stars.upgradeInfo'));
+      return;
+    }
+
     const userId = String(ctx.from!.id);
     ctx.session ??= {} as any;
 
