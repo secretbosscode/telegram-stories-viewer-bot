@@ -51,3 +51,14 @@ jobs:
           status=$?
           tail -n 220 jest.log
           exit $status
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-logs
+          path: |
+            build.log
+            jest.log
+          if-no-files-found: ignore
+          retention-days: 3
