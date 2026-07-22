@@ -10,15 +10,15 @@ jest.mock('../src/config/env-config', () => ({
 
 const sendParticularStory = jest.fn();
 jest.mock('../src/controllers/send-particular-story', () => ({ sendParticularStory }));
-const sendPaginatedStories = jest.fn(async () => 1);
+const sendPaginatedStories: any = jest.fn(async () => [1]);
 jest.mock('../src/controllers/send-paginated-stories', () => ({ sendPaginatedStories }));
-const sendActiveStories = jest.fn();
+const sendActiveStories: any = jest.fn(async () => []);
 jest.mock('../src/controllers/send-active-stories', () => ({ sendActiveStories }));
 const sendPinnedStories = jest.fn();
 jest.mock('../src/controllers/send-pinned-stories', () => ({ sendPinnedStories }));
 const sendGlobalStories = jest.fn();
 jest.mock('../src/controllers/send-global-stories', () => ({ sendGlobalStories }));
-jest.mock('../src/controllers/download-stories', () => ({ mapStories: jest.fn((s: any) => s) }));
+jest.mock('../src/controllers/download-stories', () => ({ mapStories: jest.fn((stories: any) => stories) }));
 
 const maybeOfferStoryUnlock = jest.fn(async () => false);
 const markStarsBundleDelivered = jest.fn();
@@ -53,12 +53,13 @@ describe('sendStoriesFx', () => {
     maybeOfferStoryUnlock.mockResolvedValue(false);
     isStarsMode.mockReturnValue(false);
     areStarsEnabled.mockReturnValue(true);
-    sendPaginatedStories.mockResolvedValue(1);
+    sendPaginatedStories.mockResolvedValue([1]);
+    sendActiveStories.mockResolvedValue([]);
   });
 
   test('sends persistent completion message', async () => {
     const params: SendStoriesFxParams = {
-      particularStory: {} as any,
+      particularStory: { id: 1 } as any,
       task: {
         chatId: '1',
         link: 'user',
@@ -104,7 +105,7 @@ describe('sendStoriesFx', () => {
     areStarsEnabled.mockReturnValue(false);
 
     await sendStoriesFx({
-      particularStory: {} as any,
+      particularStory: { id: 55 } as any,
       task: {
         chatId: '55',
         link: '@target',
@@ -123,8 +124,8 @@ describe('sendStoriesFx', () => {
     );
   });
 
-  test('does not mark a paid bundle delivered when no media or fallback was sent', async () => {
-    sendPaginatedStories.mockResolvedValue(0);
+  test('refunds a paid bundle when no media or fallback was sent', async () => {
+    sendPaginatedStories.mockResolvedValue([]);
 
     await sendStoriesFx({
       paginatedStories: [{ id: 77 }] as any,
@@ -136,18 +137,50 @@ describe('sendStoriesFx', () => {
         initTime: 0,
         starsUnlocked: true,
         starsBundleId: 'bundle-77',
+        starsExpectedStoryIds: [77],
       },
     } as any);
 
     expect(markStarsBundleDelivered).not.toHaveBeenCalled();
+    expect(recordStarsDeliveryFailure).toHaveBeenCalled();
     expect(refundUndeliverableStarsBundle).toHaveBeenCalledWith('bundle-77');
   });
 
-  test('marks a paid bundle delivered only after at least one result was sent', async () => {
-    sendPaginatedStories.mockResolvedValue(1);
+  test('refunds a partially delivered paid bundle instead of finalizing it', async () => {
+    sendPaginatedStories.mockResolvedValue([88]);
 
     await sendStoriesFx({
-      paginatedStories: [{ id: 88 }] as any,
+      paginatedStories: [{ id: 88 }, { id: 89 }] as any,
+      task: {
+        chatId: '88',
+        link: '@target',
+        linkType: 'username',
+        locale: 'en',
+        initTime: 0,
+        starsUnlocked: true,
+        starsBundleId: 'bundle-partial',
+        starsExpectedStoryIds: [88, 89],
+      },
+    } as any);
+
+    expect(markStarsBundleDelivered).not.toHaveBeenCalled();
+    expect(recordStarsDeliveryFailure).toHaveBeenCalledWith(
+      'bundle-partial',
+      expect.objectContaining({ message: expect.stringContaining('1/2') }),
+    );
+    expect(refundUndeliverableStarsBundle).toHaveBeenCalledWith('bundle-partial');
+    expect(bot.telegram.sendMessage).not.toHaveBeenCalledWith(
+      '88',
+      expect.stringContaining('completed'),
+      expect.anything(),
+    );
+  });
+
+  test('marks a paid bundle delivered only when every purchased ID was delivered', async () => {
+    sendPaginatedStories.mockResolvedValue([88, 89]);
+
+    await sendStoriesFx({
+      paginatedStories: [{ id: 88 }, { id: 89 }] as any,
       task: {
         chatId: '88',
         link: '@target',
@@ -156,6 +189,7 @@ describe('sendStoriesFx', () => {
         initTime: 0,
         starsUnlocked: true,
         starsBundleId: 'bundle-88',
+        starsExpectedStoryIds: [88, 89],
       },
     } as any);
 
