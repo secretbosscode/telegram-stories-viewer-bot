@@ -84,26 +84,21 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       return;
     }
 
-    if (await maybeOfferStoryUnlock(params)) {
-      return;
-    }
+    if (await maybeOfferStoryUnlock(params)) return;
 
     let storiesWereSent = false;
-    let deliveredStoryIds: number[] = [];
+    const deliveredStoryIds: number[] = [];
 
     try {
       if (particularStory) {
-        deliveredStoryIds = await sendParticularStory({ story: particularStory, task });
-        storiesWereSent = deliveredStoryIds.length > 0;
-      }
-      else if (paginatedStories && paginatedStories.length > 0) {
-        deliveredStoryIds = await sendPaginatedStories({
-          stories: paginatedStories,
-          task,
-        });
-        storiesWereSent = deliveredStoryIds.length > 0;
-      }
-      else if (globalStories && globalStories.length > 0) {
+        const ids = await sendParticularStory({ story: particularStory, task });
+        deliveredStoryIds.push(...ids);
+        storiesWereSent = ids.length > 0;
+      } else if (paginatedStories && paginatedStories.length > 0) {
+        const ids = await sendPaginatedStories({ stories: paginatedStories, task });
+        deliveredStoryIds.push(...ids);
+        storiesWereSent = ids.length > 0;
+      } else if (globalStories && globalStories.length > 0) {
         const mappedGlobalStories: MappedStoryItem[] = mapStories(
           globalStories,
           globalStoryOwnersById,
@@ -114,12 +109,10 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
           storyOwnersById: globalStoryOwnersById,
         });
         storiesWereSent = true;
-      }
-      else {
+      } else {
         if (activeStories.length > 0) {
-          const mappedActiveStories: MappedStoryItem[] = mapStories(activeStories);
           const activeDeliveredIds = await sendActiveStories({
-            stories: mappedActiveStories,
+            stories: mapStories(activeStories),
             task,
           });
           deliveredStoryIds.push(...activeDeliveredIds);
@@ -128,15 +121,17 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
         }
 
         if (pinnedStories.length > 0) {
-          const mappedPinnedStories: MappedStoryItem[] = mapStories(pinnedStories);
-          await sendPinnedStories({ stories: mappedPinnedStories, task });
-          storiesWereSent = true;
+          const pinnedDeliveredIds = await sendPinnedStories({
+            stories: mapStories(pinnedStories),
+            task,
+          });
+          deliveredStoryIds.push(...pinnedDeliveredIds);
+          storiesWereSent = storiesWereSent || pinnedDeliveredIds.length > 0;
           await timeout(2000);
         }
 
         if (archivedStories.length > 0) {
-          const mappedArchivedStories: MappedStoryItem[] = mapStories(archivedStories);
-          await sendArchivedStories({ stories: mappedArchivedStories, task });
+          await sendArchivedStories({ stories: mapStories(archivedStories), task });
           storiesWereSent = true;
         }
       }
@@ -172,8 +167,7 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
           task,
           baseInfo: `📥 Stories sent for ${task.link} (chatId: ${task.chatId})`,
         } as NotifyAdminParams);
-      }
-      else {
+      } else {
         await sendTemporaryMessage(
           bot,
           task.chatId,
@@ -186,8 +180,7 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
           baseInfo: `ℹ️ No stories found for ${task.link} (chatId: ${task.chatId})`,
         } as NotifyAdminParams);
       }
-    }
-    catch (error: any) {
+    } catch (error) {
       if (task.starsBundleId && error instanceof PartialStoryDeliveryError) {
         recordStarsDeliveryFailure(task.starsBundleId, error);
         // Some media already reached Telegram. Never retry the full bundle and
