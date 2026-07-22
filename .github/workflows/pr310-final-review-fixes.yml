@@ -35,7 +35,10 @@ jobs:
       - name: Apply remaining review fixes
         run: |
           set -o pipefail
-          python3 scripts/pr310-final-review-fixes.py 2>&1 | tee patch.log
+          {
+            python3 scripts/pr310-final-review-fixes.py
+            python3 scripts/pr310-final-test-updates.py
+          } 2>&1 | tee patch.log
 
       - name: Prepare runtime data directory
         run: |
@@ -71,6 +74,7 @@ jobs:
         run: |
           rm -f .github/workflows/pr310-final-review-fixes.yml
           rm -f scripts/pr310-final-review-fixes.py
+          rm -f scripts/pr310-final-test-updates.py
           rm -f patch.log build.log jest.log
           git config user.name "chatgpt-codex-connector[bot]"
           git config user.email "199175422+chatgpt-codex-connector[bot]@users.noreply.github.com"
