@@ -3,6 +3,18 @@ import { createHash } from 'crypto';
 
 export const PREMIUM_BASE_DAYS = 30;
 
+function usesStarsPayments(): boolean {
+  try {
+    const row = db
+      .prepare("SELECT value FROM bot_settings WHERE key = 'payment_mode'")
+      .get() as { value?: string } | undefined;
+    return row?.value === 'stars';
+  } catch {
+    // Legacy tests and databases without bot_settings keep the old behavior.
+    return false;
+  }
+}
+
 export function calcPremiumDays(
   invoiceAmount: number,
   paidAmount: number,
@@ -83,8 +95,12 @@ export const extendPremium = (telegramId: string, days: number): void => {
   const base = current > Math.floor(Date.now() / 1000) ? current : Math.floor(Date.now() / 1000);
   const until = base + days * 86400;
   db.prepare(
-    `UPDATE users SET is_premium = 1, premium_until = ? WHERE telegram_id = ?`
-  ).run(until, telegramId);
+    `INSERT INTO users (telegram_id, is_premium, premium_until)
+     VALUES (?, 1, ?)
+     ON CONFLICT(telegram_id) DO UPDATE SET
+       is_premium = 1,
+       premium_until = excluded.premium_until`
+  ).run(telegramId, until);
 };
 
 export const getPremiumDaysLeft = (telegramId: string): number => {
@@ -103,6 +119,10 @@ export const hasUsedFreeTrial = (
   telegramId: string,
   username?: string,
 ): boolean => {
+  // Stars mode is pay-per-result. Treat the retired trial as unavailable while
+  // leaving any already-active premium_until value untouched.
+  if (usesStarsPayments()) return true;
+
   const row = db
     .prepare('SELECT free_trial_used FROM users WHERE telegram_id = ?')
     .get(telegramId) as UserRow | undefined;
@@ -120,6 +140,8 @@ export const hasUsedFreeTrial = (
 };
 
 export const grantFreeTrial = (telegramId: string): void => {
+  if (usesStarsPayments()) return;
+
   const until = Math.floor(Date.now() / 1000) + 7 * 86400;
   db.prepare(
     `INSERT INTO users (telegram_id, is_premium, premium_until, free_trial_used)
@@ -130,4 +152,3 @@ export const grantFreeTrial = (telegramId: string): void => {
        free_trial_used = 1`
   ).run(telegramId, until);
 };
-

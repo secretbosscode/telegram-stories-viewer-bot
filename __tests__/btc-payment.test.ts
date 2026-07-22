@@ -52,7 +52,23 @@ jest.mock('../src/db', () => {
 });
 
 // Mock env-config to supply wallet address
-jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr', BTC_XPUB: '', BTC_YPUB: '', BTC_ZPUB: '' }));
+jest.mock('../src/config/env-config', () => ({
+  BTC_WALLET_ADDRESS: 'addr',
+  BTC_XPUB: '',
+  BTC_YPUB: '',
+  BTC_ZPUB: '',
+  BTC_CONFIGURED: true,
+  BOT_ADMIN_ID: 1,
+}));
+
+// BTC tests intentionally isolate the legacy provider from the Stars runtime.
+jest.mock('../src/services/stars-payment', () => ({
+  isStarsMode: jest.fn(() => false),
+  registerStarsPayments: jest.fn(),
+}));
+jest.mock('../src/services/stars-command-surface', () => ({
+  registerStarsCommandSurface: jest.fn(),
+}));
 
 jest.mock('../src/repositories/user-repository', () => ({
   findUserById: jest.fn(() => ({ language: 'en' })),
@@ -107,35 +123,27 @@ describe('checkPayment tolerance', () => {
       vout: [{ scriptpubkey_address: 'dest', value: 0.91 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
     };
-
     const originalFetch = global.fetch;
     global.fetch = (jest.fn() as any).mockResolvedValue({ json: async () => [tx] });
-
     await btc.checkPayment(invoice as any, 0);
-
     expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 0.91);
     expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
-
     global.fetch = originalFetch as any;
   });
 
   test('older transactions are ignored', async () => {
     const invoice = insertInvoice('u1', 1, 'dest', 0, 0, 'sender');
-
     const tx = {
       txid: 't2',
       vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
       status: { block_time: 1000 },
     };
-
     const originalFetch = global.fetch;
     global.fetch = (jest.fn() as any).mockResolvedValue({
       json: async () => ({ txs: [tx], bitcoin: { usd: 10000 } }),
     });
-
     await btc.checkPayment(invoice as any, 2000);
-
     expect(updatePaidAmount).not.toHaveBeenCalled();
     expect(markInvoicePaid).not.toHaveBeenCalled();
     global.fetch = originalFetch as any;
@@ -163,9 +171,7 @@ describe('verifyPaymentByTxid', () => {
       .mockResolvedValue({ json: async () => tx })
       .mockResolvedValue({ json: async () => tx })
       .mockResolvedValue({ json: async () => ({ data: tx }) });
-
     const res = await btc.verifyPaymentByTxid('abc');
-
     expect(updatePaidAmount).toHaveBeenCalledWith(invoice.id, 1);
     expect(markInvoicePaid).toHaveBeenCalledWith(invoice.id);
     expect(updateFromAddress).toHaveBeenCalledWith(invoice.id, 'sender');
@@ -175,7 +181,7 @@ describe('verifyPaymentByTxid', () => {
   });
 
   test('returns null when sender does not match', async () => {
-    const invoice = insertInvoice('u1', 1, 'dest', 0, 0, 'expected');
+    insertInvoice('u1', 1, 'dest', 0, 0, 'expected');
     const tx = {
       vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'other' } }],
@@ -186,17 +192,15 @@ describe('verifyPaymentByTxid', () => {
       .mockResolvedValue({ json: async () => tx })
       .mockResolvedValue({ json: async () => tx })
       .mockResolvedValue({ json: async () => ({ data: tx }) });
-
     const res = await btc.verifyPaymentByTxid('def');
-
     expect(res).toBeNull();
     expect(markInvoicePaid).not.toHaveBeenCalled();
     global.fetch = originalFetch as any;
   });
 
   test('reused txid is rejected', async () => {
-    const invoice1 = insertInvoice('u1', 1, 'dest', 0, 0);
-    const invoice2 = insertInvoice('u2', 1, 'dest', 1, 0);
+    insertInvoice('u1', 1, 'dest', 0, 0);
+    insertInvoice('u2', 1, 'dest', 1, 0);
     const tx = {
       vout: [{ scriptpubkey_address: 'dest', value: 1 * 1e8 }],
       vin: [{ prevout: { scriptpubkey_address: 'sender' } }],
@@ -207,10 +211,8 @@ describe('verifyPaymentByTxid', () => {
       .mockResolvedValue({ json: async () => tx })
       .mockResolvedValue({ json: async () => tx })
       .mockResolvedValue({ json: async () => ({ data: tx }) });
-
     await btc.verifyPaymentByTxid('xyz');
     const res = await btc.verifyPaymentByTxid('xyz');
-
     expect(res).toBeNull();
     expect(markInvoicePaid).toHaveBeenCalledTimes(1);
     global.fetch = originalFetch as any;

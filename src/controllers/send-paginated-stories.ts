@@ -1,30 +1,41 @@
 // src/controllers/send-paginated-stories.ts
 
-import { bot } from 'index'; // Corrected path to use tsconfig alias
+import { bot } from 'index';
 import { sendTemporaryMessage } from 'lib';
-import { t } from "lib/i18n";
-
-// CORRECTED: Import types from your central types.ts file
-import { SendPaginatedStoriesArgs, MappedStoryItem } from 'types';
-
-// Corrected import path for downloadStories and mapStories
+import { t } from 'lib/i18n';
+import { SendPaginatedStoriesArgs, MappedStoryItem, NotifyAdminParams } from 'types';
 import { downloadStories, mapStories } from 'controllers/download-stories';
 import { notifyAdmin } from 'controllers/send-message';
-import { NotifyAdminParams } from 'types';
 import { sendStoryFallbacks } from 'controllers/story-fallback';
 
+const TELEGRAM_MEDIA_GROUP_LIMIT = 10;
+
+function getStoryCaption(story: MappedStoryItem, task: SendPaginatedStoriesArgs['task']): string {
+  return story.caption ?? (task.starsUnlocked
+    ? `Story from ${task.link}`
+    : `Pinned story ${story.id}`);
+}
+
+async function sendSingleStory(story: MappedStoryItem, task: SendPaginatedStoriesArgs['task']): Promise<void> {
+  const media = { source: story.buffer! };
+  const extra = { caption: getStoryCaption(story, task).slice(0, 1024) };
+  if (story.mediaType === 'photo') {
+    await bot.telegram.sendPhoto(task.chatId, media, extra);
+  } else {
+    await bot.telegram.sendVideo(task.chatId, media, extra);
+  }
+}
 
 /**
  * Sends paginated stories to the user (i.e., a batch/page of stories).
- * @param stories - Array of story items to send.
- * @param task    - User/task context.
+ * Paid Stars deliveries also use this path because they refetch immutable
+ * story IDs. Large paid bundles are split into Telegram-safe groups of ten.
  */
 export async function sendPaginatedStories({
   stories,
   task,
-}: SendPaginatedStoriesArgs) { // <--- Using the imported SendPaginatedStoriesArgs
-  // `mapStories` expects Api.TypeStoryItem[], and `stories` here is Api.TypeStoryItem[]
-  const mapped: MappedStoryItem[] = mapStories(stories); // <--- Explicitly typed mapped to MappedStoryItem[]
+}: SendPaginatedStoriesArgs) {
+  const mapped: MappedStoryItem[] = mapStories(stories);
 
   mapped.forEach((story) => {
     story.source = {
@@ -35,7 +46,6 @@ export async function sendPaginatedStories({
   });
 
   try {
-    // Notify user that download is starting
     await sendTemporaryMessage(bot, task.chatId, t(task.locale, 'download.downloading')).catch(
       (err) => {
         console.error(
@@ -45,7 +55,6 @@ export async function sendPaginatedStories({
       }
     );
 
-    // Download with activity timeout to avoid backlog
     try {
       const controller = new AbortController();
       let lastProgress = Date.now();
@@ -68,13 +77,12 @@ export async function sendPaginatedStories({
       }
 
       const uploadableStories: MappedStoryItem[] = mapped.filter(
-        (x) => x.buffer && x.bufferSize! <= 50 // skip too large files
+        (x) => x.buffer && x.bufferSize! <= 50
       );
 
       const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
 
       if (uploadableStories.length > 0) {
-        // Notify user that upload is starting
         await sendTemporaryMessage(
           bot,
           task.chatId,
@@ -86,29 +94,20 @@ export async function sendPaginatedStories({
           );
         });
 
-        const isSingle = uploadableStories.length === 1;
-
-        await bot.telegram.sendMediaGroup(
-          task.chatId,
-          uploadableStories.map((x) => ({
-            media: { source: x.buffer! },
-            type: x.mediaType,
-            caption: isSingle ? undefined : x.caption ?? `Pinned story ${x.id}`,
-          }))
-        );
-
-        if (isSingle) {
-          const story = uploadableStories[0];
-          await sendTemporaryMessage(
-            bot,
+        for (let offset = 0; offset < uploadableStories.length; offset += TELEGRAM_MEDIA_GROUP_LIMIT) {
+          const batch = uploadableStories.slice(offset, offset + TELEGRAM_MEDIA_GROUP_LIMIT);
+          if (batch.length === 1) {
+            await sendSingleStory(batch[0], task);
+            continue;
+          }
+          await bot.telegram.sendMediaGroup(
             task.chatId,
-            story.caption ?? `Pinned story ${story.id}`,
-          ).catch((err) => {
-            console.error(
-              `[sendPaginatedStories] Failed to send temporary caption to ${task.chatId}:`,
-              err,
-            );
-          });
+            batch.map((story) => ({
+              media: { source: story.buffer! },
+              type: story.mediaType,
+              caption: getStoryCaption(story, task).slice(0, 1024),
+            }))
+          );
         }
       } else {
         await bot.telegram
@@ -136,12 +135,12 @@ export async function sendPaginatedStories({
       throw err;
     }
 
-  } catch (error) { // <--- Error can be 'unknown' or 'any' if not specified
+  } catch (error) {
     notifyAdmin({
       status: 'error',
       task,
       errorInfo: { cause: error },
-    } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
+    } as NotifyAdminParams);
     console.error('[sendPaginatedStories] Error occurred while sending paginated stories:', error);
     try {
       await bot.telegram
@@ -156,7 +155,7 @@ export async function sendPaginatedStories({
           );
         });
     } catch (_) {/* ignore */}
-    throw error; // Essential for Effector's .fail to trigger
+    throw error;
   }
   // No Effector event triggers; queue manager will handle progression!
 }

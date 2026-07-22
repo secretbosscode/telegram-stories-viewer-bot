@@ -20,6 +20,19 @@ const sendGlobalStories = jest.fn();
 jest.mock('../src/controllers/send-global-stories', () => ({ sendGlobalStories }));
 jest.mock('../src/controllers/download-stories', () => ({ mapStories: jest.fn((s: any) => s) }));
 
+// This suite covers the existing delivery orchestrator. Stars offer creation
+// has its own dedicated tests and is kept out of these assertions.
+const maybeOfferStoryUnlock = jest.fn(async () => false);
+const markStarsBundleDelivered = jest.fn();
+const recordStarsDeliveryFailure = jest.fn();
+const refundUndeliverableStarsBundle = jest.fn(async () => true);
+jest.mock('../src/services/stars-payment', () => ({
+  maybeOfferStoryUnlock,
+  markStarsBundleDelivered,
+  recordStarsDeliveryFailure,
+  refundUndeliverableStarsBundle,
+}));
+
 const sendTemporaryMessage = jest.fn();
 jest.mock('../src/lib/helpers.ts', () => ({
   ...(jest.requireActual('../src/lib/helpers.ts') as any),
@@ -35,6 +48,7 @@ import { SendStoriesFxParams } from '../src/types';
 describe('sendStoriesFx', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    maybeOfferStoryUnlock.mockResolvedValue(false);
   });
 
   test('sends persistent completion message', async () => {

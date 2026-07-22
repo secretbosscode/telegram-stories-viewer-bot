@@ -1,6 +1,23 @@
 import { jest } from '@jest/globals';
 // Mock env-config to avoid requiring actual environment variables
-jest.mock('../src/config/env-config', () => ({ BTC_WALLET_ADDRESS: 'addr', BTC_XPUB: '', BTC_YPUB: '', BTC_ZPUB: '' }));
+jest.mock('../src/config/env-config', () => ({
+  BTC_WALLET_ADDRESS: 'addr',
+  BTC_XPUB: '',
+  BTC_YPUB: '',
+  BTC_ZPUB: '',
+  BTC_CONFIGURED: true,
+  BOT_ADMIN_ID: 0,
+  NODE_ENV: 'test',
+}));
+
+// This suite intentionally covers the retained legacy BTC rollback path.
+jest.mock('../src/services/stars-payment', () => ({
+  isStarsMode: jest.fn(() => false),
+  registerStarsPayments: jest.fn(),
+}));
+jest.mock('../src/services/stars-command-surface', () => ({
+  registerStarsCommandSurface: jest.fn(),
+}));
 
 const sendTemporaryMessage = jest.fn();
 jest.mock('../src/lib/helpers.ts', () => ({

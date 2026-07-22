@@ -1,18 +1,17 @@
 # Telegram Stories Viewer Bot
 
-This project packages a Telegram bot for anonymously viewing stories. It is based on the original work by **Kamol Khamidov** but most of the codebase has been rewritten to run completely inside a Docker container.
+This project packages a Telegram bot for anonymously viewing stories. It is based on the original work by **Kamol Khamidov**, but most of the codebase has been rewritten to run completely inside a Docker container.
 
 ## Quick start
 
-1. Copy `.env.example` to `.env` and  (omit ' for phone numbers).ill out the required values (see the
-   *Environment variables* section below for details):
-   - `DEV_BOT_TOKEN` or `PROD_BOT_TOKEN` – your bot token from [BotFather](https://t.me/BotFather)
-   - `USERBOT_API_ID` and `USERBOT_API_HASH` – obtain these from [my.telegram.org](https://my.telegram.org)
-   - `USERBOT_PHONE_NUMBER` – the phone number of the account that will act as the userbot
-   - Optionally `USERBOT_PASSWORD` if that account has two‑factor authentication enabled
+1. Copy `.env.example` to `.env` and fill out the existing required values:
+   - `DEV_BOT_TOKEN` or `PROD_BOT_TOKEN` – your bot token from BotFather
+   - `USERBOT_API_ID` and `USERBOT_API_HASH` – obtain these from my.telegram.org
+   - `USERBOT_PHONE_NUMBER` – the phone number of the account that acts as the userbot
+   - Optionally `USERBOT_PASSWORD` if that account has two-factor authentication enabled
    - Leave `USERBOT_PHONE_CODE` empty on the first run
-   - Fill in `BOT_ADMIN_ID` and either `BTC_WALLET_ADDRESS` or one of `BTC_XPUB`, `BTC_YPUB`, `BTC_ZPUB`
-   - Optional: `LOG_FILE` to change where runtime errors are stored. Set `DEBUG_LOG=true` to also mirror all console output to `/data/debug.log`.
+   - Set `BOT_ADMIN_ID` to the Telegram ID of the bot administrator
+   - Optional: `LOG_FILE` to change where runtime errors are stored. Set `DEBUG_LOG=true` to mirror console output to `/data/debug.log`.
 
 2. Build and start the container:
 
@@ -20,62 +19,109 @@ This project packages a Telegram bot for anonymously viewing stories. It is base
 docker compose up
 ```
 
-The container stores its runtime files in `/data`. Map a persistent directory on
-the host to this path (for example `~/bot-data:/data`). Because the application
-always writes to `/data`, no `DATA_DIR` environment variable is required.
+The container stores runtime files in `/data`. Map a persistent host directory to this path. Because the application always writes to `/data`, no `DATA_DIR` environment variable is required.
 
-The compose file sets `stdin_open: true` and `tty: true` so you can enter the SMS code in the terminal on the first run. When the container prints `USERBOT_PHONE_CODE is required for first login!`, type the code you receive from Telegram. After the session is saved to `/data/userbot-session`, future starts do not require a code and you can run in detached mode with `docker compose up -d`.
+The compose file sets `stdin_open: true` and `tty: true` so the first userbot login code can be entered in the terminal. After the session is saved to `/data/userbot-session`, future starts do not require a code and the service can run with `docker compose up -d`.
 
-Logs are available with `docker logs ghost-stories-bot` and additionally stored in the file pointed to by `LOG_FILE`. When `DEBUG_LOG` is enabled, all console output is mirrored to `/data/debug.log` for troubleshooting.
+Logs are available with `docker logs ghost-stories-bot` and in the file selected by `LOG_FILE`. When `DEBUG_LOG` is enabled, console output is also mirrored to `/data/debug.log`.
+
+## Telegram Stars payments
+
+The normal production mode uses Telegram Stars to sell verified result bundles:
+
+1. A user searches for a profile or story as usual.
+2. The bot checks for results for free.
+3. When no results exist, the user is told that nothing was found and no invoice is created.
+4. When results exist, the bot shows the result count and offers a native Telegram Stars invoice.
+5. After Telegram confirms payment, the bot automatically delivers the exact story IDs included in the offer.
+6. Delivery retries survive restarts. If the purchased bundle becomes impossible to deliver, the bot automatically issues a full Stars refund.
+
+Stars do not require a payment-provider token, merchant environment variables, or a separate wallet configuration. The existing Telegram bot token is used.
+
+### Administration
+
+Use the admin-only command:
+
+```text
+/starsadmin
+```
+
+The panel shows:
+
+- whether Stars purchases are enabled
+- the current result-unlock price
+- purchases and Stars earned
+- pending deliveries
+- failed or refund-pending deliveries
+- completed refunds
+
+The price can be changed immediately with the panel buttons or:
+
+```text
+/setstarsprice 25
+```
+
+New offers use the new price. Existing offers retain the price shown when they were created. No container restart or `.env` edit is required.
+
+Routine payment support is handled privately inside the bot through `/paysupport`. The command checks delivery status, requeues pending delivery, and reports completed refunds without exposing the operator's identity.
+
+### Automatic upgrade behavior
+
+The database migration is additive and runs automatically at startup. Existing users, Premium expiration dates, monitoring configuration, queue data, and BTC payment history are preserved.
+
+Installations with no completed BTC payments start in Telegram Stars mode automatically. Active Premium users and the administrator continue to bypass result payments. Existing Premium or trial expiration dates are honored, but new free trials are not issued in Stars mode.
+
+No new environment variables are required to upgrade an existing installation.
+
+## Legacy BTC mode
+
+The existing BTC Premium implementation remains available as a rollback path when a fixed wallet or extended public key is configured. BTC variables are optional and are no longer required for the bot to start.
+
+In Stars mode:
+
+- no BTC invoices are generated
+- BTC polling is disabled
+- `/verify` is removed from the customer command menu
+- free-trial and BTC payment references are removed from help and customer messaging
+
+An administrator with an existing BTC configuration can select the legacy provider from `/starsadmin`. This is intended as an operational fallback; Telegram Stars is the normal in-bot payment method for digital results.
 
 ## Environment variables
 
-The bot is configured through environment variables. Copy `.env.example` to `.env` and provide the following values:
-
 | Name | Required | Description |
 | ---- | -------- | ----------- |
-| `DEV_BOT_TOKEN` | when `NODE_ENV=development` | Bot token from BotFather used in development mode. |
-| `PROD_BOT_TOKEN` | when `NODE_ENV=production` | Bot token from BotFather used in production. |
-| `USERBOT_API_ID` | yes | API ID from [my.telegram.org](https://my.telegram.org). |
-| `USERBOT_API_HASH` | yes | API hash from [my.telegram.org](https://my.telegram.org). |
+| `DEV_BOT_TOKEN` | when `NODE_ENV=development` | Bot token used in development mode. |
+| `PROD_BOT_TOKEN` | when not in development | Bot token used in production and test mode. |
+| `USERBOT_API_ID` | yes | API ID from my.telegram.org. |
+| `USERBOT_API_HASH` | yes | API hash from my.telegram.org. |
 | `USERBOT_PHONE_NUMBER` | yes | Phone number of the userbot account. |
-| `USERBOT_PASSWORD` | optional | Two‑factor authentication password for that account. |
-| `USERBOT_PHONE_CODE` | only on first run | SMS code for the initial login. Leave empty afterwards. |
+| `USERBOT_PASSWORD` | optional | Two-factor authentication password for the userbot account. |
+| `USERBOT_PHONE_CODE` | first login only | Login code for the initial userbot session. |
 | `BOT_ADMIN_ID` | yes | Telegram ID of the bot administrator. |
-| `BTC_WALLET_ADDRESS` | required* | Fixed Bitcoin address used for payments if no extended key is provided. |
-| `BTC_XPUB` | optional* | Extended public key for deriving unique payment addresses. |
-| `BTC_YPUB` | optional* | Same as above but using the YPUB format. |
-| `BTC_ZPUB` | optional* | Same as above but using the ZPUB format. |
-| `LOG_FILE` | optional | Path for runtime error logs (default `/data/error.log`). |
-| `DEBUG_LOG` | optional | Set to `true` or `1` to mirror all console output to `/data/debug.log`. |
+| `BTC_WALLET_ADDRESS` | optional legacy | Fixed address for legacy BTC Premium mode. |
+| `BTC_XPUB` | optional legacy | Extended public key for legacy BTC mode. |
+| `BTC_YPUB` | optional legacy | Extended public key in YPUB format. |
+| `BTC_ZPUB` | optional legacy | Extended public key in ZPUB format. |
+| `LOG_FILE` | optional | Runtime error log path; defaults to `/data/error.log`. |
+| `DEBUG_LOG` | optional | Set to `true` or `1` to mirror console output to `/data/debug.log`. |
 | `DISABLE_STEALTH_MODE` | optional | Set to `true` or `1` to skip activating Telegram stealth mode. |
 
-`*` At least one of `BTC_WALLET_ADDRESS`, `BTC_XPUB`, `BTC_YPUB` or `BTC_ZPUB` must be set.
-
-### BTC payments
-
-When a user runs `/upgrade` the bot creates an invoice for roughly five dollars worth of BTC. If `BTC_WALLET_ADDRESS` is set, all invoices point to that address. When an extended public key is provided instead (`BTC_XPUB`, `BTC_YPUB` or `BTC_ZPUB`), a new address is derived for each invoice using the BIP32 path `m/0/<index>`. After sending the payment the user confirms it with `/verify <txid>` and Premium access is granted once the transaction is detected.
-If a user sends more BTC than requested, the bot will credit additional Premium days based on the current BTC value (e.g. paying double grants 60 days).
+Stars prices, payment enablement, bundle lifetime, delivery state, and statistics are stored in SQLite and managed by the bot. They are intentionally not environment variables.
 
 ## Usage
 
-Send the bot a username, phone number or link to a story. The bot will fetch the available stories and return them to you. Premium users and administrators can retrieve archived stories with `/archive <@username>`. Premium users can monitor up to five profiles for new stories, profile photo changes and username changes with `/monitor <@username|+15555555555>` and `/unmonitor <@username|+15555555555>` (omit @ for phone numbers).
-Administrators browse stories with the same paginated interface to prevent large downloads from clogging the queue.
-Administrators can fetch the global stories feed with `/globalstories`.
+Send the bot a username, phone number, or direct story link. The bot checks for available stories and, in Stars mode, offers the verified result bundle for purchase only when results exist.
 
-After paying for Premium you can verify the transaction manually with:
-
-```
-/verify <txid>
-```
+Active Premium users and administrators retain the existing bypass behavior. Premium users can retrieve archived stories with `/archive <@username>` and monitor up to five profiles using `/monitor` and `/unmonitor`. Administrators can also fetch the global stories feed with `/globalstories`.
 
 ## Development
 
-The application is written in TypeScript. If you wish to run tests or build locally, install Node.js and run:
+The application is written in TypeScript. Install Node.js and run:
 
 ```bash
 npm install -g npm@11.4.1
 npm install --legacy-peer-deps
+npm run build
 npm test
 ```
 

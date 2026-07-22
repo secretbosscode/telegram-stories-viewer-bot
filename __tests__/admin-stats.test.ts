@@ -13,10 +13,19 @@ jest.mock('../src/db', () => {
   const SyncDatabase = require('../src/db/sqlite-sync').default;
   const db = new SyncDatabase(':memory:');
   db.exec(`
-    CREATE TABLE users (created_at TEXT, language TEXT);
+    CREATE TABLE users (
+      telegram_id TEXT PRIMARY KEY,
+      username TEXT,
+      created_at TEXT,
+      language TEXT
+    );
     CREATE TABLE payments (paid_at INTEGER);
     CREATE TABLE referrals (created_at INTEGER);
     CREATE TABLE download_queue (status TEXT);
+    CREATE TABLE user_request_log (
+      telegram_id TEXT NOT NULL,
+      requested_at INTEGER NOT NULL
+    );
   `);
   return { db };
 });

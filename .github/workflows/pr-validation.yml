@@ -1,0 +1,74 @@
+name: Validate pull request
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - agent/stars-result-unlocks
+
+concurrency:
+  group: pr-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      PROD_BOT_TOKEN: test-token
+      DEV_BOT_TOKEN: test-token
+      USERBOT_API_ID: 1
+      USERBOT_API_HASH: test-hash
+      USERBOT_PHONE_NUMBER: "+15555550100"
+      USERBOT_PASSWORD: ""
+      USERBOT_PHONE_CODE: ""
+      BOT_ADMIN_ID: 999
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Prepare runtime data directory
+        run: |
+          sudo mkdir -p /data
+          sudo chown -R "$USER:$USER" /data
+          rm -f /data/database.db /data/database.db-shm /data/database.db-wal
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --silent >/dev/null 2>&1
+
+      - name: Build TypeScript
+        run: |
+          set +e
+          npm run build --silent > build.log 2>&1
+          status=$?
+          tail -n 120 build.log
+          exit $status
+
+      - name: Run Jest suite
+        run: |
+          set +e
+          timeout 180s npm test -- --runInBand --silent --forceExit > jest.log 2>&1
+          status=$?
+          tail -n 260 jest.log
+          exit $status
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-logs
+          path: |
+            build.log
+            jest.log
+          if-no-files-found: ignore
+          retention-days: 3

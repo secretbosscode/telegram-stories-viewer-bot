@@ -52,6 +52,9 @@ function scheduleNextMonitorCheck() {
       console.error('[Monitor] Scheduled check error:', err);
     }
   }, intervalMs);
+  // The scheduler must not keep an otherwise finished process alive during
+  // clean container shutdowns, one-off scripts, or the Jest suite.
+  monitorTimer.unref?.();
 }
 
 export function getNextMonitorCheck(): number | null {
@@ -373,4 +376,3 @@ export async function checkSingleMonitor(id: number): Promise<void> {
 
   updateMonitorChecked(id);
 }
-

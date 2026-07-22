@@ -22,6 +22,12 @@ import { sendPinnedStories } from 'controllers/send-pinned-stories';
 import { sendGlobalStories } from 'controllers/send-global-stories';
 import { sendArchivedStories } from 'controllers/send-archived-stories';
 import { mapStories } from 'controllers/download-stories';
+import {
+  markStarsBundleDelivered,
+  maybeOfferStoryUnlock,
+  recordStarsDeliveryFailure,
+  refundUndeliverableStarsBundle,
+} from 'services/stars-payment';
 
 /**
  * This is the main orchestrator effect for sending stories.
@@ -41,6 +47,13 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       globalStoryOwnersById,
       task,
     } = params;
+
+    // In Stars mode discovery remains free. The payment boundary sits here,
+    // after Telegram confirmed that results exist but before any media is sent.
+    // Paid, Premium and administrator tasks bypass this gate.
+    if (await maybeOfferStoryUnlock(params)) {
+      return;
+    }
 
     // This flag will track if we actually sent any media to the user.
     let storiesWereSent = false;
@@ -91,6 +104,9 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       // This solves the "confusing silence" problem.
       // =========================================================================
       if (storiesWereSent) {
+        if (task.starsBundleId) {
+          markStarsBundleDelivered(task.starsBundleId);
+        }
         // If we actually sent one or more stories, send the completion message.
         await bot.telegram.sendMessage(
           task.chatId,
@@ -102,6 +118,11 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
           task,
           baseInfo: `📥 Stories sent for ${task.link} (chatId: ${task.chatId})`,
         } as NotifyAdminParams);
+      } else if (task.starsBundleId) {
+        // A user was charged only for a known result set. If those exact story
+        // IDs disappeared before delivery, refund automatically rather than
+        // sending the normal no-results response.
+        await refundUndeliverableStarsBundle(task.starsBundleId);
       } else {
         // If we went through all the logic and sent nothing, inform the user.
         await sendTemporaryMessage(
@@ -118,6 +139,9 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       }
 
     } catch (error: any) {
+      if (task.starsBundleId) {
+        recordStarsDeliveryFailure(task.starsBundleId, error);
+      }
       console.error(`[sendStoriesFx] Unhandled error during task for link "${params.task.link}" (User: ${params.task.chatId}):`, error);
       notifyAdmin({
         status: 'error',

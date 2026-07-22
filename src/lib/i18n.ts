@@ -11,8 +11,9 @@ import nl from '../locales/nl.json';
 import it from '../locales/it.json';
 import ms from '../locales/ms.json';
 import uk from '../locales/uk.json';
+import starsTranslations from '../locales/stars';
 
-const locales: Record<string, Record<string, string>> = {
+const baseLocales: Record<string, Record<string, string>> = {
   en,
   es,
   zh,
@@ -27,6 +28,16 @@ const locales: Record<string, Record<string, string>> = {
   ms,
   uk,
 };
+
+const locales: Record<string, Record<string, string>> = Object.fromEntries(
+  Object.entries(baseLocales).map(([locale, messages]) => [
+    locale,
+    {
+      ...messages,
+      ...(starsTranslations[locale] ?? starsTranslations.en),
+    },
+  ]),
+);
 
 export function t(locale: string | undefined, key: string, vars: Record<string, string | number> = {}): string {
   const normalized = (locale || '').toLowerCase().split(/[_-]/)[0];

@@ -89,13 +89,27 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
     await ensureStealthMode();
     notifyAdmin({ task, status: 'start' });
 
-    // This path handles pagination clicks from inline buttons.
-    if (task.nextStoriesIds) {
-      const paginatedStoriesResult = await client.invoke(
-        new Api.stories.GetStoriesByID({ peer: entity, id: task.nextStoriesIds })
+    // Pagination and paid result delivery both resolve immutable story IDs.
+    // Paid deliveries deliberately return an empty payload instead of an error
+    // when the stories disappeared, allowing the send stage to refund them.
+    const exactStoryIds = task.nextStoriesIds?.length
+      ? task.nextStoriesIds
+      : task.starsUnlocked && task.starsExpectedStoryIds?.length
+        ? task.starsExpectedStoryIds
+        : undefined;
+    if (exactStoryIds) {
+      const exactStoriesResult = await client.invoke(
+        new Api.stories.GetStoriesByID({ peer: entity, id: exactStoryIds })
       );
-      return paginatedStoriesResult.stories.length > 0
-        ? { activeStories: [], pinnedStories: [], paginatedStories: paginatedStoriesResult.stories }
+      if (task.starsUnlocked) {
+        return {
+          activeStories: [],
+          pinnedStories: [],
+          paginatedStories: exactStoriesResult.stories,
+        };
+      }
+      return exactStoriesResult.stories.length > 0
+        ? { activeStories: [], pinnedStories: [], paginatedStories: exactStoriesResult.stories }
         : '🚫 Specified stories not found!';
     }
 
@@ -105,7 +119,7 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
       client.invoke(new Api.stories.GetPinnedStories({ peer: entity }))
     ]);
 
-    let activeStories: Api.TypeStoryItem[] = activeResult.stories?.stories || [];
+    const activeStories: Api.TypeStoryItem[] = activeResult.stories?.stories || [];
     let pinnedStories: Api.TypeStoryItem[] = pinnedResult?.stories || [];
 
     if (activeStories.length > 0 && pinnedStories.length > 0) {
@@ -114,42 +128,40 @@ export const getAllStoriesFx = createEffect(async (task: UserInfo) => {
 
     console.log(`[GetStories] Initial fetch for ${task.link}: ${activeStories.length} active, ${pinnedStories.length} initial pinned.`);
 
-    if (!task.nextStoriesIds) {
-      let lastPinnedStoryId: number | null = pinnedStories.length > 0 ? pinnedStories[pinnedStories.length - 1].id : null;
-      let fetchedCountInLoop = 0;
-      while (lastPinnedStoryId !== null) {
-        await timeout(1000);
-        const olderPinnedResult = await client
-          .invoke(new Api.stories.GetPinnedStories({ peer: entity, offsetId: lastPinnedStoryId }))
-          .catch((err) => {
-            console.error(
-              `[getStories] Error fetching older pinned stories for ${task.link} (${task.chatId}):`,
-              err
-            );
-            return null;
-          });
-
-        if (olderPinnedResult && olderPinnedResult.stories.length > 0) {
-          const newPinnedStories = olderPinnedResult.stories.filter(
-            newStory => !activeStories.some(aS => aS.id === newStory.id) && !pinnedStories.some(pS => pS.id === newStory.id)
+    let lastPinnedStoryId: number | null = pinnedStories.length > 0 ? pinnedStories[pinnedStories.length - 1].id : null;
+    let fetchedCountInLoop = 0;
+    while (lastPinnedStoryId !== null) {
+      await timeout(1000);
+      const olderPinnedResult = await client
+        .invoke(new Api.stories.GetPinnedStories({ peer: entity, offsetId: lastPinnedStoryId }))
+        .catch((err) => {
+          console.error(
+            `[getStories] Error fetching older pinned stories for ${task.link} (${task.chatId}):`,
+            err
           );
-          if (newPinnedStories.length > 0) {
-            pinnedStories.push(...newPinnedStories);
-            lastPinnedStoryId = newPinnedStories[newPinnedStories.length - 1].id;
-            fetchedCountInLoop += newPinnedStories.length;
-          } else {
-            lastPinnedStoryId = null;
-          }
+          return null;
+        });
+
+      if (olderPinnedResult && olderPinnedResult.stories.length > 0) {
+        const newPinnedStories = olderPinnedResult.stories.filter(
+          newStory => !activeStories.some(aS => aS.id === newStory.id) && !pinnedStories.some(pS => pS.id === newStory.id)
+        );
+        if (newPinnedStories.length > 0) {
+          pinnedStories.push(...newPinnedStories);
+          lastPinnedStoryId = newPinnedStories[newPinnedStories.length - 1].id;
+          fetchedCountInLoop += newPinnedStories.length;
         } else {
           lastPinnedStoryId = null;
         }
-        if (fetchedCountInLoop > 500 && isDevEnv) {
-          console.warn("[GetStories] DEV MODE: Safety break in pagination loop.");
-          break;
-        }
+      } else {
+        lastPinnedStoryId = null;
       }
-      console.log(`[GetStories] Total pinned stories after pagination for ${task.link}: ${pinnedStories.length}`);
+      if (fetchedCountInLoop > 500 && isDevEnv) {
+        console.warn("[GetStories] DEV MODE: Safety break in pagination loop.");
+        break;
+      }
     }
+    console.log(`[GetStories] Total pinned stories after pagination for ${task.link}: ${pinnedStories.length}`);
     
     // The "No stories found" and "Completed" logic is now handled in `send-stories.ts`.
     // This effect's only job is to return the data it found.
