@@ -1,5 +1,6 @@
 name: Validate PR 310 support ordering fix
 
+# Triggered after workflow registration so the pull_request synchronize event can execute it.
 on:
   pull_request:
     branches: [main]
