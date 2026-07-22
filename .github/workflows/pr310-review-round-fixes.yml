@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pr310-review-round-fixes-v2
+  group: pr310-review-round-fixes-v3
   cancel-in-progress: true
 
 jobs:
@@ -32,27 +32,19 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Correct review-round matcher
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/pr310-review-round-fixes.py')
-          text = path.read_text()
-          text = text.replace(
-              '    """          expires_at = MAX(',
-              '    """      SET expires_at = MAX(',
-              1,
-          )
-          text = text.replace(
-              '    """          expires_at = COALESCE(',
-              '    """      SET expires_at = COALESCE(',
-              1,
-          )
-          path.write_text(text)
-          PY
-
       - name: Apply review-round fixes
-        run: python3 scripts/pr310-review-round-fixes.py
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/pr310-review-round-fixes.py 2>&1 | tee patch.log
+
+      - name: Upload patch diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr310-patch-log-${{ github.run_id }}
+          path: patch.log
+          if-no-files-found: warn
 
       - name: Prepare runtime data directory
         run: |
@@ -73,6 +65,7 @@ jobs:
         run: |
           rm -f .github/workflows/pr310-review-round-fixes.yml
           rm -f scripts/pr310-review-round-fixes.py
+          rm -f patch.log
           git config user.name "chatgpt-codex-connector[bot]"
           git config user.email "199175422+chatgpt-codex-connector[bot]@users.noreply.github.com"
           git add -A
