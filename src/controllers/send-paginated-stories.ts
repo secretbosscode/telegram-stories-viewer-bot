@@ -27,14 +27,16 @@ async function sendSingleStory(story: MappedStoryItem, task: SendPaginatedStorie
 }
 
 /**
- * Sends paginated stories and returns the number of purchased results that were
- * actually delivered as Telegram media or as a valid exported fallback link.
+ * Sends paginated stories and returns the exact IDs delivered as Telegram media
+ * or valid exported fallback links. Paid bundles use this to prove complete
+ * fulfillment before they are finalized.
  */
 export async function sendPaginatedStories({
   stories,
   task,
-}: SendPaginatedStoriesArgs): Promise<number> {
+}: SendPaginatedStoriesArgs): Promise<number[]> {
   const mapped: MappedStoryItem[] = mapStories(stories);
+  const deliveredStoryIds = new Set<number>();
 
   mapped.forEach((story) => {
     story.source = {
@@ -46,10 +48,10 @@ export async function sendPaginatedStories({
 
   try {
     await sendTemporaryMessage(bot, task.chatId, t(task.locale, 'download.downloading')).catch(
-      (err) => {
+      (error) => {
         console.error(
           `[sendPaginatedStories] Failed to send 'Downloading' message to ${task.chatId}:`,
-          err,
+          error,
         );
       },
     );
@@ -62,9 +64,8 @@ export async function sendPaginatedStories({
       if (Date.now() - lastProgress > 30000) controller.abort();
     }, 5000);
 
-    let downloadResult;
     try {
-      downloadResult = await downloadStories(mapped, 'pinned', onProgress, controller.signal);
+      await downloadStories(mapped, 'pinned', onProgress, controller.signal);
     } finally {
       clearTimeout(globalTimeout);
       clearInterval(activityInterval);
@@ -79,16 +80,15 @@ export async function sendPaginatedStories({
       (story) => !story.buffer || Number(story.bufferSize ?? 0) > 50,
     );
 
-    let deliveredCount = 0;
     if (uploadableStories.length > 0) {
       await sendTemporaryMessage(
         bot,
         task.chatId,
         t(task.locale, 'download.uploading'),
-      ).catch((err) => {
+      ).catch((error) => {
         console.error(
           `[sendPaginatedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
-          err,
+          error,
         );
       });
 
@@ -96,7 +96,7 @@ export async function sendPaginatedStories({
         const batch = uploadableStories.slice(offset, offset + TELEGRAM_MEDIA_GROUP_LIMIT);
         if (batch.length === 1) {
           await sendSingleStory(batch[0], task);
-          deliveredCount += 1;
+          deliveredStoryIds.add(batch[0].id);
           continue;
         }
         await bot.telegram.sendMediaGroup(
@@ -107,24 +107,25 @@ export async function sendPaginatedStories({
             caption: getStoryCaption(story, task).slice(0, 1024),
           })),
         );
-        deliveredCount += batch.length;
+        batch.forEach((story) => deliveredStoryIds.add(story.id));
       }
     }
 
     if (fallbackCandidates.length > 0) {
-      deliveredCount += (await sendStoryFallbacks(task, fallbackCandidates)).length;
+      const fallbackIds = await sendStoryFallbacks(task, fallbackCandidates);
+      fallbackIds.forEach((storyId) => deliveredStoryIds.add(storyId));
     }
 
-    if (deliveredCount === 0) {
-      await bot.telegram.sendMessage(task.chatId, t(task.locale, 'pinned.none')).catch((err) => {
+    if (deliveredStoryIds.size === 0) {
+      await bot.telegram.sendMessage(task.chatId, t(task.locale, 'pinned.none')).catch((error) => {
         console.error(
           `[sendPaginatedStories] Failed to notify ${task.chatId} about no deliverable stories:`,
-          err,
+          error,
         );
       });
     }
 
-    return deliveredCount;
+    return [...deliveredStoryIds];
   } catch (error) {
     notifyAdmin({
       status: 'error',
