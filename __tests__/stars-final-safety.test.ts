@@ -58,4 +58,6 @@ describe('final Stars safety invariants', () => {
     expect(safety.match(/COALESCE\(u\.is_premium, 0\) = 1/g)?.length).toBeGreaterThanOrEqual(3);
     expect(commands).toContain("String(error).includes('STAR_MONITOR_LIMIT')");
   });
+
+  // Paid media must never be sent after a bundle enters refund fencing.
 });
