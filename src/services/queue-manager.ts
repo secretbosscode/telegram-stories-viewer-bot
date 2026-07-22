@@ -212,11 +212,18 @@ export async function processQueue() {
   }
 
   let timedOut = false;
+  let deliveryStarted = false;
   const timeoutMs = currentTask.storyRequestType === 'paginated'
     ? PAGINATED_PROCESSING_TIMEOUT_MS
     : PROCESSING_TIMEOUT_MS;
 
   const timeoutId = setTimeout(async () => {
+    if (currentTask.starsBundleId && deliveryStarted) {
+      console.warn(
+        `[QueueManager] Paid delivery ${currentTask.starsBundleId} exceeded the normal timeout; keeping its queue row processing until the active Telegram send exits.`,
+      );
+      return;
+    }
     timedOut = true;
     await markErrorFx({ jobId: job.id, message: 'Processing timeout' });
     await sendTemporaryMessage(
@@ -264,9 +271,16 @@ export async function processQueue() {
 
     const payload: SendStoriesFxParams = { task: taskForSend, ...(storiesPayload as object) };
     if (!timedOut) {
-      await sendStoriesFx(payload);
-      await markDoneFx(job.id);
-      console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
+      deliveryStarted = true;
+      try {
+        await sendStoriesFx(payload);
+      } finally {
+        deliveryStarted = false;
+      }
+      if (!timedOut) {
+        await markDoneFx(job.id);
+        console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
+      }
     }
   } catch (error: any) {
     if (!timedOut) {
