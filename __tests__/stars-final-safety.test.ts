@@ -17,11 +17,13 @@ describe('final Stars safety invariants', () => {
     expect(text).toContain('new PartialStoryDeliveryError(error, partialIds)');
   });
 
-  test('paid delivery timeouts remain non-retryable while Telegram send is active', () => {
+  test('paid delivery timeouts release the queue while retaining the active-send fence', () => {
     const queue = source('src/services/queue-manager.ts');
     expect(queue).toContain('let deliveryStarted = false');
     expect(queue).toContain('currentTask.starsBundleId && deliveryStarted');
-    expect(queue).toContain('keeping its queue row processing until the active Telegram send exits');
+    expect(queue).toContain('PAID_DELIVERY_HARD_TIMEOUT_MS');
+    expect(queue).toContain('arming a hard deadline');
+    expect(queue).toContain('retaining its processing row until the active Telegram send exits');
     expect(queue).toContain('deliveryStarted = true');
   });
 
