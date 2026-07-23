@@ -5,104 +5,97 @@ import { BOT_ADMIN_ID } from 'config/env-config';
 import { bot } from 'index';
 import { chunkMediafiles, timeout, sendTemporaryMessage } from 'lib';
 import { Markup } from 'telegraf';
-import { t } from "lib/i18n";
+import { t } from 'lib/i18n';
 import { Api } from 'telegram';
-
-// CORRECTED: Import InlineKeyboardButton for precise typing (if Markup.inlineKeyboard uses it explicitly in its return type)
-import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram'; // <--- ADDED: For InlineKeyboardButton
-
-// CORRECTED: Import types from your central types.ts file
-import { SendStoriesArgs, StoriesModel, MappedStoryItem, NotifyAdminParams, DownloadStoriesResult } from 'types';
-
-// Corrected import path for downloadStories and mapStories
+import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram';
+import {
+  SendStoriesArgs,
+  StoriesModel,
+  MappedStoryItem,
+  NotifyAdminParams,
+  DownloadStoriesResult,
+} from 'types';
 import { downloadStories, mapStories } from 'controllers/download-stories';
 import { notifyAdmin } from 'controllers/send-message';
 import { sendStoryFallbacks } from 'controllers/story-fallback';
+import { PartialStoryDeliveryError } from 'controllers/send-paginated-stories';
 import { ensureStealthMode } from 'services/stealth-mode';
 
 const PINNED_CAPTION_LIMIT = 1024;
 
 const buildPinnedCaption = (caption: string | undefined, suffix: string): string => {
   const normalizedCaption = caption?.trim();
-  if (!normalizedCaption) {
-    return suffix.slice(0, PINNED_CAPTION_LIMIT);
-  }
-
+  if (!normalizedCaption) return suffix.slice(0, PINNED_CAPTION_LIMIT);
   const separator = '\n\n';
   const fullCaption = `${normalizedCaption}${separator}${suffix}`;
-  if (fullCaption.length <= PINNED_CAPTION_LIMIT) {
-    return fullCaption;
-  }
-
+  if (fullCaption.length <= PINNED_CAPTION_LIMIT) return fullCaption;
   const available = PINNED_CAPTION_LIMIT - suffix.length - separator.length;
-  if (available <= 0) {
-    return suffix.slice(0, PINNED_CAPTION_LIMIT);
-  }
-
+  if (available <= 0) return suffix.slice(0, PINNED_CAPTION_LIMIT);
   return `${normalizedCaption.slice(0, available)}${separator}${suffix}`;
 };
 
-// =========================================================================
-// CRITICAL FUNCTION: This function handles downloading and sending stories.
-// It contains essential error handling and business logic for premium users.
-// =========================================================================
-export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Promise<void> {
+async function sendSinglePinned(story: MappedStoryItem, task: SendStoriesArgs['task']): Promise<void> {
+  const caption = buildPinnedCaption(story.caption, `Pinned story from ${task.link}`);
+  const media = { source: story.buffer! };
+  if (story.mediaType === 'photo') {
+    await bot.telegram.sendPhoto(task.chatId, media, { caption });
+  } else {
+    await bot.telegram.sendVideo(task.chatId, media, { caption });
+  }
+}
+
+/** Returns the exact pinned-story IDs confirmed delivered by Telegram or fallback. */
+export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Promise<number[]> {
+  const deliveredStoryIds = new Set<number>();
+
   try {
-    // `stories` here is expected to be `MappedStoryItem[]` from SendStoriesArgs
-    let mapped: StoriesModel = stories; // Explicitly typed mapped to StoriesModel (MappedStoryItem[])
-
-    const isAdmin = task.chatId === BOT_ADMIN_ID.toString();
-
-    // =========================================================================
-    // CORE BUSINESS LOGIC: User Limits and Premium Upsell
-    // This block enforces the story limit for non-privileged users.
-    // =========================================================================
-    const isPrivileged = task.isPremium || isAdmin;
+    let mapped: StoriesModel = stories;
+    const requesterId = String(task.user?.id ?? task.chatId);
+    const isAdmin = requesterId === String(BOT_ADMIN_ID);
+    const paidDelivery = Boolean(task.starsBundleId);
+    const isPrivileged = Boolean(task.isPremium || isAdmin || paidDelivery);
     const STORY_LIMIT_FOR_FREE_USERS = 5;
-    let wasLimited = false;
-
-    // Pagination setup for premium users (and admin) if too many stories
     const PER_PAGE = 5;
+    let wasLimited = false;
     let hasMorePages = false;
     const nextStories: Record<string, number[]> = {};
 
-    if ((task.isPremium || isAdmin) && mapped.length > PER_PAGE) {
+    // Paid bundles must deliver the complete purchased set in the current job.
+    if (!paidDelivery && (task.isPremium || isAdmin) && mapped.length > PER_PAGE) {
       hasMorePages = true;
-      const currentStories: MappedStoryItem[] = mapped.slice(0, PER_PAGE);
+      const currentStories = mapped.slice(0, PER_PAGE);
       for (let i = PER_PAGE; i < mapped.length; i += PER_PAGE) {
         const from = i + 1;
         const to = Math.min(i + PER_PAGE, mapped.length);
         nextStories[`${from}-${to}`] = mapped
           .slice(i, i + PER_PAGE)
-          .map((x: MappedStoryItem) => x.id);
+          .map((story: MappedStoryItem) => story.id);
       }
       mapped = currentStories;
     }
 
     if (!isPrivileged && mapped.length > STORY_LIMIT_FOR_FREE_USERS) {
-      console.log(`[SendPinnedStories] Limiting non-premium user ${task.chatId} to ${STORY_LIMIT_FOR_FREE_USERS} stories.`);
       wasLimited = true;
       mapped = mapped.slice(0, STORY_LIMIT_FOR_FREE_USERS);
     }
 
-    // Re-fetching stories that might have been mapped without media objects.
-    const storiesWithoutMedia: MappedStoryItem[] = mapped.filter((x: MappedStoryItem) => !x.media); // <--- 'x' typed
+    const storiesWithoutMedia = mapped.filter((story: MappedStoryItem) => !story.media);
     if (storiesWithoutMedia.length > 0) {
-      // Your existing logic for re-fetching stories by ID
-      // This block has its own try/catch and is self-contained.
-      try { // Added try/catch for this section if not already present
+      try {
         const client = await Userbot.getInstance();
         const entity = await client.getEntity(task.link!);
-        const ids = storiesWithoutMedia.map((x: MappedStoryItem) => x.id); // <--- 'x' typed
         await ensureStealthMode();
-        const storiesWithMediaApi = await client.invoke(
-          new Api.stories.GetStoriesByID({ id: ids, peer: entity })
+        const response = await client.invoke(
+          new Api.stories.GetStoriesByID({
+            id: storiesWithoutMedia.map((story: MappedStoryItem) => story.id),
+            peer: entity,
+          }),
         );
-        const newMappedStories = mapStories(storiesWithMediaApi.stories);
-        mapped.push(...newMappedStories);
-      } catch (e) {
-        console.error(`[SendPinnedStories] Error re-fetching stories without media: ${e}`);
-        // Fallback: just continue with those that have media
+        const refreshed = mapStories(response.stories);
+        const refreshedById = new Map(refreshed.map((story) => [story.id, story]));
+        mapped = mapped.map((story) => refreshedById.get(story.id) ?? story);
+      } catch (error) {
+        console.error('[SendPinnedStories] Error re-fetching stories without media:', error);
       }
     }
 
@@ -114,138 +107,113 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
       };
     });
 
-    console.log(`[SendPinnedStories] [${task.link}] Preparing to download ${mapped.length} pinned stories.`);
+    await sendTemporaryMessage(bot, task.chatId, t(task.locale, 'pinned.downloading')).catch(
+      (error) => console.error('[SendPinnedStories] Failed to send downloading message:', error),
+    );
 
-    await sendTemporaryMessage(
-      bot,
-      task.chatId!,
-      t(task.locale, 'pinned.downloading')
-    ).catch((err) => {
-      console.error(
-        `[SendPinnedStories] Failed to send 'Downloading Pinned stories' message to ${task.chatId}:`,
-        err
-      );
-    });
-
-    // =========================================================================
-    // CRITICAL STABILITY LOGIC: Download Timeout
-    // This prevents the bot from getting stuck indefinitely on a hanging download.
-    // =========================================================================
     const downloadPromise = downloadStories(mapped, 'pinned');
     const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Download process timed out after 5 minutes.')), 300000)
+      setTimeout(() => reject(new Error('Download process timed out after 5 minutes.')), 300000),
     );
     const downloadResult = await Promise.race<DownloadStoriesResult>([
       downloadPromise,
       timeoutPromise as unknown as Promise<DownloadStoriesResult>,
     ]);
 
-    console.log(`[SendPinnedStories] [${task.link}] downloadStories function completed.`);
-
-    const uploadableStories: MappedStoryItem[] = mapped.filter( // <--- 'x' typed
-      (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 50
+    const uploadableStories = mapped.filter(
+      (story: MappedStoryItem) => story.buffer && Number(story.bufferSize ?? 0) <= 50,
     );
-
-    console.log(`[SendPinnedStories] [${task.link}] Found ${uploadableStories.length} uploadable pinned stories after download.`);
-
-    const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
+    const fallbackCandidates = mapped.filter(
+      (story: MappedStoryItem) => !story.buffer || Number(story.bufferSize ?? 0) > 50,
+    );
 
     if (uploadableStories.length > 0) {
       await sendTemporaryMessage(
         bot,
-        task.chatId!,
-        t(task.locale, 'pinned.uploading', { count: uploadableStories.length })
-      ).catch((err) => {
-        console.error(
-          `[SendPinnedStories] Failed to send 'Uploading' message to ${task.chatId}:`,
-          err
-        );
-      });
+        task.chatId,
+        t(task.locale, 'pinned.uploading', { count: uploadableStories.length }),
+      ).catch((error) => console.error('[SendPinnedStories] Failed to send uploading message:', error));
 
-      const chunkedList = chunkMediafiles(uploadableStories);
-      for (let i = 0; i < chunkedList.length; i++) {
-        const album = chunkedList[i];
-        try {
-          await bot.telegram.sendMediaGroup(
-            task.chatId,
-            album.map((x: MappedStoryItem) => {
-              const suffix = `Pinned story from ${task.link}`;
-              return {
-                media: { source: x.buffer! },
-                type: x.mediaType!,
-                caption: buildPinnedCaption(x.caption, suffix),
-              };
-            })
-          );
-        } catch (sendError) {
-          console.error(
-            `[SendPinnedStories] [${task.link}] Error sending media group chunk ${i + 1}:`,
-            sendError,
-          );
-          throw sendError;
+      if (uploadableStories.length === 1) {
+        await sendSinglePinned(uploadableStories[0], task);
+        deliveredStoryIds.add(uploadableStories[0].id);
+      } else {
+        for (const album of chunkMediafiles(uploadableStories)) {
+          if (album.length === 1) {
+            await sendSinglePinned(album[0], task);
+            deliveredStoryIds.add(album[0].id);
+          } else {
+            await bot.telegram.sendMediaGroup(
+              task.chatId,
+              album.map((story: MappedStoryItem) => ({
+                media: { source: story.buffer! },
+                type: story.mediaType!,
+                caption: buildPinnedCaption(story.caption, `Pinned story from ${task.link}`),
+              })),
+            );
+            album.forEach((story: MappedStoryItem) => deliveredStoryIds.add(story.id));
+          }
+          await timeout(500);
         }
-        await timeout(500);
       }
 
       if (hasMorePages) {
-        const btns = Object.entries(nextStories).map(
-          ([pages, nextStoriesIds]: [string, number[]]) => ({
-            text: `📥 ${pages} 📥`,
-            callback_data: `${task.link}&${JSON.stringify(nextStoriesIds)}`,
-          })
-        );
-        const keyboard = btns.reduce(
-          (
-            acc: InlineKeyboardButton[][],
-            curr: InlineKeyboardButton,
-            index: number
-          ) => {
-            const chunkIndex = Math.floor(index / 3);
-            if (!acc[chunkIndex]) acc[chunkIndex] = [];
-            acc[chunkIndex].push(curr);
-            return acc;
+        const buttons = Object.entries(nextStories).map(([pages, ids]) => ({
+          text: `📥 ${pages} 📥`,
+          callback_data: `${task.link}&${JSON.stringify(ids)}`,
+        }));
+        const keyboard = buttons.reduce(
+          (rows: InlineKeyboardButton[][], button: InlineKeyboardButton, index: number) => {
+            const row = Math.floor(index / 3);
+            if (!rows[row]) rows[row] = [];
+            rows[row].push(button);
+            return rows;
           },
-          [] as InlineKeyboardButton[][]
+          [],
         );
         await bot.telegram.sendMessage(
-          task.chatId!,
+          task.chatId,
           t(task.locale, 'pinned.selectNext'),
           Markup.inlineKeyboard(keyboard),
         );
       }
-    } else {
+    }
+
+    if (fallbackCandidates.length > 0) {
+      const fallbackIds = await sendStoryFallbacks(task, fallbackCandidates);
+      fallbackIds.forEach((storyId) => deliveredStoryIds.add(storyId));
+    }
+
+    if (deliveredStoryIds.size === 0) {
+      await bot.telegram.sendMessage(task.chatId, t(task.locale, 'pinned.none'));
+    }
+
+    if (wasLimited) {
+      await timeout(1000);
       await bot.telegram.sendMessage(
         task.chatId,
-        t(task.locale, 'pinned.none')
+        t(task.locale, 'pinned.limitReached', { limit: STORY_LIMIT_FOR_FREE_USERS }),
+        { parse_mode: 'Markdown' },
       );
-    }
-
-    if (failedDownloads.length > 0) {
-      await sendStoryFallbacks(task, failedDownloads);
-    }
-
-    // This block sends the premium upsell message if the user was limited.
-    if (wasLimited) {
-        await timeout(1000);
-        await bot.telegram.sendMessage(
-            task.chatId,
-            t(task.locale, 'pinned.limitReached', { limit: STORY_LIMIT_FOR_FREE_USERS }),
-            { parse_mode: 'Markdown' }
-        );
     }
 
     notifyAdmin({
       task,
       status: 'info',
-      baseInfo: `📥 ${uploadableStories.length} Pinned stories uploaded for user ${task.link} (chatId: ${task.chatId})!`,
+      baseInfo: `📥 ${deliveredStoryIds.size} Pinned stories delivered for ${task.link} (chatId: ${task.chatId})!`,
     } as NotifyAdminParams);
-    console.log(`[SendPinnedStories] [${task.link}] Processing finished successfully.`);
 
-  } catch (error: any) { // <--- Explicitly typed error as any
+    // Preserve compatibility with download implementations that report failures
+    // but still populated buffers: the delivered set remains the source of truth.
+    void downloadResult;
+    return [...deliveredStoryIds];
+  } catch (error) {
     console.error(`[SendPinnedStories] [${task.link}] CRITICAL error occurred:`, error);
-    try {
-        await bot.telegram.sendMessage(task.chatId, t(task.locale, 'pinned.error'));
-    } catch (e) { /* ignore */}
+    await bot.telegram.sendMessage(task.chatId, t(task.locale, 'pinned.error')).catch(() => {});
+    const partialIds = [...deliveredStoryIds];
+    if (partialIds.length > 0) {
+      throw new PartialStoryDeliveryError(error, partialIds);
+    }
     throw error;
   }
 }

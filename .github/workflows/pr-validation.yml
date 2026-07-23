@@ -6,7 +6,7 @@ on:
       - main
   push:
     branches:
-      - agent/stars-result-unlocks
+      - main
 
 concurrency:
   group: pr-validation-${{ github.ref }}
@@ -57,9 +57,9 @@ jobs:
       - name: Run Jest suite
         run: |
           set +e
-          timeout 180s npm test -- --runInBand --silent --forceExit > jest.log 2>&1
+          timeout 360s npm test -- --runInBand --silent --forceExit > jest.log 2>&1
           status=$?
-          tail -n 260 jest.log
+          tail -n 300 jest.log
           exit $status
 
       - name: Upload validation logs

@@ -3,37 +3,54 @@
 import { createEffect } from 'effector';
 import { timeout } from 'lib';
 import { sendTemporaryMessage } from 'lib/helpers';
-import { t } from "lib/i18n";
-import { bot } from 'index'; // Import the bot instance for sending messages
+import { t } from 'lib/i18n';
+import { bot } from 'index';
 import { notifyAdmin } from 'controllers/send-message';
+import { BOT_ADMIN_ID } from 'config/env-config';
 
-// Types are correctly imported from a central file.
 import {
   SendStoriesFxParams,
   MappedStoryItem,
   NotifyAdminParams,
 } from 'types';
 
-// Downstream controller functions are imported.
 import { sendActiveStories } from 'controllers/send-active-stories';
-import { sendPaginatedStories } from 'controllers/send-paginated-stories';
+import {
+  PartialStoryDeliveryError,
+  sendPaginatedStories,
+} from 'controllers/send-paginated-stories';
 import { sendParticularStory } from 'controllers/send-particular-story';
 import { sendPinnedStories } from 'controllers/send-pinned-stories';
 import { sendGlobalStories } from 'controllers/send-global-stories';
 import { sendArchivedStories } from 'controllers/send-archived-stories';
 import { mapStories } from 'controllers/download-stories';
 import {
+  areStarsEnabled,
+  isStarsMode,
+  isStarsBundleDeliverable,
   markStarsBundleDelivered,
   maybeOfferStoryUnlock,
   recordStarsDeliveryFailure,
   refundUndeliverableStarsBundle,
 } from 'services/stars-payment';
 
+function uniqueIds(ids: number[] | undefined): number[] {
+  return [...new Set((ids ?? []).map(Number).filter(Number.isFinite))];
+}
+
+function paidBundleWasFullyDelivered(
+  expectedIds: number[] | undefined,
+  deliveredIds: number[],
+): boolean {
+  const expected = uniqueIds(expectedIds);
+  if (expected.length === 0) return false;
+  const delivered = new Set(uniqueIds(deliveredIds));
+  return expected.every((storyId) => delivered.has(storyId));
+}
+
 /**
- * This is the main orchestrator effect for sending stories.
- * It receives a payload with different types of stories and decides which
- * specialized sending function to call. It also handles mapping data
- * and providing final feedback to the user.
+ * Main story-delivery orchestrator. Discovery remains free in Stars mode, but
+ * non-Premium media is never delivered unless an invoice was paid.
  */
 export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
   async (params) => {
@@ -48,88 +65,125 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
       task,
     } = params;
 
-    // In Stars mode discovery remains free. The payment boundary sits here,
-    // after Telegram confirmed that results exist but before any media is sent.
-    // Paid, Premium and administrator tasks bypass this gate.
-    if (await maybeOfferStoryUnlock(params)) {
+    const requesterId = String(task.user?.id ?? task.chatId);
+    const isAdmin = requesterId === String(BOT_ADMIN_ID);
+
+    if (task.starsBundleId && !isStarsBundleDeliverable(task.starsBundleId)) {
+      console.warn(`[Stars] Skipping delivery for non-deliverable bundle ${task.starsBundleId}`);
       return;
     }
 
-    // This flag will track if we actually sent any media to the user.
+    if (
+      isStarsMode() &&
+      !areStarsEnabled() &&
+      !task.starsUnlocked &&
+      !task.isPremium &&
+      !isAdmin &&
+      task.storyRequestType !== 'archived' &&
+      task.storyRequestType !== 'global' &&
+      task.storyRequestType !== 'paginated'
+    ) {
+      await bot.telegram.sendMessage(
+        task.chatId,
+        t(task.locale, 'stars.paymentUnavailable'),
+      );
+      return;
+    }
+
+    if (await maybeOfferStoryUnlock(params)) return;
+
     let storiesWereSent = false;
+    const deliveredStoryIds: number[] = [];
 
     try {
-      // 1. Handle a request for one specific story. This has the highest priority.
       if (particularStory) {
-        await sendParticularStory({ story: particularStory, task });
+        const ids = await sendParticularStory({ story: particularStory, task });
+        deliveredStoryIds.push(...ids);
+        storiesWereSent = ids.length > 0;
+      } else if (paginatedStories && paginatedStories.length > 0) {
+        const ids = await sendPaginatedStories({ stories: paginatedStories, task });
+        deliveredStoryIds.push(...ids);
+        storiesWereSent = ids.length > 0;
+      } else if (globalStories && globalStories.length > 0) {
+        const mappedGlobalStories: MappedStoryItem[] = mapStories(
+          globalStories,
+          globalStoryOwnersById,
+        );
+        await sendGlobalStories({
+          stories: mappedGlobalStories,
+          task,
+          storyOwnersById: globalStoryOwnersById,
+        });
         storiesWereSent = true;
-      } 
-      // 2. Handle a request for a "page" of stories (from a "next" button).
-      else if (paginatedStories && paginatedStories.length > 0) {
-        await sendPaginatedStories({ stories: paginatedStories, task });
-        storiesWereSent = true;
-      }
-      else if (globalStories && globalStories.length > 0) {
-        const mappedGlobalStories: MappedStoryItem[] = mapStories(globalStories, globalStoryOwnersById);
-        await sendGlobalStories({ stories: mappedGlobalStories, task, storyOwnersById: globalStoryOwnersById });
-        storiesWereSent = true;
-      }
-      // 3. Handle the general case of active and pinned stories.
-      else {
+      } else {
+        const activeStoryIds = new Set(activeStories.map((story) => Number(story.id)));
+        const uniquePinnedStories = pinnedStories.filter(
+          (story) => !activeStoryIds.has(Number(story.id)),
+        );
+
         if (activeStories.length > 0) {
-          // PROCESS COMMENT: This is a critical fix from your new version. The raw
-          // API data must be mapped to our internal MappedStoryItem format.
-          const mappedActiveStories: MappedStoryItem[] = mapStories(activeStories);
-          await sendActiveStories({ stories: mappedActiveStories, task });
-          storiesWereSent = true;
-          await timeout(2000); // Wait after sending active stories
+          const activeDeliveredIds = await sendActiveStories({
+            stories: mapStories(activeStories),
+            task,
+          });
+          deliveredStoryIds.push(...activeDeliveredIds);
+          storiesWereSent = storiesWereSent || activeDeliveredIds.length > 0;
+          await timeout(2000);
         }
 
-        if (pinnedStories.length > 0) {
-          const mappedPinnedStories: MappedStoryItem[] = mapStories(pinnedStories);
-          await sendPinnedStories({ stories: mappedPinnedStories, task });
-          storiesWereSent = true;
+        if (uniquePinnedStories.length > 0) {
+          const pinnedDeliveredIds = await sendPinnedStories({
+            stories: mapStories(uniquePinnedStories),
+            task,
+          });
+          deliveredStoryIds.push(...pinnedDeliveredIds);
+          storiesWereSent = storiesWereSent || pinnedDeliveredIds.length > 0;
           await timeout(2000);
         }
 
         if (archivedStories.length > 0) {
-          const mappedArchivedStories: MappedStoryItem[] = mapStories(archivedStories);
-          await sendArchivedStories({ stories: mappedArchivedStories, task });
+          await sendArchivedStories({ stories: mapStories(archivedStories), task });
           storiesWereSent = true;
         }
       }
 
-      // =========================================================================
-      // FINAL FIX: Provide clear feedback to the user based on what happened.
-      // This solves the "confusing silence" problem.
-      // =========================================================================
-      if (storiesWereSent) {
-        if (task.starsBundleId) {
-          markStarsBundleDelivered(task.starsBundleId);
+      if (task.starsBundleId) {
+        const complete = paidBundleWasFullyDelivered(
+          task.starsExpectedStoryIds,
+          deliveredStoryIds,
+        );
+        if (!complete) {
+          const expected = uniqueIds(task.starsExpectedStoryIds);
+          const delivered = uniqueIds(deliveredStoryIds);
+          recordStarsDeliveryFailure(
+            task.starsBundleId,
+            new Error(
+              `Incomplete paid delivery: ${delivered.length}/${expected.length} expected stories delivered`,
+            ),
+          );
+          await refundUndeliverableStarsBundle(task.starsBundleId);
+          return;
         }
-        // If we actually sent one or more stories, send the completion message.
+        markStarsBundleDelivered(task.starsBundleId);
+      }
+
+      if (storiesWereSent) {
         await bot.telegram.sendMessage(
           task.chatId,
           t(task.locale, 'stories.completed', { link: task.link }),
-          { link_preview_options: { is_disabled: true } }
+          { link_preview_options: { is_disabled: true } },
         );
         notifyAdmin({
           status: 'info',
           task,
           baseInfo: `📥 Stories sent for ${task.link} (chatId: ${task.chatId})`,
         } as NotifyAdminParams);
-      } else if (task.starsBundleId) {
-        // A user was charged only for a known result set. If those exact story
-        // IDs disappeared before delivery, refund automatically rather than
-        // sending the normal no-results response.
-        await refundUndeliverableStarsBundle(task.starsBundleId);
       } else {
-        // If we went through all the logic and sent nothing, inform the user.
         await sendTemporaryMessage(
           bot,
           task.chatId,
           t(task.locale, 'stories.noneFound', { link: task.link }),
-          { link_preview_options: { is_disabled: true } }
+          { link_preview_options: { is_disabled: true } },
         );
         notifyAdmin({
           status: 'info',
@@ -137,20 +191,28 @@ export const sendStoriesFx = createEffect<SendStoriesFxParams, void, Error>(
           baseInfo: `ℹ️ No stories found for ${task.link} (chatId: ${task.chatId})`,
         } as NotifyAdminParams);
       }
+    } catch (error) {
+      if (task.starsBundleId && error instanceof PartialStoryDeliveryError) {
+        recordStarsDeliveryFailure(task.starsBundleId, error);
+        // Some media already reached Telegram. Never retry the full bundle and
+        // duplicate that content; refund the purchase instead.
+        await refundUndeliverableStarsBundle(task.starsBundleId);
+        return;
+      }
 
-    } catch (error: any) {
       if (task.starsBundleId) {
         recordStarsDeliveryFailure(task.starsBundleId, error);
       }
-      console.error(`[sendStoriesFx] Unhandled error during task for link "${params.task.link}" (User: ${params.task.chatId}):`, error);
+      console.error(
+        `[sendStoriesFx] Unhandled error during task for link "${params.task.link}" (User: ${params.task.chatId}):`,
+        error,
+      );
       notifyAdmin({
         status: 'error',
         task,
         errorInfo: { cause: error },
       } as NotifyAdminParams);
-      // Re-throw the error so the main service can catch it with .fail.watch()
-      // and mark the task as failed in the database.
       throw error;
     }
-  }
+  },
 );

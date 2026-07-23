@@ -29,10 +29,11 @@ import {
   getArchivedStoriesFx,
 } from 'controllers/get-stories';
 import { sendStoriesFx } from 'controllers/send-stories';
+import { isUserPremium } from 'services/premium-service';
 
-// How long we allow a job to run before considering it failed
-export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for regular jobs
-export const PAGINATED_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000; // half the time for paginated requests
+export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000;
+export const PAGINATED_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
+export const PAID_DELIVERY_HARD_TIMEOUT_MS = 20 * 60 * 1000;
 
 const COOLDOWN_HOURS = { free: 12, premium: 2, admin: 0 };
 
@@ -40,6 +41,20 @@ function formatEta(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}m ${s}s`;
+}
+
+function getRequesterId(task: UserInfo, fallbackChatId: string): string {
+  return String(task.user?.id ?? fallbackChatId);
+}
+
+function restoreRequesterEntitlement(task: UserInfo, fallbackChatId: string): UserInfo {
+  const requesterId = getRequesterId(task, fallbackChatId);
+  return {
+    ...task,
+    isPremium:
+      requesterId === String(BOT_ADMIN_ID) ||
+      isUserPremium(requesterId),
+  };
 }
 
 export async function getQueueStatusForUser(telegram_id: string, locale = 'en'): Promise<string> {
@@ -59,8 +74,10 @@ function getCooldownHours({ isPremium, isAdmin }: { isPremium?: boolean; isAdmin
 
 export async function handleNewTask(user: UserInfo) {
   const { chatId: telegram_id, link: target_username, nextStoriesIds } = user;
-  const is_admin = telegram_id === BOT_ADMIN_ID.toString();
-  const cooldown = getCooldownHours({ isPremium: user.isPremium, isAdmin: is_admin });
+  const requesterId = getRequesterId(user, telegram_id);
+  const is_admin = requesterId === BOT_ADMIN_ID.toString();
+  const isPremium = is_admin || isUserPremium(requesterId) || Boolean(user.isPremium);
+  const cooldown = getCooldownHours({ isPremium, isAdmin: is_admin });
 
   try {
     if (user.storyRequestType === 'global' && !is_admin) {
@@ -116,13 +133,14 @@ export async function handleNewTask(user: UserInfo) {
       await sendTemporaryMessage(
         bot,
         telegram_id,
-        t(user.locale, 'queue.already')
+        t(user.locale, 'queue.already'),
       );
       return;
     }
 
     const jobDetails: UserInfo = {
       ...user,
+      isPremium,
       storyRequestType: Array.isArray(nextStoriesIds) && nextStoriesIds.length > 0
         ? 'paginated'
         : user.storyRequestType,
@@ -143,11 +161,11 @@ export async function handleNewTask(user: UserInfo) {
       telegram_id,
       t(user.locale, 'queue.enqueued', { user: target_username, position, eta: formatEta(eta) }),
     );
-    
+
     setImmediate(processQueue);
-  } catch(e: any) {
-    console.error('[handleNewTask] Error during task validation/enqueueing:', e);
-      await bot.telegram.sendMessage(telegram_id, t(user.locale, 'queue.enqueueError'));
+  } catch (error: any) {
+    console.error('[handleNewTask] Error during task validation/enqueueing:', error);
+    await bot.telegram.sendMessage(telegram_id, t(user.locale, 'queue.enqueueError'));
   }
 }
 
@@ -159,7 +177,7 @@ export async function processQueue() {
   }
 
   const job: DownloadQueueItem | null = await getNextQueueItemFx();
-  
+
   if (!job) {
     console.log('[QueueManager] Queue is empty. Processor is idle.');
     return;
@@ -168,14 +186,24 @@ export async function processQueue() {
   isProcessing = true;
   await markProcessingFx(job.id);
 
-  const currentTask: UserInfo = { ...job.task, chatId: job.chatId, instanceId: job.id };
+  // getNextQueueItem historically refreshes Premium from the queue chat ID.
+  // In a group that is the negative group ID, not the requesting member. Restore
+  // authorization from the preserved requester before discovery/payment checks.
+  const currentTask: UserInfo = restoreRequesterEntitlement(
+    { ...job.task, chatId: job.chatId, instanceId: job.id },
+    job.chatId,
+  );
+  const requesterId = getRequesterId(currentTask, job.chatId);
 
-  if (currentTask.storyRequestType === 'global' && job.chatId !== BOT_ADMIN_ID.toString()) {
+  if (
+    currentTask.storyRequestType === 'global' &&
+    requesterId !== BOT_ADMIN_ID.toString()
+  ) {
     await markErrorFx({ jobId: job.id, message: 'Admin only' });
     await sendTemporaryMessage(
       bot,
       job.chatId,
-      t(currentTask.locale, 'global.adminOnly')
+      t(currentTask.locale, 'global.adminOnly'),
     );
     isProcessing = false;
     await cleanupQueueFx();
@@ -185,17 +213,41 @@ export async function processQueue() {
   }
 
   let timedOut = false;
+  let deliveryStarted = false;
+  let deliverySucceeded = false;
+  let hardTimeoutId: NodeJS.Timeout | undefined;
   const timeoutMs = currentTask.storyRequestType === 'paginated'
     ? PAGINATED_PROCESSING_TIMEOUT_MS
     : PROCESSING_TIMEOUT_MS;
 
   const timeoutId = setTimeout(async () => {
+    if (currentTask.starsBundleId && deliveryStarted) {
+      const remainingMs = Math.max(1, PAID_DELIVERY_HARD_TIMEOUT_MS - timeoutMs);
+      console.warn(
+        `[QueueManager] Paid delivery ${currentTask.starsBundleId} exceeded the normal timeout; arming a hard deadline in ${remainingMs}ms.`,
+      );
+      hardTimeoutId = setTimeout(() => {
+        if (!deliveryStarted || timedOut) return;
+        timedOut = true;
+        console.error(
+          `[QueueManager] Paid delivery ${currentTask.starsBundleId} exceeded the hard deadline; releasing the queue but retaining its processing row until the active Telegram send exits.`,
+        );
+        void sendTemporaryMessage(
+          bot,
+          job.chatId,
+          t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link }),
+        ).catch(() => {});
+        isProcessing = false;
+        setImmediate(processQueue);
+      }, remainingMs);
+      return;
+    }
     timedOut = true;
     await markErrorFx({ jobId: job.id, message: 'Processing timeout' });
     await sendTemporaryMessage(
       bot,
       job.chatId,
-      t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link })
+      t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link }),
     );
     isProcessing = false;
     setImmediate(processQueue);
@@ -229,31 +281,77 @@ export async function processQueue() {
       taskForSend = {
         ...currentTask,
         globalStoriesState: typeof globalStoriesState === 'string' ? globalStoriesState : undefined,
-        globalStoriesHasMore: typeof globalStoriesHasMore === 'boolean' ? globalStoriesHasMore : Boolean(globalStoriesHasMore),
+        globalStoriesHasMore: typeof globalStoriesHasMore === 'boolean'
+          ? globalStoriesHasMore
+          : Boolean(globalStoriesHasMore),
       };
     }
 
     const payload: SendStoriesFxParams = { task: taskForSend, ...(storiesPayload as object) };
     if (!timedOut) {
-      await sendStoriesFx(payload);
-      await markDoneFx(job.id);
-      console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
+      deliveryStarted = true;
+      try {
+        await sendStoriesFx(payload);
+        deliverySucceeded = true;
+      } finally {
+        deliveryStarted = false;
+        if (hardTimeoutId) clearTimeout(hardTimeoutId);
+        if (timedOut) {
+          if (deliverySucceeded) {
+            await markDoneFx(job.id).catch((error) => {
+              console.error(`[QueueManager] Could not finalize late successful job ${job.id}:`, error);
+            });
+          } else {
+            await markErrorFx({ jobId: job.id, message: 'Paid delivery failed after hard timeout' }).catch((error) => {
+              console.error(`[QueueManager] Could not finalize late failed job ${job.id}:`, error);
+            });
+            if (currentTask.starsBundleId) {
+              const { refundUndeliverableStarsBundle } = await import('./stars-payment');
+              await refundUndeliverableStarsBundle(currentTask.starsBundleId).catch((error) => {
+                console.error(
+                  `[QueueManager] Stars refund failed after timed-out worker exit for ${currentTask.starsBundleId}:`,
+                  error,
+                );
+              });
+            }
+          }
+        }
+      }
+      if (!timedOut) {
+        await markDoneFx(job.id);
+        if (currentTask.starsBundleId) {
+          const { finalizeDeferredStarsRefund } = await import('./stars-payment');
+          await finalizeDeferredStarsRefund(currentTask.starsBundleId).catch((error) => {
+            console.error(`[QueueManager] Deferred Stars refund failed for ${currentTask.starsBundleId}:`, error);
+          });
+        }
+        console.log(`[QueueManager] Finished processing for ${currentTask.link} (Job ID: ${job.id})`);
+      }
     }
-
-  } catch (err: any) {
+  } catch (error: any) {
     if (!timedOut) {
-      console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, err);
-      await markErrorFx({ jobId: job.id, message: err?.message || 'Unknown processing error' });
+      console.error(`[QueueManager] Error processing job ${job.id} for ${currentTask.link}:`, error);
+      await markErrorFx({ jobId: job.id, message: error?.message || 'Unknown processing error' });
+      if (currentTask.starsBundleId) {
+        const { finalizeDeferredStarsRefund } = await import('./stars-payment');
+        await finalizeDeferredStarsRefund(currentTask.starsBundleId).catch((refundError) => {
+          console.error(
+            `[QueueManager] Deferred Stars refund failed after error for ${currentTask.starsBundleId}:`,
+            refundError,
+          );
+        });
+      }
       await bot.telegram.sendMessage(
         job.chatId,
         t(currentTask.locale, 'queue.processingError', {
           user: currentTask.link,
-          reason: err?.message || 'Unknown error',
-        })
+          reason: error?.message || 'Unknown error',
+        }),
       );
     }
   } finally {
     clearTimeout(timeoutId);
+    if (hardTimeoutId) clearTimeout(hardTimeoutId);
     if (!timedOut) {
       isProcessing = false;
       await cleanupQueueFx();

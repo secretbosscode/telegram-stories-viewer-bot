@@ -200,6 +200,15 @@ function getBundle(id: string): StarsBundleRow | undefined {
     .get(id) as StarsBundleRow | undefined;
 }
 
+export function isStarsBundleDeliverable(bundleId: string): boolean {
+  const bundle = getBundle(bundleId);
+  return Boolean(
+    bundle &&
+    bundle.status === 'DELIVERING' &&
+    !bundle.refunded_at
+  );
+}
+
 function getPaymentForBundle(bundleId: string): StarsPaymentRow | undefined {
   return db
     .prepare('SELECT * FROM star_payments WHERE bundle_id = ?')
@@ -344,32 +353,36 @@ function validateCheckout(query: any): { ok: true; bundle: StarsBundleRow } | { 
 }
 
 async function enqueuePaidBundle(bundle: StarsBundleRow, chargeId: string, force = false): Promise<void> {
-  if (!force && bundle.status === 'DELIVERED') return;
-  const originalTask = JSON.parse(bundle.task_json) as UserInfo;
-  const storyIds = JSON.parse(bundle.story_ids) as number[];
+  const currentBundle = getBundle(bundle.id);
+  if (!currentBundle) return;
+  if (!force && currentBundle.status === 'DELIVERED') return;
+  if (currentBundle.status === 'DELIVERED' || currentBundle.status === 'REFUND_PENDING' || currentBundle.status === 'REFUNDED') return;
+  const originalTask = JSON.parse(currentBundle.task_json) as UserInfo;
+  const storyIds = JSON.parse(currentBundle.story_ids) as number[];
   const paidTask: UserInfo = {
     ...originalTask,
-    chatId: bundle.chat_id,
+    chatId: currentBundle.chat_id,
     initTime: Date.now(),
     starsUnlocked: true,
-    starsBundleId: bundle.id,
+    starsBundleId: currentBundle.id,
     starsPaymentChargeId: chargeId,
     starsExpectedStoryIds: storyIds,
   };
 
   const now = nowSeconds();
-  db.prepare(
+  const updated = db.prepare(
     `UPDATE star_result_bundles
      SET status = 'DELIVERING',
          attempt_count = attempt_count + 1,
          last_attempt_at = ?,
          last_error = NULL
-     WHERE id = ? AND status NOT IN ('DELIVERED', 'REFUNDED')`,
-  ).run(now, bundle.id);
+     WHERE id = ? AND status IN ('PAID', 'DELIVERING')`,
+  ).run(now, currentBundle.id);
+  if (updated.changes === 0) return;
 
   try {
     await enqueueDownloadFx({
-      telegram_id: bundle.user_id,
+      telegram_id: currentBundle.user_id,
       target_username: originalTask.link,
       task_details: paidTask,
       delaySeconds: 0,
@@ -380,8 +393,8 @@ async function enqueuePaidBundle(bundle: StarsBundleRow, chargeId: string, force
     db.prepare(
       `UPDATE star_result_bundles
        SET status = 'PAID', last_error = ?
-       WHERE id = ? AND status NOT IN ('DELIVERED', 'REFUNDED')`,
-    ).run(error?.message || String(error), bundle.id);
+       WHERE id = ? AND status IN ('PAID', 'DELIVERING')`,
+    ).run(error?.message || String(error), currentBundle.id);
     throw error;
   }
 }
@@ -444,7 +457,7 @@ export function markStarsBundleDelivered(bundleId: string): void {
   db.prepare(
     `UPDATE star_result_bundles
      SET status = 'DELIVERED', delivered_at = ?, last_error = NULL
-     WHERE id = ? AND status NOT IN ('REFUNDED')`,
+     WHERE id = ? AND status = 'DELIVERING'`,
   ).run(nowSeconds(), bundleId);
 }
 
@@ -452,20 +465,70 @@ export function recordStarsDeliveryFailure(bundleId: string, error: unknown): vo
   db.prepare(
     `UPDATE star_result_bundles
      SET status = 'PAID', last_error = ?
-     WHERE id = ? AND status NOT IN ('DELIVERED', 'REFUNDED')`,
+     WHERE id = ? AND status IN ('PAID', 'DELIVERING')`,
   ).run(error instanceof Error ? error.message : String(error), bundleId);
 }
 
-async function refundBundle(bundle: StarsBundleRow, notifyUser = true): Promise<boolean> {
+async function refundBundle(
+  bundle: StarsBundleRow,
+  notifyUser = true,
+  deferIfProcessing = false,
+): Promise<boolean> {
   const payment = getPaymentForBundle(bundle.id);
   if (!payment || payment.refunded_at || bundle.status === 'REFUNDED') return Boolean(payment?.refunded_at);
   if (!botInstance) return false;
 
-  db.prepare(
-    `UPDATE star_result_bundles
-     SET status = 'REFUND_PENDING', last_error = NULL
-     WHERE id = ? AND status <> 'DELIVERED'`,
-  ).run(bundle.id);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const processing = db.prepare(
+      `SELECT 1
+       FROM download_queue
+       WHERE status = 'processing'
+         AND json_extract(task_details, '$.starsBundleId') = ?
+       LIMIT 1`,
+    ).get(bundle.id);
+    if (processing) {
+      if (deferIfProcessing) {
+        db.prepare(
+          `UPDATE star_result_bundles
+           SET status = 'REFUND_PENDING'
+           WHERE id = ?
+             AND (
+               status IN ('PAID', 'DELIVERING', 'REFUND_PENDING')
+               OR (status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month'))
+             )`,
+        ).run(bundle.id);
+        db.exec('COMMIT');
+      } else {
+        db.exec('ROLLBACK');
+      }
+      return false;
+    }
+
+    db.prepare(
+      `DELETE FROM download_queue
+       WHERE status = 'pending'
+         AND json_extract(task_details, '$.starsBundleId') = ?`,
+    ).run(bundle.id);
+
+    const fenced = db.prepare(
+      `UPDATE star_result_bundles
+       SET status = 'REFUND_PENDING', last_error = NULL
+       WHERE id = ?
+         AND (
+           status IN ('PAID', 'DELIVERING', 'REFUND_PENDING')
+           OR (status = 'DELIVERED' AND request_kind IN ('monitor_week', 'monitor_month'))
+         )`,
+    ).run(bundle.id);
+    if (fenced.changes === 0) {
+      db.exec('ROLLBACK');
+      return false;
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw error;
+  }
 
   try {
     await callBotApi('refundStarPayment', {
@@ -510,11 +573,17 @@ async function refundBundle(bundle: StarsBundleRow, notifyUser = true): Promise<
 export async function refundUndeliverableStarsBundle(bundleId: string): Promise<boolean> {
   const bundle = getBundle(bundleId);
   if (!bundle) return false;
+  return refundBundle(bundle, true, true);
+}
+
+export async function finalizeDeferredStarsRefund(bundleId: string): Promise<boolean> {
+  const bundle = getBundle(bundleId);
+  if (!bundle || bundle.status !== 'REFUND_PENDING') return false;
   return refundBundle(bundle);
 }
 
-async function recoverPaidBundles(): Promise<void> {
-  if (recoveryRunning || !botInstance || !isStarsMode()) return;
+export async function recoverPaidBundles(): Promise<void> {
+  if (recoveryRunning || !botInstance) return;
   recoveryRunning = true;
   try {
     const cutoff = nowSeconds() - DELIVERY_STALE_SECONDS;
@@ -718,6 +787,15 @@ export function registerStarsPayments(bot: Telegraf<IContextBot>): void {
     } else if (action.startsWith('mode:')) {
       const mode = action.slice('mode:'.length) === 'btc' ? 'btc' : 'stars';
       const changed = setPaymentMode(mode, String(ctx.from.id));
+      if (changed) {
+        const { synchronizeLegacyCommandMenus, synchronizeStarsCommandMenus } =
+          await import('./stars-command-surface');
+        if (mode === 'stars') {
+          await synchronizeStarsCommandMenus(bot, true);
+        } else {
+          await synchronizeLegacyCommandMenus(bot);
+        }
+      }
       await ctx.answerCbQuery(
         changed
           ? t(locale, 'stars.adminModeChanged', { mode: t(locale, mode === 'stars' ? 'stars.adminModeStars' : 'stars.adminModeBtc') })

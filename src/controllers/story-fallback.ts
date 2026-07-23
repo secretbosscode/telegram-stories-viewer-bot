@@ -10,11 +10,15 @@ function resolveIdentifier(source: StorySourceContext | undefined, fallback?: st
   return source?.identifier || source?.displayName || fallback;
 }
 
-export async function sendStoryFallbacks(task: UserInfo, stories: MappedStoryItem[]) {
-  if (!stories || stories.length === 0) return;
+export async function sendStoryFallbacks(
+  task: UserInfo,
+  stories: MappedStoryItem[],
+): Promise<number[]> {
+  if (!stories || stories.length === 0) return [];
 
   const client = await Userbot.getInstance();
   const peerCache = new Map<string, Api.TypeInputPeer>();
+  const deliveredStoryIds: number[] = [];
 
   for (const story of stories) {
     try {
@@ -58,8 +62,11 @@ export async function sendStoryFallbacks(task: UserInfo, stories: MappedStoryIte
           Markup.button.url(buttonText, link),
         ]),
       );
+      deliveredStoryIds.push(story.id);
     } catch (error) {
       console.error(`[StoryFallback] Failed to deliver fallback for story ${story.id}:`, error);
     }
   }
+
+  return deliveredStoryIds;
 }

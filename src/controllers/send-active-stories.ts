@@ -1,65 +1,65 @@
 // src/controllers/send-active-stories.ts
 
 import { Userbot } from 'config/userbot';
-import { bot } from 'index'; // Corrected path to use tsconfig alias
+import { bot } from 'index';
 import { chunkMediafiles, sendTemporaryMessage } from 'lib';
 import { Markup } from 'telegraf';
 import { Api } from 'telegram';
-import { t } from "lib/i18n";
-
-// CORRECTED: Import InlineKeyboardButton for precise typing
-import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram'; // <--- This import is key for fixing TS2724
-
-// CORRECTED: Import types from your central types.ts file
+import { t } from 'lib/i18n';
+import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram';
 import { SendStoriesArgs, MappedStoryItem, StoriesModel, NotifyAdminParams } from 'types';
-
-// Corrected import path for downloadStories and mapStories
 import { downloadStories, mapStories } from 'controllers/download-stories';
 import { notifyAdmin } from 'controllers/send-message';
 import { sendStoryFallbacks } from 'controllers/story-fallback';
+import { PartialStoryDeliveryError } from 'controllers/send-paginated-stories';
 import { ensureStealthMode } from 'services/stealth-mode';
 
 /**
- * Sends a user's active stories as Telegram media groups.
- * Handles pagination, download, error reporting, and premium up-sell.
+ * Sends active stories and returns the exact story IDs delivered as Telegram
+ * media or valid exported fallback links.
+ *
+ * Paid Stars bundles and monitoring alerts always deliver the complete input
+ * set in one job. Ordinary interactive requests retain the five-item paging UI.
  */
-export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
-  // `stories` here is expected to be `MappedStoryItem[]` from SendStoriesArgs
-  let mapped: StoriesModel = stories; // Explicitly typed mapped to StoriesModel (MappedStoryItem[])
+export async function sendActiveStories({
+  stories,
+  task,
+}: SendStoriesArgs): Promise<number[]> {
+  let mapped: StoriesModel = stories;
+  const deliveredStoryIds = new Set<number>();
 
-  // === Pagination logic for >5 stories (per page) ===
   let hasMorePages = false;
   const nextStories: Record<string, number[]> = {};
   const PER_PAGE = 5;
+  const deliverAll = Boolean(task.starsBundleId || (task as any).monitorDelivery);
 
-  if (stories.length > PER_PAGE) {
+  if (!deliverAll && stories.length > PER_PAGE) {
     hasMorePages = true;
-    const currentStories: MappedStoryItem[] = mapped.slice(0, PER_PAGE); // Explicitly typed
+    const currentStories: MappedStoryItem[] = mapped.slice(0, PER_PAGE);
     for (let i = PER_PAGE; i < mapped.length; i += PER_PAGE) {
       const from = i + 1;
       const to = Math.min(i + PER_PAGE, mapped.length);
-      // CORRECTED LINE: Removed LaTeX delimiters and used template literal correctly
-      nextStories[`${from}-${to}`] = mapped.slice(i, i + PER_PAGE).map((x: MappedStoryItem) => x.id); // <--- 'x' is typed here
+      nextStories[`${from}-${to}`] = mapped
+        .slice(i, i + PER_PAGE)
+        .map((story: MappedStoryItem) => story.id);
     }
     mapped = currentStories;
   }
 
-  // === If any stories missing media, refetch via Userbot ===
-  const storiesWithoutMedia: MappedStoryItem[] = mapped.filter((x: MappedStoryItem) => !x.media); // <--- 'x' is typed here
+  const storiesWithoutMedia = mapped.filter((story: MappedStoryItem) => !story.media);
   if (storiesWithoutMedia.length > 0) {
-    mapped = mapped.filter((x: MappedStoryItem) => Boolean(x.media)); // <--- 'x' is typed here
+    mapped = mapped.filter((story: MappedStoryItem) => Boolean(story.media));
     try {
       const client = await Userbot.getInstance();
       const entity = await client.getEntity(task.link!);
-      const ids = storiesWithoutMedia.map((x: MappedStoryItem) => x.id); // <--- 'x' is typed here
+      const ids = storiesWithoutMedia.map((story: MappedStoryItem) => story.id);
       await ensureStealthMode();
-      const storiesWithMediaApi = await client.invoke(
-        new Api.stories.GetStoriesByID({ id: ids, peer: entity })
+      const response = await client.invoke(
+        new Api.stories.GetStoriesByID({ id: ids, peer: entity }),
       );
-      mapped.push(...mapStories(storiesWithMediaApi.stories));
-    } catch (e) {
-      console.error('[sendActiveStories] Error re-fetching stories without media:', e);
-      // Fallback: just continue with those that have media
+      mapped.push(...mapStories(response.stories));
+    } catch (error) {
+      console.error('[sendActiveStories] Error re-fetching stories without media:', error);
     }
   }
 
@@ -72,30 +72,24 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
   });
 
   try {
-    // --- User notification: downloading ---
     await sendTemporaryMessage(
       bot,
       task.chatId,
-      t(task.locale, 'active.downloading', { user: task.link })
-    ).catch((err) => {
+      t(task.locale, 'active.downloading', { user: task.link }),
+    ).catch((error) => {
       console.error(
-        `[sendActiveStories] Failed to send 'Downloading Active stories' message to ${task.chatId}:`,
-        err
+        `[sendActiveStories] Failed to send downloading message to ${task.chatId}:`,
+        error,
       );
     });
 
-    // --- Download stories to buffer ---
     const downloadResult = await downloadStories(mapped, 'active');
-
-    // --- Only upload files with buffer and size <= 47MB (Telegram API limit fudge) ---
-    const uploadableStories: MappedStoryItem[] = mapped.filter(
-      (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 47 // <--- 'x' is typed here
+    const uploadableStories = mapped.filter(
+      (story: MappedStoryItem) => story.buffer && Number(story.bufferSize ?? 0) <= 47,
     );
-
     const oversizeStories = mapped.filter(
-      (story: MappedStoryItem) => story.buffer && story.bufferSize! > 47,
+      (story: MappedStoryItem) => story.buffer && Number(story.bufferSize ?? 0) > 47,
     );
-
     const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
     const fallbackCandidates = [
       ...failedDownloads,
@@ -104,106 +98,106 @@ export async function sendActiveStories({ stories, task }: SendStoriesArgs) {
       ),
     ];
 
-    // --- Notify user about upload ---
     if (uploadableStories.length > 0) {
       await sendTemporaryMessage(
         bot,
         task.chatId,
-        t(task.locale, 'active.uploading', { count: uploadableStories.length, user: task.link })
-      ).catch((err) => {
-        console.error(
-          `[sendActiveStories] Failed to send 'Uploading' message to ${task.chatId}:`,
-          err
-        );
+        t(task.locale, 'active.uploading', {
+          count: uploadableStories.length,
+          user: task.link,
+        }),
+      ).catch((error) => {
+        console.error(`[sendActiveStories] Failed to send uploading message to ${task.chatId}:`, error);
       });
+
       if (uploadableStories.length === 1) {
         const single = uploadableStories[0];
-        const captionText = `${single.caption ? single.caption + '\n\n' : ''}Active story from ${task.link}`;
-        const media: any = {
-          media: { source: single.buffer! },
-          type: single.mediaType,
-          caption: captionText.slice(0, 1024),
-        };
-        await bot.telegram.sendMediaGroup(task.chatId, [media]);
+        const captionText = `${single.caption ? `${single.caption}\n\n` : ''}Active story from ${task.link}`;
+        const media = { source: single.buffer! };
+        const extra = { caption: captionText.slice(0, 1024) };
+        if (single.mediaType === 'photo') {
+          await bot.telegram.sendPhoto(task.chatId, media, extra);
+        } else {
+          await bot.telegram.sendVideo(task.chatId, media, extra);
+        }
+        deliveredStoryIds.add(single.id);
       } else {
-        // --- Send in chunks (albums) ---
-        const chunkedList = chunkMediafiles(uploadableStories);
-        for (const album of chunkedList) {
+        for (const album of chunkMediafiles(uploadableStories)) {
           await bot.telegram.sendMediaGroup(
             task.chatId,
-            album.map((x: MappedStoryItem) => {
-              const captionText = `${x.caption ? `${x.caption}\n\n` : ''}Active story from ${task.link}`;
+            album.map((story: MappedStoryItem) => {
+              const captionText = `${story.caption ? `${story.caption}\n\n` : ''}Active story from ${task.link}`;
               return {
-                media: { source: x.buffer! },
-                type: x.mediaType,
+                media: { source: story.buffer! },
+                type: story.mediaType,
                 caption: captionText.slice(0, 1024),
               };
-            })
+            }),
           );
+          album.forEach((story: MappedStoryItem) => deliveredStoryIds.add(story.id));
         }
       }
-    } else {
-      await bot.telegram.sendMessage(
-        task.chatId,
-        t(task.locale, 'active.none')
-      );
     }
 
     if (fallbackCandidates.length > 0) {
-      await sendStoryFallbacks(task, fallbackCandidates);
+      const fallbackIds = await sendStoryFallbacks(task, fallbackCandidates);
+      fallbackIds.forEach((storyId) => deliveredStoryIds.add(storyId));
     }
 
-    // --- If more pages, offer buttons for the rest ---
+    if (deliveredStoryIds.size === 0) {
+      await bot.telegram.sendMessage(task.chatId, t(task.locale, 'active.none'));
+    }
+
     if (hasMorePages) {
-      const btns = Object.entries(nextStories).map(
-        ([pages, nextStoriesIds]: [string, number[]]) => ({
-          text: `📥 ${pages} 📥`,
-          // CORRECTED LINE: Removed LaTeX delimiters and used template literal correctly
-          callback_data: `${task.link}&${JSON.stringify(nextStoriesIds)}`,
-        })
+      const buttons = Object.entries(nextStories).map(([pages, ids]) => ({
+        text: `📥 ${pages} 📥`,
+        callback_data: `${task.link}&${JSON.stringify(ids)}`,
+      }));
+      const keyboard = buttons.reduce(
+        (rows: InlineKeyboardButton[][], button: InlineKeyboardButton, index: number) => {
+          const row = Math.floor(index / 3);
+          if (!rows[row]) rows[row] = [];
+          rows[row].push(button);
+          return rows;
+        },
+        [],
       );
-      // Chunk 3 buttons per row
-      // CORRECTED: Explicitly typed 'acc' and 'curr' in reduce
-      const keyboard = btns.reduce((acc: InlineKeyboardButton[][], curr: InlineKeyboardButton, index: number) => { // <--- Types fixed here
-        const chunkIndex = Math.floor(index / 3);
-        if (!acc[chunkIndex]) acc[chunkIndex] = [];
-        acc[chunkIndex].push(curr);
-        return acc;
-      }, []);
       await sendTemporaryMessage(
         bot,
         task.chatId,
-        t(task.locale, 'active.uploadedBatch', { sent: PER_PAGE, total: stories.length, user: task.link }),
-        Markup.inlineKeyboard(keyboard)
+        t(task.locale, 'active.uploadedBatch', {
+          sent: PER_PAGE,
+          total: stories.length,
+          user: task.link,
+        }),
+        Markup.inlineKeyboard(keyboard),
       );
     }
 
     notifyAdmin({
       task,
       status: 'info',
-      baseInfo: `📥 ${uploadableStories.length} Active stories uploaded to user!`,
+      baseInfo: `📥 ${deliveredStoryIds.size} Active stories delivered to user!`,
     } as NotifyAdminParams);
 
-  } catch (error: any) {
+    return [...deliveredStoryIds];
+  } catch (error) {
     notifyAdmin({
       task,
       status: 'error',
       errorInfo: { cause: error },
     } as NotifyAdminParams);
     console.error('[sendActiveStories] Error sending ACTIVE stories:', error);
-    try {
-      await bot.telegram
-        .sendMessage(
-          task.chatId,
-          t(task.locale, 'active.error')
-        )
-        .catch((err) => {
-          console.error(
-            `[sendActiveStories] Failed to notify ${task.chatId} about general error:`,
-            err
-          );
-        });
-    } catch (_) {/* ignore */}
+    await bot.telegram.sendMessage(task.chatId, t(task.locale, 'active.error')).catch(() => {});
+
+    const partialIds = [...deliveredStoryIds];
+    if ((task as any).monitorDelivery && partialIds.length > 0) {
+      console.warn(`[sendActiveStories] Partial monitor delivery for ${task.link}; remaining stories will retry.`);
+      return partialIds;
+    }
+    if (partialIds.length > 0) {
+      throw new PartialStoryDeliveryError(error, partialIds);
+    }
     throw error;
   }
 }

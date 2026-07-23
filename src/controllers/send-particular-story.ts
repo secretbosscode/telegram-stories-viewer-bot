@@ -1,109 +1,96 @@
 // src/controllers/send-particular-story.ts
 
-import { bot } from 'index'; // Corrected path to use tsconfig alias
-import { Api } from 'telegram';
-import { t } from "lib/i18n";
+import { bot } from 'index';
+import { t } from 'lib/i18n';
 import { sendTemporaryMessage } from 'lib';
-
-// CORRECTED: Import types from your central types.ts file
-import { SendParticularStoryArgs, UserInfo, MappedStoryItem, NotifyAdminParams } from 'types'; // <--- Corrected import path & added MappedStoryItem, NotifyAdminParams
-
-// Corrected import path for downloadStories and mapStories
-import { downloadStories, mapStories } from 'controllers/download-stories'; // <--- Corrected import path
-import { notifyAdmin } from 'controllers/send-message'; // <--- Corrected import path
-
+import { SendParticularStoryArgs, MappedStoryItem, NotifyAdminParams } from 'types';
+import { downloadStories, mapStories } from 'controllers/download-stories';
+import { notifyAdmin } from 'controllers/send-message';
 
 /**
- * Sends a particular story to the user.
- * @param story - The story item to send.
- * @param task  - The user/task information.
+ * Sends a particular story and returns its ID only after Telegram confirms
+ * media delivery. Paid Stars bundles use the returned IDs as fulfillment proof.
  */
 export async function sendParticularStory({
   story,
   task,
-}: SendParticularStoryArgs) { // <--- Using the imported SendParticularStoryArgs
-  // `mapStories` expects an array, so pass the single story in an array.
-  const mapped: MappedStoryItem[] = mapStories([story]); // <--- Explicitly typed mapped to MappedStoryItem[]
+}: SendParticularStoryArgs): Promise<number[]> {
+  const mapped: MappedStoryItem[] = mapStories([story]);
 
   try {
-    // Notify user that download is starting
-    await sendTemporaryMessage(bot, task.chatId, t(task.locale, 'download.downloading')).catch(
-      (err) => {
-        console.error(
-          `[sendParticularStory] Failed to send 'Downloading' message to ${task.chatId}:`,
-          err
-        );
-      }
-    );
+    await sendTemporaryMessage(
+      bot,
+      task.chatId,
+      t(task.locale, 'download.downloading'),
+    ).catch((error) => {
+      console.error(
+        `[sendParticularStory] Failed to send 'Downloading' message to ${task.chatId}:`,
+        error,
+      );
+    });
 
-    // Actually download the story (media file to buffer)
-    await downloadStories(mapped, 'active'); // 'active' is a string literal, ok.
+    await downloadStories(mapped, 'active');
+    const singleStory = mapped[0];
 
-    const singleStory: MappedStoryItem = mapped[0]; // <--- Explicitly typed singleStory
-
-    if (singleStory && singleStory.buffer) { // <--- Added check for singleStory existence
-      // Notify user that upload is starting
-      await sendTemporaryMessage(
-        bot,
-        task.chatId,
-        t(task.locale, 'download.uploading')
-      ).catch((err) => {
-        console.error(
-          `[sendParticularStory] Failed to send 'Uploading' message to ${task.chatId}:`,
-          err
-        );
-      });
-
-      // Send the media group (single file as an array)
-      await bot.telegram.sendMediaGroup(task.chatId, [
-        {
-          media: { source: singleStory.buffer },
-          type: singleStory.mediaType, // `mediaType` is already 'photo' | 'video' from MappedStoryItem
-          caption:
-            `${singleStory.caption ? `${singleStory.caption}\n` : ''}` +
-            `\n📅 Post date: ${singleStory.date.toUTCString()}`,
-        },
-      ]);
-    } else {
-      // Notify user if download failed
+    if (!singleStory?.buffer) {
       await bot.telegram
         .sendMessage(task.chatId, t(task.locale, 'download.noStory'))
-        .catch((err) => {
+        .catch((error) => {
           console.error(
             `[sendParticularStory] Failed to notify ${task.chatId} about retrieval error:`,
-            err
+            error,
           );
         });
+      return [];
     }
 
-    // Notify admin for monitoring
+    await sendTemporaryMessage(
+      bot,
+      task.chatId,
+      t(task.locale, 'download.uploading'),
+    ).catch((error) => {
+      console.error(
+        `[sendParticularStory] Failed to send 'Uploading' message to ${task.chatId}:`,
+        error,
+      );
+    });
+
+    const media = { source: singleStory.buffer };
+    const extra = {
+      caption: (
+        `${singleStory.caption ? `${singleStory.caption}\n` : ''}` +
+        `\n📅 Post date: ${singleStory.date.toUTCString()}`
+      ).slice(0, 1024),
+    };
+
+    if (singleStory.mediaType === 'photo') {
+      await bot.telegram.sendPhoto(task.chatId, media, extra);
+    } else {
+      await bot.telegram.sendVideo(task.chatId, media, extra);
+    }
+
     notifyAdmin({
       task,
       status: 'info',
-      baseInfo: `📥 Particular story uploaded to user!`,
-    } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
+      baseInfo: '📥 Particular story uploaded to user!',
+    } as NotifyAdminParams);
 
-  } catch (error) { // <--- Error can be 'unknown' or 'any' if not specified
+    return [singleStory.id];
+  } catch (error) {
     notifyAdmin({
       status: 'error',
       task,
       errorInfo: { cause: error },
-    } as NotifyAdminParams); // <--- Added type assertion for notifyAdmin params
+    } as NotifyAdminParams);
     console.error('[sendParticularStory] Error occurred while sending story:', error);
-    try {
-      await bot.telegram
-        .sendMessage(
-          task.chatId,
-          t(task.locale, 'pinned.error')
-        )
-        .catch((err) => {
-          console.error(
-            `[sendParticularStory] Failed to notify ${task.chatId} about general error:`,
-            err
-          );
-        });
-    } catch (_) {/* ignore */}
-    throw error; // Essential for Effector's .fail to trigger
+    await bot.telegram
+      .sendMessage(task.chatId, t(task.locale, 'pinned.error'))
+      .catch((notifyError) => {
+        console.error(
+          `[sendParticularStory] Failed to notify ${task.chatId} about general error:`,
+          notifyError,
+        );
+      });
+    throw error;
   }
-  // No more Effector event triggers, just let queue logic handle cleanup!
 }

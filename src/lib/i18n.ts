@@ -12,6 +12,7 @@ import it from '../locales/it.json';
 import ms from '../locales/ms.json';
 import uk from '../locales/uk.json';
 import starsTranslations from '../locales/stars';
+import starsMonitoringTranslations from '../locales/stars-monitoring';
 
 const baseLocales: Record<string, Record<string, string>> = {
   en,
@@ -35,6 +36,7 @@ const locales: Record<string, Record<string, string>> = Object.fromEntries(
     {
       ...messages,
       ...(starsTranslations[locale] ?? starsTranslations.en),
+      ...(starsMonitoringTranslations[locale] ?? starsMonitoringTranslations.en),
     },
   ]),
 );

@@ -7,7 +7,7 @@ jest.mock('controllers/send-active-stories', () => ({
   sendActiveStories: jest.fn(),
 }));
 jest.mock('controllers/download-stories', () => ({
-  mapStories: jest.fn((s: any) => s),
+  mapStories: jest.fn((stories: any) => stories),
 }));
 jest.mock('../src/config/env-config', () => ({ BOT_ADMIN_ID: 0, LOG_FILE: '/tmp/test.log' }));
 jest.mock('lib/i18n', () => ({
@@ -20,37 +20,42 @@ import { checkSingleMonitor } from '../src/services/monitor-service';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
 
-test('fetches pinned stories once and avoids resending on retries', async () => {
-  const row = addMonitor('user', '123', 'tester', '999', null);
-
-  const invoke = jest.fn(async (query: any) => {
+function createInvoke(active: any[], pinned: any[] = []) {
+  return jest.fn(async (query: any) => {
     if (query instanceof Api.users.GetUsers) {
       return [{ id: bigInt(123), accessHash: bigInt(999), username: 'tester' }];
     }
     if (query instanceof Api.stories.GetPeerStories) {
-      return {
-        stories: {
-          stories: [{ id: 1, date: 10, expireDate: 2000000000 }],
-        },
-      } as any;
+      return { stories: { stories: active } } as any;
     }
     if (query instanceof Api.stories.GetPinnedStories) {
-      return {
-        stories: [{ id: 2, date: 20 }],
-      } as any;
+      return { stories: pinned } as any;
     }
     if (query instanceof Api.photos.GetUserPhotos) {
       return { photos: [] } as any;
     }
     return {};
   });
+}
 
+function activeSenderMock(): any {
+  const { sendActiveStories } = require('../src/controllers/send-active-stories');
+  return sendActiveStories as any;
+}
+
+test('fetches pinned stories once and avoids resending after confirmed delivery', async () => {
+  const row = addMonitor('user', '123', 'tester', '999', null);
+  const invoke = createInvoke(
+    [{ id: 1, date: 10, expireDate: 2000000000 }],
+    [{ id: 2, date: 20 }],
+  );
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
 
-  const { sendActiveStories } = require('../src/controllers/send-active-stories');
-  const sendActiveStoriesMock = sendActiveStories as jest.Mock;
-
-  sendActiveStoriesMock.mockClear();
+  const sendActiveStoriesMock = activeSenderMock();
+  sendActiveStoriesMock
+    .mockReset()
+    .mockResolvedValueOnce([1])
+    .mockResolvedValueOnce([2]);
 
   await checkSingleMonitor(row.id);
 
@@ -62,52 +67,31 @@ test('fetches pinned stories once and avoids resending on retries', async () => 
   expect(pinnedCall[0].stories).toEqual([
     { id: 2, date: 20 },
   ]);
+  expect(listSentStoryKeys(row.id, 'active')).toContain('1:10');
   expect(listSentStoryKeys(row.id, 'pinned')).toContain('2:20');
 
   sendActiveStoriesMock.mockClear();
-
   await checkSingleMonitor(row.id);
 
   expect(sendActiveStoriesMock).not.toHaveBeenCalled();
-  const calls = invoke.mock.calls.map((c) => c[0]);
-  expect(calls.some((q) => q instanceof Api.stories.GetPinnedStories)).toBe(true);
-  expect(calls.some((q) => q instanceof Api.stories.GetStoriesArchive)).toBe(false);
-  expect(calls.some((q) => q instanceof Api.stories.GetAllStories)).toBe(false);
+  const calls = invoke.mock.calls.map((call) => call[0]);
+  expect(calls.some((query) => query instanceof Api.stories.GetPinnedStories)).toBe(true);
+  expect(calls.some((query) => query instanceof Api.stories.GetStoriesArchive)).toBe(false);
+  expect(calls.some((query) => query instanceof Api.stories.GetAllStories)).toBe(false);
 
   removeMonitor('user', '123');
 });
 
-test('does not resend active story when pinned entry uses the same key', async () => {
+test('records both active and pinned keys only after the shared story is delivered', async () => {
   const row = addMonitor('user', '456', 'tester', '999', null);
-
-  const invoke = jest.fn(async (query: any) => {
-    if (query instanceof Api.users.GetUsers) {
-      return [{ id: bigInt(123), accessHash: bigInt(999), username: 'tester' }];
-    }
-    if (query instanceof Api.stories.GetPeerStories) {
-      return {
-        stories: {
-          stories: [{ id: 1, date: 10, expireDate: 2000000000 }],
-        },
-      } as any;
-    }
-    if (query instanceof Api.stories.GetPinnedStories) {
-      return {
-        stories: [{ id: 1, date: 10 }],
-      } as any;
-    }
-    if (query instanceof Api.photos.GetUserPhotos) {
-      return { photos: [] } as any;
-    }
-    return {};
-  });
-
+  const invoke = createInvoke(
+    [{ id: 1, date: 10, expireDate: 2000000000 }],
+    [{ id: 1, date: 10 }],
+  );
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
 
-  const { sendActiveStories } = require('../src/controllers/send-active-stories');
-  const sendActiveStoriesMock = sendActiveStories as jest.Mock;
-
-  sendActiveStoriesMock.mockClear();
+  const sendActiveStoriesMock = activeSenderMock();
+  sendActiveStoriesMock.mockReset().mockResolvedValue([1]);
 
   await checkSingleMonitor(row.id);
 
@@ -120,10 +104,96 @@ test('does not resend active story when pinned entry uses the same key', async (
   expect(listSentStoryKeys(row.id, 'pinned')).toContain('1:10');
 
   sendActiveStoriesMock.mockClear();
-
   await checkSingleMonitor(row.id);
-
   expect(sendActiveStoriesMock).not.toHaveBeenCalled();
 
   removeMonitor('user', '456');
+});
+
+
+test('does not resend an earlier active story after it later becomes pinned', async () => {
+  const row = addMonitor('user', '792', 'tester', '999', null);
+  const active = [{ id: 13, date: 130, expireDate: 2000000000 }];
+  const pinned: any[] = [];
+  const invoke = createInvoke(active, pinned);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  const sendActiveStoriesMock = activeSenderMock();
+  sendActiveStoriesMock.mockReset().mockResolvedValue([13]);
+
+  await checkSingleMonitor(row.id);
+  expect(listSentStoryKeys(row.id, 'active')).toContain('13:130');
+
+  active.splice(0, active.length);
+  pinned.push({ id: 13, date: 130 });
+  sendActiveStoriesMock.mockClear();
+
+  await checkSingleMonitor(row.id);
+  expect(sendActiveStoriesMock).not.toHaveBeenCalled();
+
+  removeMonitor('user', '792');
+});
+
+test('does not persist a story key when delivery throws and retries later', async () => {
+  const row = addMonitor('user', '789', 'tester', '999', null);
+  const invoke = createInvoke([
+    { id: 9, date: 90, expireDate: 2000000000 },
+  ]);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  const sendActiveStoriesMock = activeSenderMock();
+  sendActiveStoriesMock
+    .mockReset()
+    .mockRejectedValueOnce(new Error('Telegram unavailable'))
+    .mockResolvedValueOnce([9]);
+
+  await checkSingleMonitor(row.id);
+  expect(listSentStoryKeys(row.id, 'active')).not.toContain('9:90');
+
+  await checkSingleMonitor(row.id);
+  expect(sendActiveStoriesMock).toHaveBeenCalledTimes(2);
+  expect(listSentStoryKeys(row.id, 'active')).toContain('9:90');
+
+  removeMonitor('user', '789');
+});
+
+test('does not persist stories when delivery resolves with no delivered IDs', async () => {
+  const row = addMonitor('user', '790', 'tester', '999', null);
+  const invoke = createInvoke([
+    { id: 10, date: 100, expireDate: 2000000000 },
+  ]);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  const sendActiveStoriesMock = activeSenderMock();
+  sendActiveStoriesMock
+    .mockReset()
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([10]);
+
+  await checkSingleMonitor(row.id);
+  expect(listSentStoryKeys(row.id, 'active')).not.toContain('10:100');
+
+  await checkSingleMonitor(row.id);
+  expect(sendActiveStoriesMock).toHaveBeenCalledTimes(2);
+  expect(listSentStoryKeys(row.id, 'active')).toContain('10:100');
+
+  removeMonitor('user', '790');
+});
+
+test('persists only the subset of stories confirmed delivered', async () => {
+  const row = addMonitor('user', '791', 'tester', '999', null);
+  const invoke = createInvoke([
+    { id: 11, date: 110, expireDate: 2000000000 },
+    { id: 12, date: 120, expireDate: 2000000000 },
+  ]);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  const sendActiveStoriesMock = activeSenderMock();
+  sendActiveStoriesMock.mockReset().mockResolvedValue([11]);
+
+  await checkSingleMonitor(row.id);
+  expect(listSentStoryKeys(row.id, 'active')).toContain('11:110');
+  expect(listSentStoryKeys(row.id, 'active')).not.toContain('12:120');
+
+  removeMonitor('user', '791');
 });
