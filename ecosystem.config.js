@@ -3,6 +3,7 @@ module.exports = {
     {
       name: 'telegram-stories-bot',
       script: './dist/index.js',
+      node_args: '--require ./command-menu-flood-guard.js',
       instances: 1,
       autorestart: true,
       watch: false,
