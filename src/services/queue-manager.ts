@@ -33,6 +33,7 @@ import { isUserPremium } from 'services/premium-service';
 
 export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000;
 export const PAGINATED_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
+export const PAID_DELIVERY_HARD_TIMEOUT_MS = 20 * 60 * 1000;
 
 const COOLDOWN_HOURS = { free: 12, premium: 2, admin: 0 };
 
@@ -213,15 +214,32 @@ export async function processQueue() {
 
   let timedOut = false;
   let deliveryStarted = false;
+  let deliverySucceeded = false;
+  let hardTimeoutId: NodeJS.Timeout | undefined;
   const timeoutMs = currentTask.storyRequestType === 'paginated'
     ? PAGINATED_PROCESSING_TIMEOUT_MS
     : PROCESSING_TIMEOUT_MS;
 
   const timeoutId = setTimeout(async () => {
     if (currentTask.starsBundleId && deliveryStarted) {
+      const remainingMs = Math.max(1, PAID_DELIVERY_HARD_TIMEOUT_MS - timeoutMs);
       console.warn(
-        `[QueueManager] Paid delivery ${currentTask.starsBundleId} exceeded the normal timeout; keeping its queue row processing until the active Telegram send exits.`,
+        `[QueueManager] Paid delivery ${currentTask.starsBundleId} exceeded the normal timeout; arming a hard deadline in ${remainingMs}ms.`,
       );
+      hardTimeoutId = setTimeout(() => {
+        if (!deliveryStarted || timedOut) return;
+        timedOut = true;
+        console.error(
+          `[QueueManager] Paid delivery ${currentTask.starsBundleId} exceeded the hard deadline; releasing the queue but retaining its processing row until the active Telegram send exits.`,
+        );
+        void sendTemporaryMessage(
+          bot,
+          job.chatId,
+          t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link }),
+        ).catch(() => {});
+        isProcessing = false;
+        setImmediate(processQueue);
+      }, remainingMs);
       return;
     }
     timedOut = true;
@@ -274,8 +292,30 @@ export async function processQueue() {
       deliveryStarted = true;
       try {
         await sendStoriesFx(payload);
+        deliverySucceeded = true;
       } finally {
         deliveryStarted = false;
+        if (hardTimeoutId) clearTimeout(hardTimeoutId);
+        if (timedOut) {
+          if (deliverySucceeded) {
+            await markDoneFx(job.id).catch((error) => {
+              console.error(`[QueueManager] Could not finalize late successful job ${job.id}:`, error);
+            });
+          } else {
+            await markErrorFx({ jobId: job.id, message: 'Paid delivery failed after hard timeout' }).catch((error) => {
+              console.error(`[QueueManager] Could not finalize late failed job ${job.id}:`, error);
+            });
+            if (currentTask.starsBundleId) {
+              const { refundUndeliverableStarsBundle } = await import('./stars-payment');
+              await refundUndeliverableStarsBundle(currentTask.starsBundleId).catch((error) => {
+                console.error(
+                  `[QueueManager] Stars refund failed after timed-out worker exit for ${currentTask.starsBundleId}:`,
+                  error,
+                );
+              });
+            }
+          }
+        }
       }
       if (!timedOut) {
         await markDoneFx(job.id);
@@ -311,6 +351,7 @@ export async function processQueue() {
     }
   } finally {
     clearTimeout(timeoutId);
+    if (hardTimeoutId) clearTimeout(hardTimeoutId);
     if (!timedOut) {
       isProcessing = false;
       await cleanupQueueFx();
