@@ -13,4 +13,20 @@ describe('monitor removal target resolution', () => {
     );
     expect(removal).toContain('removeMonitor(telegramId, existing.target_id)');
   });
+
+  test('Stars unmonitor rejects missing targets before reporting success', () => {
+    const source = fs.readFileSync('src/services/stars-command-surface.ts', 'utf8');
+    const handler = source.match(
+      /async function handleStarsUnmonitor[\s\S]*?\n}\n/,
+    )?.[0] ?? '';
+
+    const notFound = handler.indexOf("t(locale, 'stories.userNotFound'");
+    const removal = handler.indexOf('removeProfileMonitor(userId, existing.target_id)');
+    const success = handler.indexOf("t(locale, 'stars.monitorStopped'");
+
+    expect(handler).toContain('if (!existing)');
+    expect(notFound).toBeGreaterThan(-1);
+    expect(removal).toBeGreaterThan(notFound);
+    expect(success).toBeGreaterThan(removal);
+  });
 });
