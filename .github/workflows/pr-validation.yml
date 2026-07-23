@@ -1,22 +1,24 @@
-name: Apply and validate final PR 310 fixes
+name: Validate pull request
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
-      - hotfix/stars-payment-safety
+      - main
 
 concurrency:
-  group: pr310-autofix-${{ github.ref }}
+  group: pr-validation-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-test-commit:
-    if: github.actor != 'github-actions[bot]'
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
       NODE_ENV: test
       PROD_BOT_TOKEN: test-token
@@ -29,538 +31,11 @@ jobs:
       BOT_ADMIN_ID: 999
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: hotfix/stars-payment-safety
-          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      - name: Apply final review fixes
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace_once(path: str, old: str, new: str, label: str) -> None:
-              file = Path(path)
-              text = file.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected one match, found {count}')
-              file.write_text(text.replace(old, new, 1))
-              print(f'applied: {label}')
-
-          replace_once(
-              'src/db/index.ts',
-              """export function recordReferral(inviter_id: string, new_user_id: string): void {
-            db.prepare(
-              `INSERT OR IGNORE INTO referrals (inviter_id, new_user_id) VALUES (?, ?)`,
-            ).run(inviter_id, new_user_id);
-          }""",
-              """export function recordReferral(inviter_id: string, new_user_id: string): boolean {
-            const result = db.prepare(
-              `INSERT OR IGNORE INTO referrals (inviter_id, new_user_id) VALUES (?, ?)`,
-            ).run(inviter_id, new_user_id);
-            return result.changes > 0;
-          }""",
-              'return referral insertion result',
-          )
-
-          replace_once(
-              'src/services/referral-service.ts',
-              """  recordReferral(inviter, newUserId);
-
-            const total = countReferrals(inviter);""",
-              """  const inserted = recordReferral(inviter, newUserId);
-            if (!inserted) return;
-
-            const total = countReferrals(inviter);""",
-              'award only newly inserted referrals',
-          )
-
-          replace_once(
-              '__tests__/referral-service.test.ts',
-              """    mockFindInviterByCode.mockReturnValue('111');
-              mockCountReferrals.mockReturnValue(1);""",
-              """    mockFindInviterByCode.mockReturnValue('111');
-              mockRecordReferral.mockReturnValue(true);
-              mockCountReferrals.mockReturnValue(1);""",
-              'default referral insert success',
-          )
-
-          referral_test = Path('__tests__/referral-service.test.ts')
-          referral_tests = referral_test.read_text()
-          referral_marker = """  test('grants the inviter the five-referral Premium reward', async () => {"""
-          referral_block = """  test('does not re-award a milestone when the referral already exists', async () => {
-            mockRecordReferral.mockReturnValue(false);
-            mockCountReferrals.mockReturnValue(5);
-
-            await processStartReferral(telegram, '222', 'INVITE');
-
-            expect(mockCountReferrals).not.toHaveBeenCalled();
-            expect(mockExtendPremium).not.toHaveBeenCalled();
-            expect(sendMessage).not.toHaveBeenCalled();
-          });
-
-          """
-          if referral_tests.count(referral_marker) != 1:
-              raise SystemExit(f'referral regression marker: expected one match, found {referral_tests.count(referral_marker)}')
-          if 'does not re-award a milestone when the referral already exists' not in referral_tests:
-              referral_test.write_text(referral_tests.replace(referral_marker, referral_block + referral_marker, 1))
-              print('applied: duplicate referral reward regression test')
-
-          replace_once(
-              'src/services/stars-payment.ts',
-              """    CREATE INDEX IF NOT EXISTS star_payments_user_idx
-                ON star_payments (user_id, paid_at DESC);
-            `);""",
-              """    CREATE INDEX IF NOT EXISTS star_payments_user_idx
-                ON star_payments (user_id, paid_at DESC);
-
-              CREATE TABLE IF NOT EXISTS active_star_delivery_workers (
-                bundle_id TEXT PRIMARY KEY NOT NULL,
-                queue_job_id INTEGER NOT NULL,
-                started_at INTEGER NOT NULL
-              );
-            `);
-
-            // A process restart terminates every in-memory worker. Remove stale
-            // markers before recovery considers any paid bundle refundable.
-            db.prepare('DELETE FROM active_star_delivery_workers').run();""",
-              'track active paid delivery workers',
-          )
-
-          replace_once(
-              'src/services/stars-payment.ts',
-              """    const processing = db.prepare(
-                `SELECT 1
-                 FROM download_queue
-                 WHERE status = 'processing'
-                   AND json_extract(task_details, '$.starsBundleId') = ?
-                 LIMIT 1`,
-              ).get(bundle.id);""",
-              """    const processing = db.prepare(
-                `SELECT 1
-                 WHERE EXISTS (
-                   SELECT 1
-                   FROM download_queue
-                   WHERE status = 'processing'
-                     AND json_extract(task_details, '$.starsBundleId') = ?
-                 )
-                 OR EXISTS (
-                   SELECT 1
-                   FROM active_star_delivery_workers
-                   WHERE bundle_id = ?
-                 )`,
-              ).get(bundle.id, bundle.id);""",
-              'fence refunds while a paid worker is active',
-          )
-
-          replace_once(
-              'src/services/stars-payment.ts',
-              """     WHERE p.user_id = ?
-               ORDER BY p.paid_at DESC
-               LIMIT 1`,""",
-              """     WHERE p.user_id = ?
-               ORDER BY p.paid_at DESC, p.rowid DESC
-               LIMIT 1`,""",
-              'same-second payment ordering',
-          )
-
-          replace_once(
-              'src/services/queue-manager.ts',
-              """} from 'db/effects';
-          import { BOT_ADMIN_ID } from 'config/env-config';""",
-              """} from 'db/effects';
-          import { db } from 'db';
-          import { BOT_ADMIN_ID } from 'config/env-config';""",
-              'queue database worker registry import',
-          )
-
-          replace_once(
-              'src/services/queue-manager.ts',
-              """export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000;
-          export const PAGINATED_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;""",
-              """export const PROCESSING_TIMEOUT_MS = 10 * 60 * 1000;
-          export const PAGINATED_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
-          export const PAID_DELIVERY_HARD_TIMEOUT_MS = 20 * 60 * 1000;""",
-              'paid delivery hard deadline',
-          )
-
-          replace_once(
-              'src/services/queue-manager.ts',
-              """function getRequesterId(task: UserInfo, fallbackChatId: string): string {
-            return String(task.user?.id ?? fallbackChatId);
-          }
-
-          function restoreRequesterEntitlement""",
-              """function getRequesterId(task: UserInfo, fallbackChatId: string): string {
-            return String(task.user?.id ?? fallbackChatId);
-          }
-
-          function registerActivePaidDelivery(bundleId: string, queueJobId: number): void {
-            db.prepare(
-              `INSERT INTO active_star_delivery_workers (bundle_id, queue_job_id, started_at)
-               VALUES (?, ?, ?)
-               ON CONFLICT(bundle_id) DO UPDATE SET
-                 queue_job_id = excluded.queue_job_id,
-                 started_at = excluded.started_at`,
-            ).run(bundleId, queueJobId, Math.floor(Date.now() / 1000));
-          }
-
-          function clearActivePaidDelivery(bundleId: string): void {
-            db.prepare('DELETE FROM active_star_delivery_workers WHERE bundle_id = ?').run(bundleId);
-          }
-
-          function restoreRequesterEntitlement""",
-              'active paid worker registry helpers',
-          )
-
-          replace_once(
-              'src/services/queue-manager.ts',
-              """  let timedOut = false;
-            let deliveryStarted = false;
-            const timeoutMs = currentTask.storyRequestType === 'paginated'""",
-              """  let timedOut = false;
-            let deliveryStarted = false;
-            let hardTimeoutId: NodeJS.Timeout | undefined;
-            const timeoutMs = currentTask.storyRequestType === 'paginated'""",
-              'hard watchdog timer state',
-          )
-
-          replace_once(
-              'src/services/queue-manager.ts',
-              """    if (currentTask.starsBundleId && deliveryStarted) {
-                console.warn(
-                  `[QueueManager] Paid delivery ${currentTask.starsBundleId} exceeded the normal timeout; keeping its queue row processing until the active Telegram send exits.`,
-                );
-                return;
-              }""",
-              """    if (currentTask.starsBundleId && deliveryStarted) {
-                const bundleId = currentTask.starsBundleId;
-                const remainingMs = Math.max(1, PAID_DELIVERY_HARD_TIMEOUT_MS - timeoutMs);
-                console.warn(
-                  `[QueueManager] Paid delivery ${bundleId} exceeded the normal timeout; arming a hard deadline in ${remainingMs}ms.`,
-                );
-                hardTimeoutId = setTimeout(() => {
-                  void (async () => {
-                    if (!deliveryStarted || timedOut) return;
-                    timedOut = true;
-                    console.error(
-                      `[QueueManager] Paid delivery ${bundleId} exceeded the hard deadline; fencing the bundle and releasing the queue while the worker winds down.`,
-                    );
-                    try {
-                      const { refundUndeliverableStarsBundle } = await import('./stars-payment');
-                      await refundUndeliverableStarsBundle(bundleId);
-                    } catch (error) {
-                      console.error(`[QueueManager] Could not fence timed-out Stars bundle ${bundleId}:`, error);
-                    }
-                    try {
-                      await markErrorFx({ jobId: job.id, message: 'Paid delivery hard timeout' });
-                    } catch (error) {
-                      console.error(`[QueueManager] Could not mark timed-out job ${job.id} errored:`, error);
-                    }
-                    await sendTemporaryMessage(
-                      bot,
-                      job.chatId,
-                      t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link }),
-                    ).catch(() => {});
-                    isProcessing = false;
-                    setImmediate(processQueue);
-                  })().catch((error) => {
-                    console.error(`[QueueManager] Paid delivery hard-timeout handler failed for ${bundleId}:`, error);
-                    isProcessing = false;
-                    setImmediate(processQueue);
-                  });
-                }, remainingMs);
-                return;
-              }""",
-              're-arm paid delivery watchdog',
-          )
-
-          replace_once(
-              'src/services/queue-manager.ts',
-              """    if (!timedOut) {
-                deliveryStarted = true;
-                try {
-                  await sendStoriesFx(payload);
-                } finally {
-                  deliveryStarted = false;
-                }
-                if (!timedOut) {""",
-              """    if (!timedOut) {
-                deliveryStarted = true;
-                if (currentTask.starsBundleId) {
-                  registerActivePaidDelivery(currentTask.starsBundleId, job.id);
-                }
-                try {
-                  await sendStoriesFx(payload);
-                } finally {
-                  deliveryStarted = false;
-                  if (hardTimeoutId) clearTimeout(hardTimeoutId);
-                  if (currentTask.starsBundleId) {
-                    clearActivePaidDelivery(currentTask.starsBundleId);
-                    if (timedOut) {
-                      const { finalizeDeferredStarsRefund } = await import('./stars-payment');
-                      await finalizeDeferredStarsRefund(currentTask.starsBundleId).catch((error) => {
-                        console.error(
-                          `[QueueManager] Deferred Stars refund failed after hard timeout for ${currentTask.starsBundleId}:`,
-                          error,
-                        );
-                      });
-                    }
-                  }
-                }
-                if (!timedOut) {""",
-              'register and clear active paid workers',
-          )
-
-          replace_once(
-              'src/services/queue-manager.ts',
-              """  } finally {
-              clearTimeout(timeoutId);
-              if (!timedOut) {""",
-              """  } finally {
-              clearTimeout(timeoutId);
-              if (hardTimeoutId) clearTimeout(hardTimeoutId);
-              if (!timedOut) {""",
-              'clear paid hard watchdog',
-          )
-
-          replace_once(
-              'src/services/stars-command-surface.ts',
-              """  if (!force && done?.value === '1') return;
-
-            const legacyGroups = db.prepare(`""",
-              """  // The marker covers the expensive one-time private-chat migration only.
-            // Known and newly tracked group scopes must be cleaned on every startup because
-            // Telegram does not expose an API for enumerating historical command scopes.
-            const privateMigrationDone = !force && done?.value === '1';
-
-            const legacyGroups = db.prepare(`""",
-              'keep group cleanup active after migration marker',
-          )
-
-          replace_once(
-              'src/services/stars-command-surface.ts',
-              """  const users = db.prepare(
-              'SELECT telegram_id, language FROM users ORDER BY created_at ASC',
-            ).all() as { telegram_id: string; language?: string }[];
-            for (const user of users) {
-              await syncChatCommands(bot, user.telegram_id, user.telegram_id, user.language || 'en', true);
-              await new Promise((resolve) => setTimeout(resolve, 150));
-            }
-
-            db.prepare(
-              `INSERT INTO bot_settings (key, value, updated_at, updated_by)
-               VALUES (?, '1', ?, 'migration')
-               ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at`,
-            ).run(COMMAND_SCOPE_MIGRATION_KEY, Math.floor(Date.now() / 1000));""",
-              """  if (!privateMigrationDone) {
-              const users = db.prepare(
-                'SELECT telegram_id, language FROM users ORDER BY created_at ASC',
-              ).all() as { telegram_id: string; language?: string }[];
-              for (const user of users) {
-                await syncChatCommands(bot, user.telegram_id, user.telegram_id, user.language || 'en', true);
-                await new Promise((resolve) => setTimeout(resolve, 150));
-              }
-
-              db.prepare(
-                `INSERT INTO bot_settings (key, value, updated_at, updated_by)
-                 VALUES (?, '1', ?, 'migration')
-                 ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at`,
-              ).run(COMMAND_SCOPE_MIGRATION_KEY, Math.floor(Date.now() / 1000));
-            }""",
-              'limit migration marker to private chats',
-          )
-
-          payment_test = Path('__tests__/stars-payment.test.ts')
-          payment_tests = payment_test.read_text()
-          payment_marker = """  test('legacy BTC mode leaves the existing delivery path untouched', async () => {"""
-          payment_block = r'''  test('paysupport selects the newest same-second payment by insertion order', async () => {
-            const now = Math.floor(Date.now() / 1000);
-            const enqueueDownloadFx = (require('../src/db/effects') as any).enqueueDownloadFx as jest.Mock;
-            enqueueDownloadFx.mockClear();
-
-            const insertBundle = db.prepare(`
-              INSERT INTO star_result_bundles (
-                id, user_id, chat_id, target, locale, request_kind, story_ids,
-                task_json, result_count, price_stars, status, created_at, expires_at,
-                paid_at, delivered_at, attempt_count
-              ) VALUES (?, '123', '123', '@target', 'en', 'current', '[101]', ?, 1, 25,
-                ?, ?, ?, ?, ?, 0)
-            `);
-            insertBundle.run(
-              'support-older',
-              JSON.stringify({ chatId: '123', link: '@older', linkType: 'username', locale: 'en', initTime: 0 }),
-              'DELIVERED',
-              now,
-              now + 1800,
-              now,
-              now,
-            );
-            insertBundle.run(
-              'support-newer',
-              JSON.stringify({ chatId: '123', link: '@newer', linkType: 'username', locale: 'en', initTime: 0 }),
-              'PAID',
-              now,
-              now + 1800,
-              now,
-              null,
-            );
-            db.prepare(`
-              INSERT INTO star_payments (
-                telegram_payment_charge_id, bundle_id, user_id, amount_stars, paid_at
-              ) VALUES (?, ?, '123', 25, ?)
-            `).run('support-charge-older', 'support-older', now);
-            db.prepare(`
-              INSERT INTO star_payments (
-                telegram_payment_charge_id, bundle_id, user_id, amount_stars, paid_at
-              ) VALUES (?, ?, '123', 25, ?)
-            `).run('support-charge-newer', 'support-newer', now);
-
-            const supportHandler = (bot.command as jest.Mock).mock.calls.find(
-              ([command]) => command === 'paysupport',
-            )?.[1] as ((ctx: any) => Promise<void>) | undefined;
-            expect(supportHandler).toBeDefined();
-            const reply = jest.fn(async () => undefined);
-            await supportHandler!({ from: { id: 123, language_code: 'en' }, reply });
-
-            expect(enqueueDownloadFx).toHaveBeenCalled();
-            expect(reply).toHaveBeenCalledWith(expect.stringContaining('pending'));
-          });
-
-          '''
-          if payment_tests.count(payment_marker) != 1:
-              raise SystemExit(f'payment regression marker: expected one match, found {payment_tests.count(payment_marker)}')
-          if 'paysupport selects the newest same-second payment' not in payment_tests:
-              payment_test.write_text(payment_tests.replace(payment_marker, payment_block + payment_marker, 1))
-              print('applied: same-second payment regression test')
-
-          command_test = Path('__tests__/stars-command-surface.test.ts')
-          command_tests = command_test.read_text()
-          command_marker = """  test('administrators can tune both monitoring prices without environment changes', () => {"""
-          command_block = r'''  test('group scope cleanup still runs after the private migration marker is set', () => {
-            expect(source).not.toContain("if (!force && done?.value === '1') return;");
-            expect(source).toContain("const privateMigrationDone = !force && done?.value === '1';");
-            const groupCleanup = source.indexOf('const legacyGroups = db.prepare');
-            const privateMigration = source.indexOf('if (!privateMigrationDone)');
-            expect(groupCleanup).toBeGreaterThan(-1);
-            expect(privateMigration).toBeGreaterThan(groupCleanup);
-          });
-
-          '''
-          if command_tests.count(command_marker) != 1:
-              raise SystemExit(f'command regression marker: expected one match, found {command_tests.count(command_marker)}')
-          if 'group scope cleanup still runs after the private migration marker is set' not in command_tests:
-              command_test.write_text(command_tests.replace(command_marker, command_block + command_marker, 1))
-              print('applied: command scope migration regression test')
-
-          final_test = Path('__tests__/stars-pr310-final-review.test.ts')
-          final_tests = final_test.read_text()
-          final_marker = """  test('command scopes are tracked and rebuilt in either payment mode', () => {"""
-          final_block = """  test('paid delivery timeout has a bounded watchdog and active-worker refund fence', () => {
-            const queue = source('src/services/queue-manager.ts');
-            const payment = source('src/services/stars-payment.ts');
-            expect(queue).toContain('PAID_DELIVERY_HARD_TIMEOUT_MS');
-            expect(queue).toContain('registerActivePaidDelivery');
-            expect(queue).toContain('Paid delivery hard timeout');
-            expect(payment).toContain('active_star_delivery_workers');
-            expect(payment).toContain('DELETE FROM active_star_delivery_workers');
-          });
-
-          """
-          if final_tests.count(final_marker) != 1:
-              raise SystemExit(f'final review marker: expected one match, found {final_tests.count(final_marker)}')
-          if 'paid delivery timeout has a bounded watchdog' not in final_tests:
-              final_test.write_text(final_tests.replace(final_marker, final_block + final_marker, 1))
-              print('applied: paid delivery watchdog regression contract')
-          PY
-
-      - name: Restore normal PR validation workflow
-        run: |
-          cat > .github/workflows/pr-validation.yml <<'YAML'
-          name: Validate pull request
-
-          on:
-            pull_request:
-              branches:
-                - main
-            push:
-              branches:
-                - main
-
-          concurrency:
-            group: pr-validation-${{ github.ref }}
-            cancel-in-progress: true
-
-          permissions:
-            contents: read
-
-          jobs:
-            test:
-              runs-on: ubuntu-latest
-              timeout-minutes: 20
-              env:
-                NODE_ENV: test
-                PROD_BOT_TOKEN: test-token
-                DEV_BOT_TOKEN: test-token
-                USERBOT_API_ID: 1
-                USERBOT_API_HASH: test-hash
-                USERBOT_PHONE_NUMBER: "+15555550100"
-                USERBOT_PASSWORD: ""
-                USERBOT_PHONE_CODE: ""
-                BOT_ADMIN_ID: 999
-              steps:
-                - uses: actions/checkout@v4
-
-                - uses: actions/setup-node@v4
-                  with:
-                    node-version: 22
-                    cache: npm
-
-                - name: Prepare runtime data directory
-                  run: |
-                    sudo mkdir -p /data
-                    sudo chown -R "$USER:$USER" /data
-                    rm -f /data/database.db /data/database.db-shm /data/database.db-wal
-
-                - name: Install dependencies
-                  run: npm ci --legacy-peer-deps --silent >/dev/null 2>&1
-
-                - name: Build TypeScript
-                  run: |
-                    set +e
-                    npm run build --silent > build.log 2>&1
-                    status=$?
-                    tail -n 120 build.log
-                    exit $status
-
-                - name: Run Jest suite
-                  run: |
-                    set +e
-                    timeout 360s npm test -- --runInBand --silent --forceExit > jest.log 2>&1
-                    status=$?
-                    tail -n 300 jest.log
-                    exit $status
-
-                - name: Upload validation logs
-                  if: always()
-                  uses: actions/upload-artifact@v4
-                  with:
-                    name: validation-logs
-                    path: |
-                      build.log
-                      jest.log
-                    if-no-files-found: ignore
-                    retention-days: 3
-          YAML
-          rm -f .github/pr310-final-trigger.txt
-
-      - name: Check patch formatting
-        run: git diff --check
 
       - name: Prepare runtime data directory
         run: |
@@ -572,15 +47,28 @@ jobs:
         run: npm ci --legacy-peer-deps --silent >/dev/null 2>&1
 
       - name: Build TypeScript
-        run: npm run build
-
-      - name: Run full Jest suite
-        run: timeout 360s npm test -- --runInBand --forceExit
-
-      - name: Commit validated fixes
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix(pr310): close final referral, CI, and delivery watchdog findings"
-          git push origin HEAD:hotfix/stars-payment-safety
+          set +e
+          npm run build --silent > build.log 2>&1
+          status=$?
+          tail -n 120 build.log
+          exit $status
+
+      - name: Run Jest suite
+        run: |
+          set +e
+          timeout 360s npm test -- --runInBand --silent --forceExit > jest.log 2>&1
+          status=$?
+          tail -n 300 jest.log
+          exit $status
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-logs
+          path: |
+            build.log
+            jest.log
+          if-no-files-found: ignore
+          retention-days: 3
