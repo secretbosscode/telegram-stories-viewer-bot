@@ -2,6 +2,7 @@ import type { Telegram } from 'telegraf';
 import {
   countReferrals,
   findInviterByCode,
+  getInviterForUser,
   recordReferral,
 } from 'db';
 import { t } from 'lib/i18n';
@@ -25,6 +26,9 @@ export async function processStartReferral(
   const inviter = findInviterByCode(code);
   if (!inviter || inviter === newUserId) return;
 
+  // referrals.new_user_id is unique. Check before the synchronous insert so a
+  // repeated /start payload cannot re-award an already reached milestone.
+  if (getInviterForUser(newUserId)) return;
   recordReferral(inviter, newUserId);
 
   const total = countReferrals(inviter);
