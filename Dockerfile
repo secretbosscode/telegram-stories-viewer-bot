@@ -74,4 +74,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["/usr/local/bin/healthc
 # =========================================================================
 # Define the default command
 # =========================================================================
-CMD ["node", "dist/index.js"]
+CMD ["node", "--require", "./command-menu-flood-guard.js", "dist/index.js"]
