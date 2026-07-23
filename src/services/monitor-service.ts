@@ -109,9 +109,14 @@ export async function addProfileMonitor(
 
 export async function removeProfileMonitor(
   telegramId: string,
-  username: string,
+  target: string,
 ): Promise<void> {
-  const existing = findMonitorByUsername(telegramId, username);
+  // Private or username-less monitors are displayed and removed by target ID.
+  // Resolve both forms here so every caller shares the same authorization and
+  // deletion path instead of reporting success for an unchanged monitor row.
+  const existing =
+    findMonitorByUsername(telegramId, target) ||
+    listMonitors(telegramId).find((monitor) => monitor.target_id === target);
   if (!existing) return;
 
   const hasStarsEntitlement = Boolean(getStarsMonitoringEntitlement(telegramId));
