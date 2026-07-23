@@ -22,8 +22,6 @@ import {
   isStarsMode,
 } from './stars-payment';
 import {
-  authorizeStarsMonitorRemoval,
-  clearStarsMonitorRemovalAuthorization,
   getStarsMonitoringEntitlement,
   getStarsMonitorPrice,
   getStarsMonitorTargetLimit,
@@ -374,18 +372,17 @@ async function handleStarsUnmonitor(ctx: any, next: () => Promise<void>): Promis
   if (!args.length) return showActiveMonitoring(ctx, userId);
 
   const input = args[0];
-  const username = input.replace(/^@/, '');
+  const target = input.replace(/^@/, '');
   const existing = listUserMonitors(userId).find(
     (monitor) =>
-      monitor.target_username?.replace(/^@/, '').toLowerCase() === username.toLowerCase() ||
-      monitor.target_id === username,
+      monitor.target_username?.replace(/^@/, '').toLowerCase() === target.toLowerCase() ||
+      monitor.target_id === target,
   );
-  if (existing) authorizeStarsMonitorRemoval(userId, existing.target_id);
-  try {
-    await removeProfileMonitor(userId, username);
-  } finally {
-    if (existing) clearStarsMonitorRemovalAuthorization(userId, existing.target_id);
+  if (!existing) {
+    return ctx.reply(t(locale, 'stories.userNotFound', { user: input }));
   }
+
+  await removeProfileMonitor(userId, existing.target_id);
   return ctx.reply(t(locale, 'stars.monitorStopped', { target: input }));
 }
 
