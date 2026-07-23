@@ -58,6 +58,15 @@ describe('PR 310 final review regressions', () => {
     expect(monitor).toContain('!persistedActiveKeys.has(key)');
   });
 
+  test('paid delivery timeout releases the queue without dropping the active-worker fence', () => {
+    const queue = source('src/services/queue-manager.ts');
+    expect(queue).toContain('PAID_DELIVERY_HARD_TIMEOUT_MS');
+    expect(queue).toContain('arming a hard deadline');
+    expect(queue).toContain('retaining its processing row until the active Telegram send exits');
+    expect(queue).toContain("message: 'Paid delivery failed after hard timeout'");
+    expect(queue).toContain('refundUndeliverableStarsBundle(currentTask.starsBundleId)');
+  });
+
   test('command scopes are tracked and rebuilt in either payment mode', () => {
     const commands = source('src/services/stars-command-surface.ts');
     const payment = source('src/services/stars-payment.ts');
