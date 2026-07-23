@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 
 const mockFindInviterByCode = jest.fn<(code: string) => string | undefined>();
+const mockGetInviterForUser = jest.fn<(userId: string) => string | undefined>();
 const mockRecordReferral = jest.fn();
 const mockCountReferrals = jest.fn<(inviter: string) => number>();
 const mockExtendPremium = jest.fn();
@@ -8,6 +9,7 @@ const mockFindUserById = jest.fn<(id: string) => { language?: string } | undefin
 
 jest.mock('../src/db', () => ({
   findInviterByCode: (code: string) => mockFindInviterByCode(code),
+  getInviterForUser: (userId: string) => mockGetInviterForUser(userId),
   recordReferral: (inviter: string, newUser: string) => mockRecordReferral(inviter, newUser),
   countReferrals: (inviter: string) => mockCountReferrals(inviter),
 }));
@@ -28,6 +30,7 @@ describe('processStartReferral (Stars-mode referral parity)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFindInviterByCode.mockReturnValue('111');
+    mockGetInviterForUser.mockReturnValue(undefined);
     mockCountReferrals.mockReturnValue(1);
     mockFindUserById.mockReturnValue({ language: 'en' });
     sendMessage.mockResolvedValue(undefined);
@@ -36,6 +39,7 @@ describe('processStartReferral (Stars-mode referral parity)', () => {
   test('records a referral for a valid invite payload', async () => {
     await processStartReferral(telegram, '222', 'INVITE');
     expect(mockFindInviterByCode).toHaveBeenCalledWith('INVITE');
+    expect(mockGetInviterForUser).toHaveBeenCalledWith('222');
     expect(mockRecordReferral).toHaveBeenCalledWith('111', '222');
   });
 
@@ -57,6 +61,18 @@ describe('processStartReferral (Stars-mode referral parity)', () => {
     await processStartReferral(telegram, '222', 'INVITE');
     expect(mockRecordReferral).not.toHaveBeenCalled();
     expect(mockExtendPremium).not.toHaveBeenCalled();
+  });
+
+  test('does not re-award an existing referral milestone', async () => {
+    mockGetInviterForUser.mockReturnValue('111');
+    mockCountReferrals.mockReturnValue(5);
+
+    await processStartReferral(telegram, '222', 'INVITE');
+
+    expect(mockRecordReferral).not.toHaveBeenCalled();
+    expect(mockCountReferrals).not.toHaveBeenCalled();
+    expect(mockExtendPremium).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test('grants the inviter the five-referral Premium reward', async () => {
