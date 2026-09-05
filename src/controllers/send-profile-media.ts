@@ -52,9 +52,18 @@ export async function sendProfileMedia(
     for (const photo of photos.slice(0, limit ?? photos.length)) {
       if (!(photo instanceof Api.Photo)) continue;
       try {
-        const buffer = (await client.downloadMedia(photo as any)) as Buffer;
-        if (Buffer.isBuffer(buffer)) {
-          const isVideo = 'videoSizes' in photo && Array.isArray((photo as any).videoSizes) && (photo as any).videoSizes.length > 0;
+        const videoSizes = Array.isArray((photo as any).videoSizes)
+          ? (photo as any).videoSizes
+          : [];
+        const isVideo = videoSizes.length > 0;
+        // Pick the size explicitly. With no thumb argument, downloadMedia sorts
+        // static sizes and video sizes together and returns the largest, so an
+        // animated avatar whose still frame outweighs its clip would be
+        // downloaded as a JPEG and then sent as a video, failing the album.
+        const buffer = (await client.downloadMedia(photo as any, {
+          thumb: isVideo ? videoSizes[videoSizes.length - 1] : undefined,
+        })) as Buffer;
+        if (Buffer.isBuffer(buffer) && buffer.length > 0) {
           sendAlbum.push({ media: { source: buffer }, type: isVideo ? 'video' : 'photo' });
         }
       } catch (e) {
@@ -64,17 +73,38 @@ export async function sendProfileMedia(
 
     if (sendAlbum.length) {
       const albums = chunkArray(sendAlbum, 10);
+      let sentCount = 0;
       for (const album of albums) {
-        await bot.telegram.sendMediaGroup(chatId, album);
+        try {
+          if (album.length === 1) {
+            // A media group needs 2-10 items.
+            const only = album[0];
+            if (only.type === 'photo') {
+              await bot.telegram.sendPhoto(chatId, only.media);
+            } else {
+              await bot.telegram.sendVideo(chatId, only.media);
+            }
+          } else {
+            await bot.telegram.sendMediaGroup(chatId, album);
+          }
+          sentCount += album.length;
+        } catch (albumError) {
+          // One rejected batch must not discard the albums that follow.
+          console.error('[sendProfileMedia] Failed to send an album:', albumError);
+        }
+      }
+      if (sentCount === 0) {
+        await bot.telegram.sendMessage(chatId, t(user?.language_code || '', 'profile.downloadError'));
+        return;
       }
       await sendTemporaryMessage(
         bot,
         chatId,
-        t(user?.language_code || '', 'profile.sent', { count: sendAlbum.length, user: input }),
+        t(user?.language_code || '', 'profile.sent', { count: sentCount, user: input }),
       );
       notifyAdmin({
         status: 'info',
-        baseInfo: `📸 Sent ${sendAlbum.length} profile media item(s) of ${input}`,
+        baseInfo: `📸 Sent ${sentCount} profile media item(s) of ${input}`,
         task: { chatId: String(chatId), user } as any,
       });
     } else {

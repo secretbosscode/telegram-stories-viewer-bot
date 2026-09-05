@@ -63,11 +63,20 @@ test('sends profile photo when changed', async () => {
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(2);
 
+  // An empty GetUserPhotos result is not proof of deletion: a privacy change, a
+  // block, or a deleted account returns the same thing. Two consecutive empty
+  // reads are required before telling the subscriber the photo was removed, so
+  // the first one is silent.
   photoId = null;
+  await checkSingleMonitor(row.id);
+  expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(0);
+  expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(2);
+
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
   expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(2);
 
+  // Once reported, it is not reported again.
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
 

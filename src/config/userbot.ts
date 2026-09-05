@@ -167,9 +167,10 @@ async function initClient() {
 
   console.log('You should now be connected.');
   const saved = client.session.save() as unknown as string;
-  console.log(saved); // Save the session to avoid logging in again
+  // Never log the session string: it is a full, password-free credential for
+  // the userbot account. Persist it to disk with owner-only permissions.
   try {
-    fs.writeFileSync(sessionFile, saved);
+    fs.writeFileSync(sessionFile, saved, { mode: 0o600 });
   } catch (err) {
     console.error('[Userbot] Failed to write session', err);
   }

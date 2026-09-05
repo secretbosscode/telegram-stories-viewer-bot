@@ -134,19 +134,34 @@ export async function sendGlobalStories({ stories, task, storyOwnersById }: Send
 
       const chunkedList = chunkMediafiles(uploadableStories);
       for (const album of chunkedList) {
-        const isSingle = album.length === 1;
+        // A media group must carry 2-10 items; a chunk can legitimately hold one
+        // when a single story fills the size budget.
+        if (album.length === 1) {
+          const single = album[0];
+          const media = { source: single.buffer! };
+          const caption = single.caption ?? t(task.locale, 'global.label');
+          const extra = {
+            caption: caption.slice(0, 1024),
+            ...(single.noforwards ? { protect_content: true } : {}),
+          };
+          if (single.mediaType === 'photo') {
+            await bot.telegram.sendPhoto(task.chatId, media, extra);
+          } else {
+            await bot.telegram.sendVideo(task.chatId, media, extra);
+          }
+          continue;
+        }
         await bot.telegram.sendMediaGroup(
           task.chatId,
           album.map((x: MappedStoryItem) => ({
             media: { source: x.buffer! },
             type: x.mediaType,
-            caption: isSingle ? undefined : x.caption ?? t(task.locale, 'global.label'),
-          }))
+            caption: x.caption ?? t(task.locale, 'global.label'),
+          })),
+          album.some((x: MappedStoryItem) => x.noforwards)
+            ? { protect_content: true }
+            : undefined,
         );
-        if (isSingle) {
-          const caption = album[0].caption ?? t(task.locale, 'global.label');
-          await sendTemporaryMessage(bot, task.chatId, caption).catch(() => {});
-        }
       }
     } else {
       await bot.telegram.sendMessage(task.chatId, t(task.locale, 'global.none'));

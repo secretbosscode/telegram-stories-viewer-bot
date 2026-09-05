@@ -23,10 +23,19 @@ jobs:
           fetch-depth: 0
       - name: Merge base branch
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin ${{ github.event.pull_request.base.ref }}
-          git merge -X ours --no-edit origin/${{ github.event.pull_request.base.ref }} || true
+          # No -X ours: that strategy silently resolves conflicting hunks in
+          # favour of the PR branch, discarding the base's change, so a merged
+          # stale PR could revert a fix already on main. A real conflict must
+          # fail here and be resolved by a human.
+          if ! git merge --no-edit origin/${{ github.event.pull_request.base.ref }}; then
+            git merge --abort || true
+            echo "::warning::Conflict with ${{ github.event.pull_request.base.ref }}; resolve it manually."
+            exit 0
+          fi
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
 
   update-open-prs:
@@ -46,7 +55,13 @@ jobs:
           for branch in $(gh pr list --state open --json headRefName --jq '.[].headRefName'); do
             git fetch origin "$branch"
             git checkout "$branch"
-            git merge -X ours --no-edit origin/main || true
-            git push origin HEAD:"$branch"
+            # See the note above: -X ours would discard main's side of any
+            # conflicting hunk, silently reverting fixes when the PR merges.
+            if git merge --no-edit origin/main; then
+              git push origin HEAD:"$branch"
+            else
+              git merge --abort || true
+              echo "::warning::$branch conflicts with main; skipping automatic merge."
+            fi
           done
 

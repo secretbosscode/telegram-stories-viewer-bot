@@ -110,19 +110,31 @@ export async function sendActiveStories({
         console.error(`[sendActiveStories] Failed to send uploading message to ${task.chatId}:`, error);
       });
 
-      if (uploadableStories.length === 1) {
-        const single = uploadableStories[0];
+      const sendSingleActive = async (single: MappedStoryItem): Promise<void> => {
         const captionText = `${single.caption ? `${single.caption}\n\n` : ''}Active story from ${task.link}`;
         const media = { source: single.buffer! };
-        const extra = { caption: captionText.slice(0, 1024) };
+        const extra = {
+          caption: captionText.slice(0, 1024),
+          ...(single.noforwards ? { protect_content: true } : {}),
+        };
         if (single.mediaType === 'photo') {
           await bot.telegram.sendPhoto(task.chatId, media, extra);
         } else {
           await bot.telegram.sendVideo(task.chatId, media, extra);
         }
         deliveredStoryIds.add(single.id);
+      };
+
+      if (uploadableStories.length === 1) {
+        await sendSingleActive(uploadableStories[0]);
       } else {
         for (const album of chunkMediafiles(uploadableStories)) {
+          // A media group must carry 2-10 items; a chunk can legitimately hold
+          // one when a single story fills the size budget.
+          if (album.length === 1) {
+            await sendSingleActive(album[0]);
+            continue;
+          }
           await bot.telegram.sendMediaGroup(
             task.chatId,
             album.map((story: MappedStoryItem) => {
@@ -133,6 +145,9 @@ export async function sendActiveStories({
                 caption: captionText.slice(0, 1024),
               };
             }),
+            album.some((story: MappedStoryItem) => story.noforwards)
+              ? { protect_content: true }
+              : undefined,
           );
           album.forEach((story: MappedStoryItem) => deliveredStoryIds.add(story.id));
         }
@@ -162,8 +177,10 @@ export async function sendActiveStories({
         },
         [],
       );
-      await sendTemporaryMessage(
-        bot,
+      // The paging keyboard must persist: it is the only way to reach the
+      // remaining stories, and a temporary message would delete itself after
+      // 30 seconds (and race the callback handler's own delete).
+      await bot.telegram.sendMessage(
         task.chatId,
         t(task.locale, 'active.uploadedBatch', {
           sent: PER_PAGE,

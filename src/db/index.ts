@@ -180,9 +180,14 @@ if (needsSentStoryMigration) {
     const legacyStoryType = legacyColumns.some((c) => c.name === 'story_type');
     const legacyExpiresAt = legacyColumns.some((c) => c.name === 'expires_at');
 
-    const storyDateSelect = legacyStoryDate ? 'story_date' : '0';
+    // The ALTER TABLE statements above add story_date/story_key as nullable, so
+    // by the time this runs the columns always exist but hold NULL for legacy
+    // rows. Selecting them straight into the new NOT NULL columns failed the
+    // constraint, rolled back, and rethrew at module scope, which crash-looped
+    // the container. COALESCE keeps the migration total for those rows.
+    const storyDateSelect = legacyStoryDate ? 'COALESCE(story_date, 0)' : '0';
     const storyKeySelect = legacyStoryKey
-      ? 'story_key'
+      ? "COALESCE(story_key, CAST(story_id AS TEXT) || ':' || CAST(COALESCE(story_date, 0) AS TEXT))"
       : "CAST(story_id AS TEXT) || ':' || CAST(COALESCE(story_date, 0) AS TEXT)";
     const storyTypeSelect = legacyStoryType ? "COALESCE(story_type, 'active')" : "'active'";
     const expiresAtSelect = legacyExpiresAt ? 'COALESCE(expires_at, 0)' : '0';
@@ -196,8 +201,30 @@ if (needsSentStoryMigration) {
     db.exec('DROP TABLE monitor_sent_stories_old');
     db.exec('COMMIT');
   } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
+    // Do not rethrow at module scope: that made `import 'db'` fail, so the
+    // process died before startApp() and the container restart-looped with no
+    // way to reach the bot. The old table is preserved by the rollback, so log
+    // loudly and continue with the pre-migration schema instead.
+    console.error(
+      '[DB] monitor_sent_stories migration failed; continuing on the previous schema. ' +
+        'Monitor dedupe may be degraded until this is resolved:',
+      err,
+    );
+    try {
+      // The rename may or may not have been rolled back depending on where the
+      // failure occurred; make sure the live table name exists either way.
+      const tables = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+        .get('monitor_sent_stories') as { name?: string } | undefined;
+      if (!tables?.name) {
+        db.exec('ALTER TABLE monitor_sent_stories_old RENAME TO monitor_sent_stories');
+      }
+    } catch (recoveryError) {
+      console.error('[DB] Could not restore monitor_sent_stories:', recoveryError);
+    }
   }
 }
 
@@ -309,6 +336,20 @@ db.exec(`
   );
 `);
 
+// Indexes for the lookups that run on the per-message and per-job paths. These
+// tables previously had none, so every rate-limit check, cooldown check and
+// queue poll degraded into a full scan that grew for the life of the install.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS user_request_log_idx
+    ON user_request_log (telegram_id, requested_at);
+  CREATE INDEX IF NOT EXISTS profile_requests_idx
+    ON profile_requests (telegram_id, target_username, requested_at);
+  CREATE INDEX IF NOT EXISTS download_queue_status_idx
+    ON download_queue (status, enqueued_ts);
+  CREATE INDEX IF NOT EXISTS download_queue_user_idx
+    ON download_queue (telegram_id, target_username, status, processed_ts);
+`);
+
 // Track last /verify command per user
 db.exec(`
   CREATE TABLE IF NOT EXISTS verify_attempts (
@@ -378,11 +419,16 @@ export function enqueueDownload(
 
 // CHANGE 3: `getNextQueueItem` now correctly retrieves and parses the full task details.
 export function getNextQueueItem(): DownloadQueueItem | null {
+  // enqueued_ts carries the "not visible before" time (enqueueDownload adds
+  // delaySeconds to it). Without this filter a future-dated row was merely
+  // sorted last and ran immediately on an idle queue, so the paginated
+  // anti-flood spacing never took effect.
   const row: any = db.prepare(`
     SELECT q.*, u.is_premium
     FROM download_queue q
     LEFT JOIN users u ON u.telegram_id = q.telegram_id
     WHERE q.status = 'pending'
+      AND q.enqueued_ts <= strftime('%s','now')
     ORDER BY u.is_premium DESC, q.enqueued_ts ASC
     LIMIT 1
   `).get();
@@ -468,12 +514,33 @@ export function flushQueue(): number {
   return result.changes as number;
 }
 
+/**
+ * Closes the database handle on shutdown. Safe to call more than once.
+ */
+export function closeDatabase(): void {
+  try {
+    db.close();
+  } catch (err) {
+    console.error('[DB] Error while closing the database:', err);
+  }
+}
+
 let lastMaintenance = 0;
 export function runMaintenance(): void {
   const now = Math.floor(Date.now() / 1000);
   if (now - lastMaintenance < 86400) return;
   lastMaintenance = now;
   try {
+    // Prune the tables that are written on nearly every user action and had no
+    // delete path at all, so they grew without bound and slowed the hot-path
+    // lookups that scan them.
+    cleanupExpiredSentStories();
+    db.exec(
+      `DELETE FROM user_request_log WHERE requested_at < strftime('%s','now') - 604800;`,
+    );
+    db.exec(
+      `DELETE FROM profile_requests WHERE requested_at < strftime('%s','now') - 604800;`,
+    );
     db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
     db.exec('VACUUM;');
     db.exec('PRAGMA optimize;');
@@ -505,14 +572,27 @@ export function getRecentHistory(limit: number, excludeIds: string[] = []): any[
     .all(...exclusions, limit);
 }
 
+/**
+ * Telegram usernames are case-insensitive and may be written with or without a
+ * leading '@'. Comparing the raw text let a user defeat the download cooldown
+ * by re-sending the same target with different capitalisation.
+ */
+export function normalizeTargetUsername(target: string): string {
+  return String(target ?? '').trim().replace(/^@/, '').toLowerCase();
+}
+
+// SQL expression matching normalizeTargetUsername, applied to the stored column
+// so existing rows (which may retain '@' and mixed case) still match.
+const NORMALIZED_TARGET_SQL = "LOWER(LTRIM(TRIM(target_username), '@'))";
+
 export function wasRecentlyDownloaded(telegram_id: string, target_username: string, hours: number): boolean {
   if (hours <= 0) return false;
   const cutoff = Math.floor(Date.now() / 1000) - (hours * 3600);
   const row = db.prepare(`
     SELECT id FROM download_queue
-    WHERE telegram_id = ? AND target_username = ? AND status = 'done' AND processed_ts > ?
+    WHERE telegram_id = ? AND ${NORMALIZED_TARGET_SQL} = ? AND status = 'done' AND processed_ts > ?
     LIMIT 1
-  `).get(telegram_id, target_username, cutoff);
+  `).get(telegram_id, normalizeTargetUsername(target_username), cutoff);
   return !!row;
 }
 
@@ -525,11 +605,13 @@ export function getDownloadCooldownRemaining(
   const row = db
     .prepare(
       `SELECT processed_ts FROM download_queue
-       WHERE telegram_id = ? AND target_username = ? AND status = 'done'
+       WHERE telegram_id = ? AND ${NORMALIZED_TARGET_SQL} = ? AND status = 'done'
        ORDER BY processed_ts DESC
        LIMIT 1`,
     )
-    .get(telegram_id, target_username) as { processed_ts: number } | undefined;
+    .get(telegram_id, normalizeTargetUsername(target_username)) as
+    | { processed_ts: number }
+    | undefined;
   if (!row) return 0;
   const expiresAt = row.processed_ts + hours * 3600;
   const remaining = expiresAt - Math.floor(Date.now() / 1000);
@@ -537,9 +619,10 @@ export function getDownloadCooldownRemaining(
 }
 
 export function recordProfileRequest(telegram_id: string, target_username: string): void {
+  // Store normalized so '@Name', 'name' and 'NAME' share one cooldown key.
   db.prepare(
     `INSERT INTO profile_requests (telegram_id, target_username, requested_at) VALUES (?, ?, strftime('%s','now'))`,
-  ).run(telegram_id, target_username);
+  ).run(telegram_id, normalizeTargetUsername(target_username));
 }
 
 export function wasProfileRequestedRecently(
@@ -551,9 +634,11 @@ export function wasProfileRequestedRecently(
   const cutoff = Math.floor(Date.now() / 1000) - hours * 3600;
   const row = db
     .prepare(
-      `SELECT 1 FROM profile_requests WHERE telegram_id = ? AND target_username = ? AND requested_at > ? LIMIT 1`,
+      `SELECT 1 FROM profile_requests
+       WHERE telegram_id = ? AND ${NORMALIZED_TARGET_SQL} = ? AND requested_at > ?
+       LIMIT 1`,
     )
-    .get(telegram_id, target_username, cutoff);
+    .get(telegram_id, normalizeTargetUsername(target_username), cutoff);
   return !!row;
 }
 
@@ -587,22 +672,26 @@ export function isDuplicatePending(
       .prepare(
         `SELECT id FROM download_queue
          WHERE telegram_id = ?
-           AND target_username = ?
+           AND ${NORMALIZED_TARGET_SQL} = ?
            AND json_extract(task_details, '$.nextStoriesIds') = json(?)
            AND (status = 'pending' OR status = 'processing')
          LIMIT 1`,
       )
-      .get(telegram_id, target_username, JSON.stringify(nextStoriesIds));
+      .get(
+        telegram_id,
+        normalizeTargetUsername(target_username),
+        JSON.stringify(nextStoriesIds),
+      );
     return !!row;
   }
 
   const row = db
     .prepare(
       `SELECT id FROM download_queue
-       WHERE telegram_id = ? AND target_username = ? AND (status = 'pending' OR status = 'processing')
+       WHERE telegram_id = ? AND ${NORMALIZED_TARGET_SQL} = ? AND (status = 'pending' OR status = 'processing')
        LIMIT 1`,
     )
-    .get(telegram_id, target_username);
+    .get(telegram_id, normalizeTargetUsername(target_username));
   return !!row;
 }
 
@@ -1048,8 +1137,13 @@ export function isUserTemporarilySuspended(telegram_id: string): boolean {
 // ====== Stats helpers ======
 
 export function countNewUsersSince(since: number): number {
+  // users.created_at is a TIMESTAMP (text), so strftime returns text too.
+  // SQLite orders every integer below every string, which made the unCAST
+  // comparison unconditionally true and reported the whole user table as new.
   const row = db
-    .prepare("SELECT COUNT(*) as c FROM users WHERE strftime('%s', created_at) > ?")
+    .prepare(
+      "SELECT COUNT(*) as c FROM users WHERE CAST(strftime('%s', created_at) AS INTEGER) > ?",
+    )
     .get(since) as { c: number } | undefined;
   return row?.c || 0;
 }

@@ -20,15 +20,19 @@ export function recordTimeoutError(err: unknown): void {
   }
 }
 
+/**
+ * Previously this replaced console.error and fed every logged argument into
+ * recordTimeoutError, so five *handled* errors whose text merely contained
+ * "timeout" or "not connected" would exit the process, often mid-delivery. A
+ * single connection blip during a concurrent download batch was enough.
+ *
+ * Connection health is now reported explicitly by the userbot transport layer
+ * (see config/userbot.ts), which is the only place that can tell a fatal client
+ * failure from a recovered one. This is kept as a no-op so existing callers and
+ * tests continue to work.
+ *
+ * @deprecated Call recordTimeoutError directly from connection handling instead.
+ */
 export function monitorConsoleErrors(): void {
-  const originalError = console.error.bind(console);
-  console.error = (...args: any[]) => {
-    originalError(...args);
-    for (const arg of args) {
-      if (typeof arg === 'string' && arg.includes('[TimeoutMonitor]')) continue;
-      try {
-        recordTimeoutError(arg);
-      } catch {}
-    }
-  };
+  // Intentionally does nothing. See the note above.
 }

@@ -34,7 +34,11 @@ async function sendSingleStory(
   task: SendPaginatedStoriesArgs['task'],
 ): Promise<void> {
   const media = { source: story.buffer! };
-  const extra = { caption: getStoryCaption(story, task).slice(0, 1024) };
+  // Preserve the author's non-forwardable restriction on the relayed copy.
+  const extra = {
+    caption: getStoryCaption(story, task).slice(0, 1024),
+    ...(story.noforwards ? { protect_content: true } : {}),
+  };
   if (story.mediaType === 'photo') {
     await bot.telegram.sendPhoto(task.chatId, media, extra);
   } else {
@@ -123,6 +127,9 @@ export async function sendPaginatedStories({
             type: story.mediaType,
             caption: getStoryCaption(story, task).slice(0, 1024),
           })),
+          batch.some((story) => story.noforwards)
+            ? { protect_content: true }
+            : undefined,
         );
         batch.forEach((story) => deliveredStoryIds.add(story.id));
       }

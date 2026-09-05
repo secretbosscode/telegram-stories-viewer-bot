@@ -1,7 +1,7 @@
 // src/index.ts
 
 // Global error handlers must be at the absolute top.
-import { recordTimeoutError, monitorConsoleErrors } from './config/timeout-monitor';
+import { recordTimeoutError } from './config/timeout-monitor';
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('CRITICAL_ERROR: Unhandled Rejection at:', promise, 'reason:', reason);
@@ -10,11 +10,16 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (error, origin) => {
   console.error('CRITICAL_ERROR: Uncaught Exception:', error, 'origin:', origin);
-  recordTimeoutError(error);
+  // An uncaught exception leaves the process in an undefined state: half-torn-down
+  // MTProto senders, possibly open SQLite statements. Continuing from here masks
+  // the real failure. Exit and let the supervisor (Docker restart policy / pm2)
+  // bring up a clean process.
+  if (process.env.NODE_ENV !== 'test') {
+    process.exit(1);
+  }
 });
 
 console.log('Global error handlers have been attached.');
-monitorConsoleErrors();
 
 // Redirect console output to a debug log file for easier troubleshooting
 import './config/setup-logs';
@@ -46,10 +51,12 @@ import {
   suspendUserTemp,
   getSuspensionRemaining,
   isUserTemporarilySuspended,
+  closeDatabase,
 } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
 import { saveUser, findUserById, refreshUserUsername } from './repositories/user-repository';
+import { processStartReferral } from './services/referral-service';
 import {
   isUserPremium,
   addPremiumUser,
@@ -105,7 +112,11 @@ import {
 } from './db/effects';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
-setBotInstance(bot);
+// NOTE: setBotInstance() registers the Stars payment and command-surface
+// middleware. It is deliberately called *after* the block/suspension guards
+// below (see "Stars surface registration" further down) so that banned,
+// suspended and bot-authored updates are filtered before the Stars handlers,
+// which terminate handling for several commands without calling next().
 const RESTART_COMMAND = 'restart';
 const extraOptions: any = { link_preview_options: { is_disabled: true } };
 const LIST_PAGE_SIZE = 100;
@@ -219,6 +230,12 @@ bot.use(async (ctx, next) => {
   console.log(`[Update] from ${ctx.from?.id} type=${ctx.updateType} text=${text}`);
   await next();
 });
+
+// Stars surface registration. Must stay below the guard middleware above:
+// the Stars middleware answers /start, /help, /monitor and /unmonitor without
+// calling next(), so registering it earlier let blocked and suspended users
+// reach those commands (and the userbot calls they trigger).
+setBotInstance(bot);
 bot.catch((error, ctx) => {
   console.error(`A global error occurred for chat ${ctx.chat?.id}:`, error);
   const logEntry =
@@ -278,21 +295,11 @@ function isActivated(userId: number): boolean {
 
 bot.start(async (ctx) => {
   await saveUser(ctx.from);
-  const payload = ctx.startPayload;
-  if (payload) {
-    const inviter = findInviterByCode(payload);
-    if (inviter && inviter !== String(ctx.from.id)) {
-      recordReferral(inviter, String(ctx.from.id));
-      const total = countReferrals(inviter);
-      if (total % 5 === 0) {
-        extendPremium(inviter, 7);
-        try {
-          const inviterLang = findUserById(inviter)?.language;
-          await ctx.telegram.sendMessage(inviter, t(inviterLang, 'referral.fiveUsers'));
-        } catch {}
-      }
-    }
-  }
+  // Use the shared helper rather than a second copy of this logic. The inline
+  // version lacked the getInviterForUser replay guard, so re-sending
+  // /start <code> from an already-referred account re-awarded the inviter every
+  // time their referral count sat on a multiple of five.
+  await processStartReferral(ctx.telegram, String(ctx.from.id), ctx.startPayload);
   const inviteCode = getOrCreateInviteCode(String(ctx.from.id));
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
@@ -1298,24 +1305,88 @@ async function startApp() {
   await initUserbot();
   // FIX: Clarified the log message for consistency.
   console.log('[App] Kicking off initial queue processing...');
-  processQueue();
+  processQueue().catch((error) =>
+    console.error('[App] Initial queue processing failed:', error),
+  );
+  // Safety net: in-process wake timers do not survive a restart, and a job
+  // deferred past its enqueue time would otherwise wait for unrelated traffic.
+  // The processor exits immediately when the queue is empty, so this is cheap.
+  const queuePoll = setInterval(() => {
+    processQueue().catch((error) =>
+      console.error('[App] Scheduled queue poll failed:', error),
+    );
+  }, 60_000);
+  queuePoll.unref?.();
   startMonitorLoop();
   resumePendingChecks();
   scheduleDatabaseBackups();
+  // Start polling first. The command-menu synchronisation below issues one
+  // setMyCommands call per known user with a deliberate pause between them, so
+  // awaiting it here used to leave the bot unresponsive for minutes after every
+  // restart while the update backlog accumulated.
+  bot
+    .launch({ dropPendingUpdates: true }, () => {
+      console.log('✅ Telegram bot started successfully and is ready for commands.');
+    })
+    .catch((error) => {
+      // launch() rejects on a bad token (401) or a second polling instance (409).
+      // Without this the process stayed alive receiving nothing.
+      console.error('CRITICAL_ERROR: bot.launch failed:', error);
+      process.exit(1);
+    });
+
   const { synchronizeLegacyCommandMenus, synchronizeStarsCommandMenus } =
     await import('./services/stars-command-surface');
-  if (isStarsMode()) {
-    await synchronizeStarsCommandMenus(bot, true);
-  } else {
-    await synchronizeLegacyCommandMenus(bot);
-  }
-  bot.launch({ dropPendingUpdates: true }).then(() => {
-    console.log('✅ Telegram bot started successfully and is ready for commands.');
-  });
+  // Runs in the background. The rebuild issues one setMyCommands call per known
+  // user with a deliberate pause between them; awaiting it here left the bot
+  // unresponsive for minutes after every restart while updates piled up.
+  void (async () => {
+    if (isStarsMode()) {
+      await synchronizeStarsCommandMenus(bot, true);
+    } else {
+      await synchronizeLegacyCommandMenus(bot);
+    }
+  })().catch((error) =>
+    console.error('[App] Command menu synchronisation failed:', error),
+  );
+}
+
+/**
+ * Releases the resources that would otherwise keep the process alive (or leave
+ * rows stuck in `processing`) when the container is stopped.
+ */
+async function shutdown(signal: string): Promise<void> {
+  console.log(`[App] Received ${signal}, shutting down...`);
+  const done = (async () => {
+    try {
+      // Throws if polling never started (e.g. SIGTERM during userbot login).
+      bot.stop(signal);
+    } catch {}
+    try {
+      stopMonitorLoop();
+    } catch {}
+    try {
+      const { Userbot } = await import('config/userbot');
+      await Userbot.reset();
+    } catch {}
+    try {
+      closeDatabase();
+    } catch {}
+  })();
+  // Never let cleanup hold the container past its grace period.
+  await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  process.exit(0);
 }
 
 if (process.env.NODE_ENV !== 'test') {
-  startApp();
-  process.once('SIGINT', () => bot.stop('SIGINT'));
-  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  startApp().catch((error) => {
+    console.error('CRITICAL_ERROR: startApp failed:', error);
+    process.exit(1);
+  });
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+  process.once('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
 }

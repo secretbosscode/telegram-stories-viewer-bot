@@ -78,13 +78,32 @@ export async function sendArchivedStories({ stories, task }: SendStoriesArgs) {
 
       const chunkedList = chunkMediafiles(uploadableStories);
       for (const album of chunkedList) {
+        // A media group must carry 2-10 items; a chunk can legitimately hold one
+        // when a single story fills the size budget.
+        if (album.length === 1) {
+          const single = album[0];
+          const media = { source: single.buffer! };
+          const extra = {
+            caption: [single.caption, task.link].filter(Boolean).join('\n').slice(0, 1024),
+            ...(single.noforwards ? { protect_content: true } : {}),
+          };
+          if (single.mediaType === 'photo') {
+            await bot.telegram.sendPhoto(task.chatId, media, extra);
+          } else {
+            await bot.telegram.sendVideo(task.chatId, media, extra);
+          }
+          continue;
+        }
         await bot.telegram.sendMediaGroup(
           task.chatId,
           album.map((x: MappedStoryItem) => ({
             media: { source: x.buffer! },
             type: x.mediaType,
             caption: [x.caption, task.link].filter(Boolean).join('\n'),
-          }))
+          })),
+          album.some((x: MappedStoryItem) => x.noforwards)
+            ? { protect_content: true }
+            : undefined,
         );
       }
     } else {

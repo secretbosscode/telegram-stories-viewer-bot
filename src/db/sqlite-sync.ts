@@ -17,6 +17,18 @@ export default class SyncDatabase {
     if (err) throw err;
   }
 
+  /**
+   * Flushes and closes the underlying handle. Called on shutdown so pending
+   * writes are committed rather than left to journal recovery on next boot.
+   */
+  close(): void {
+    let done = false;
+    let err: Error | null = null;
+    this.db.close((e) => { err = e ?? null; done = true; });
+    deasync.loopWhile(() => !done);
+    if (err) throw err;
+  }
+
   prepare(sql: string) {
     const db = this.db;
     return {

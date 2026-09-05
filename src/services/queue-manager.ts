@@ -155,60 +155,128 @@ export async function handleNewTask(user: UserInfo) {
       task_details: jobDetails,
       delaySeconds,
     });
-    const { position, eta } = await getQueueStatsFx(jobId);
-    await sendTemporaryMessage(
-      bot,
-      telegram_id,
-      t(user.locale, 'queue.enqueued', { user: target_username, position, eta: formatEta(eta) }),
-    );
+    try {
+      const { position, eta } = await getQueueStatsFx(jobId);
+      await sendTemporaryMessage(
+        bot,
+        telegram_id,
+        t(user.locale, 'queue.enqueued', { user: target_username, position, eta: formatEta(eta) }),
+      );
+    } catch (notifyError) {
+      // The job is already queued; a failed acknowledgement (blocked bot,
+      // deleted group) must not prevent it from being scheduled below.
+      console.warn('[handleNewTask] Could not acknowledge enqueue:', notifyError);
+    }
 
-    setImmediate(processQueue);
+    scheduleQueueWake(delaySeconds);
   } catch (error: any) {
     console.error('[handleNewTask] Error during task validation/enqueueing:', error);
-    await bot.telegram.sendMessage(telegram_id, t(user.locale, 'queue.enqueueError'));
+    await bot.telegram
+      .sendMessage(telegram_id, t(user.locale, 'queue.enqueueError'))
+      .catch(() => {});
+  }
+}
+
+/**
+ * Wakes the queue processor now, and again once a deferred job becomes visible.
+ * getNextQueueItem ignores rows whose enqueued_ts is in the future, so a delayed
+ * job needs an explicit timer or it would wait for unrelated traffic.
+ */
+function scheduleQueueWake(delaySeconds: number): void {
+  setImmediate(() => {
+    processQueue().catch((error) =>
+      console.error('[QueueManager] processQueue failed:', error),
+    );
+  });
+  if (delaySeconds > 0) {
+    const timer = setTimeout(() => {
+      processQueue().catch((error) =>
+        console.error('[QueueManager] Delayed processQueue failed:', error),
+      );
+    }, delaySeconds * 1000 + 500);
+    timer.unref?.();
   }
 }
 
 let isProcessing = false;
+// Tracks whether the "queue is empty" notice has already been logged, so the
+// periodic poll reports the transition to idle once instead of every tick.
+let loggedIdle = false;
 
 export async function processQueue() {
+  // Claim the processor synchronously, before any await. Reading the flag and
+  // then awaiting left a window in which a second scheduled processQueue could
+  // pass the guard and pick up the same pending row, delivering it twice.
   if (isProcessing) {
     return;
   }
+  isProcessing = true;
 
-  const job: DownloadQueueItem | null = await getNextQueueItemFx();
-
-  if (!job) {
-    console.log('[QueueManager] Queue is empty. Processor is idle.');
+  let job: DownloadQueueItem | null = null;
+  try {
+    job = await getNextQueueItemFx();
+  } catch (error) {
+    isProcessing = false;
+    console.error('[QueueManager] Failed to read the next queue item:', error);
     return;
   }
 
-  isProcessing = true;
-  await markProcessingFx(job.id);
-
-  // getNextQueueItem historically refreshes Premium from the queue chat ID.
-  // In a group that is the negative group ID, not the requesting member. Restore
-  // authorization from the preserved requester before discovery/payment checks.
-  const currentTask: UserInfo = restoreRequesterEntitlement(
-    { ...job.task, chatId: job.chatId, instanceId: job.id },
-    job.chatId,
-  );
-  const requesterId = getRequesterId(currentTask, job.chatId);
-
-  if (
-    currentTask.storyRequestType === 'global' &&
-    requesterId !== BOT_ADMIN_ID.toString()
-  ) {
-    await markErrorFx({ jobId: job.id, message: 'Admin only' });
-    await sendTemporaryMessage(
-      bot,
-      job.chatId,
-      t(currentTask.locale, 'global.adminOnly'),
-    );
+  if (!job) {
     isProcessing = false;
-    await cleanupQueueFx();
-    await runMaintenanceFx();
-    setImmediate(processQueue);
+    if (!loggedIdle) {
+      loggedIdle = true;
+      console.log('[QueueManager] Queue is empty. Processor is idle.');
+    }
+    return;
+  }
+  loggedIdle = false;
+
+  // Everything from here on must release the processor on any failure path, or
+  // the queue stalls until the process restarts.
+  let currentTask: UserInfo;
+  try {
+    await markProcessingFx(job.id);
+
+    // getNextQueueItem historically refreshes Premium from the queue chat ID.
+    // In a group that is the negative group ID, not the requesting member. Restore
+    // authorization from the preserved requester before discovery/payment checks.
+    currentTask = restoreRequesterEntitlement(
+      { ...job.task, chatId: job.chatId, instanceId: job.id },
+      job.chatId,
+    );
+    const requesterId = getRequesterId(currentTask, job.chatId);
+
+    if (
+      currentTask.storyRequestType === 'global' &&
+      requesterId !== BOT_ADMIN_ID.toString()
+    ) {
+      await markErrorFx({ jobId: job.id, message: 'Admin only' });
+      await sendTemporaryMessage(
+        bot,
+        job.chatId,
+        t(currentTask.locale, 'global.adminOnly'),
+      ).catch(() => {});
+      isProcessing = false;
+      await cleanupQueueFx();
+      await runMaintenanceFx();
+      setImmediate(() => {
+        processQueue().catch((error) =>
+          console.error('[QueueManager] processQueue failed:', error),
+        );
+      });
+      return;
+    }
+  } catch (error) {
+    // A failure here (DB error, or a 403 from a user who blocked the bot) must
+    // not strand the processor flag.
+    isProcessing = false;
+    console.error(`[QueueManager] Failed to start job ${job.id}:`, error);
+    await markErrorFx({ jobId: job.id, message: 'Failed to start processing' }).catch(() => {});
+    setImmediate(() => {
+        processQueue().catch((error) =>
+          console.error('[QueueManager] processQueue failed:', error),
+        );
+      });
     return;
   }
 
@@ -238,19 +306,34 @@ export async function processQueue() {
           t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link }),
         ).catch(() => {});
         isProcessing = false;
-        setImmediate(processQueue);
+        setImmediate(() => {
+        processQueue().catch((error) =>
+          console.error('[QueueManager] processQueue failed:', error),
+        );
+      });
       }, remainingMs);
       return;
     }
     timedOut = true;
-    await markErrorFx({ jobId: job.id, message: 'Processing timeout' });
-    await sendTemporaryMessage(
-      bot,
-      job.chatId,
-      t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link }),
-    );
-    isProcessing = false;
-    setImmediate(processQueue);
+    try {
+      await markErrorFx({ jobId: job.id, message: 'Processing timeout' });
+      await sendTemporaryMessage(
+        bot,
+        job.chatId,
+        t(currentTask.locale, 'queue.processingTimeout', { user: currentTask.link }),
+      );
+    } catch (error) {
+      // Never let the timeout path reject: it runs detached from the main flow,
+      // and a rejection here would leave the processor claimed.
+      console.error(`[QueueManager] Timeout handling failed for job ${job.id}:`, error);
+    } finally {
+      isProcessing = false;
+      setImmediate(() => {
+        processQueue().catch((error) =>
+          console.error('[QueueManager] processQueue failed:', error),
+        );
+      });
+    }
   }, timeoutMs);
 
   try {
@@ -356,7 +439,11 @@ export async function processQueue() {
       isProcessing = false;
       await cleanupQueueFx();
       await runMaintenanceFx();
-      setImmediate(processQueue);
+      setImmediate(() => {
+        processQueue().catch((error) =>
+          console.error('[QueueManager] processQueue failed:', error),
+        );
+      });
     } else {
       await cleanupQueueFx();
       await runMaintenanceFx();

@@ -388,7 +388,11 @@ async function enqueuePaidBundle(bundle: StarsBundleRow, chargeId: string, force
       delaySeconds: 0,
     });
     const { processQueue } = await import('./queue-manager');
-    setImmediate(processQueue);
+    setImmediate(() => {
+      processQueue().catch((error) =>
+        console.error('[Stars] processQueue failed after paid enqueue:', error),
+      );
+    });
   } catch (error: any) {
     db.prepare(
       `UPDATE star_result_bundles

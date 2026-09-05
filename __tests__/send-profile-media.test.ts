@@ -22,7 +22,14 @@ jest.mock('../src/config/userbot', () => ({
   Userbot: { getInstance: mockGetInstance },
 }));
 
-const bot = { telegram: { sendMediaGroup: jest.fn(), sendMessage: jest.fn() } } as any;
+const bot = {
+  telegram: {
+    sendMediaGroup: jest.fn(),
+    sendMessage: jest.fn(),
+    sendPhoto: jest.fn(),
+    sendVideo: jest.fn(),
+  },
+} as any;
 jest.mock('../src/index.ts', () => ({ bot }));
 
 class Photo {}
@@ -49,10 +56,14 @@ describe('sendProfileMedia', () => {
 
     await sendProfileMedia(1, '@user', { id: 42, username: 'tester' } as any);
 
-    expect(bot.telegram.sendMediaGroup).toHaveBeenCalledTimes(2);
-    const total = (bot.telegram.sendMediaGroup as jest.Mock).mock.calls
+    // 11 items chunk as 10 + 1. Telegram's sendMediaGroup requires 2-10 items,
+    // so the trailing single item must go out as a standalone sendPhoto rather
+    // than a one-item album (which the API rejects).
+    expect(bot.telegram.sendMediaGroup).toHaveBeenCalledTimes(1);
+    const grouped = (bot.telegram.sendMediaGroup as jest.Mock).mock.calls
       .reduce((sum: number, c: any[]) => sum + c[1].length, 0);
-    expect(total).toBe(11);
+    expect(grouped).toBe(10);
+    expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(1);
     expect(sendTemporaryMessage).toHaveBeenCalledTimes(1);
     expect(sendTemporaryMessage).toHaveBeenCalledWith(
       bot,

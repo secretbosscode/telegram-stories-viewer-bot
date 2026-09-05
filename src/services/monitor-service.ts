@@ -39,25 +39,60 @@ export const MAX_MONITORS_PER_USER = 5;
 
 const USERNAME_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 const usernameRefreshTimes = new Map<number, number>();
+// Tracks a single empty GetUserPhotos result per monitor, so a transient or
+// privacy-driven absence does not immediately raise "photo removed".
+const photoAbsenceStreak = new Map<number, boolean>();
+
+// Spacing between targets. The cycle has a full hour of budget and needs only
+// seconds of it, so pacing costs nothing and keeps the account well clear of
+// the per-method flood limits that previously fired every run.
+const MONITOR_TARGET_DELAY_MS = 1_500;
+const MONITOR_TARGET_JITTER_MS = 750;
+
+// Profile photos change far less often than stories. Checking them on every
+// target every hour was the single largest source of flood waits, so stagger
+// them across cycles instead.
+const PHOTO_CHECK_EVERY_N_CYCLES = 3;
+let monitorCycleCount = 0;
 
 let nextMonitorCheckAt: number | null = null;
 let monitorTimer: NodeJS.Timeout | null = null;
+// Set by stopMonitorLoop() so an in-flight cycle does not reschedule itself.
+let monitorStopped = false;
+// Guards against a scheduled cycle overlapping a manual /forcemonitor run.
+let monitorRunning = false;
 
-function scheduleNextMonitorCheck() {
+function scheduleNextMonitorCheck(startedAt?: number) {
   if (monitorTimer) {
     clearTimeout(monitorTimer);
+    monitorTimer = null;
+  }
+  if (monitorStopped) {
+    nextMonitorCheckAt = null;
+    return;
   }
   const intervalMs = CHECK_INTERVAL_HOURS * 60 * 60 * 1000;
-  nextMonitorCheckAt = Date.now() + intervalMs;
+  // Anchor the next run to when this cycle *started*, not when it finished.
+  // Scheduling from completion made the interval drift by the cycle duration
+  // every hour (05:34 -> 06:35 -> 07:36 in production logs).
+  const dueAt = (startedAt ?? Date.now()) + intervalMs;
+  const delayMs = Math.max(0, dueAt - Date.now());
+  nextMonitorCheckAt = Date.now() + delayMs;
   monitorTimer = setTimeout(async () => {
     try {
       await forceCheckMonitors();
     } catch (error) {
       console.error('[Monitor] Scheduled check error:', error);
     }
-  }, intervalMs);
+  }, delayMs);
   monitorTimer.unref?.();
 }
+
+const monitorSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 
 export function getNextMonitorCheck(): number | null {
   return nextMonitorCheckAt;
@@ -125,6 +160,10 @@ export async function removeProfileMonitor(
   }
   try {
     removeMonitor(telegramId, existing.target_id);
+    // Drop the per-monitor bookkeeping so these maps cannot grow for the
+    // lifetime of the process.
+    usernameRefreshTimes.delete(existing.id);
+    photoAbsenceStreak.delete(existing.id);
   } finally {
     if (hasStarsEntitlement) {
       clearStarsMonitorRemovalAuthorization(telegramId, existing.target_id);
@@ -142,22 +181,37 @@ export function listUserMonitors(telegramId: string): MonitorRow[] {
 
 export function startMonitorLoop(runImmediately = true): void {
   stopMonitorLoop();
+  monitorStopped = false;
   if (runImmediately) {
-    void forceCheckMonitors();
+    // Catch the rejection: an unhandled one here at startup would be fatal.
+    void forceCheckMonitors().catch((error) =>
+      console.error('[Monitor] Initial check error:', error),
+    );
   } else {
     scheduleNextMonitorCheck();
   }
 }
 
 export function stopMonitorLoop(): void {
+  // The flag matters as much as the timer: a cycle already in flight
+  // reschedules itself in its finally block, which previously made
+  // /stopmonitor appear to work while the loop kept running.
+  monitorStopped = true;
   if (monitorTimer) {
     clearTimeout(monitorTimer);
     monitorTimer = null;
-    nextMonitorCheckAt = null;
   }
+  nextMonitorCheckAt = null;
 }
 
 export async function forceCheckMonitors(): Promise<number> {
+  if (monitorRunning) {
+    console.warn('[Monitor] A check cycle is already running; skipping this request.');
+    return 0;
+  }
+  monitorRunning = true;
+  const startedAt = Date.now();
+  monitorCycleCount += 1;
   if (monitorTimer) {
     clearTimeout(monitorTimer);
     monitorTimer = null;
@@ -185,21 +239,47 @@ export async function forceCheckMonitors(): Promise<number> {
     }
 
     monitors = listAllMonitors();
+    let checked = 0;
     for (const monitor of monitors) {
-      let premium = premiumCache.get(monitor.telegram_id);
-      if (premium === undefined) {
-        premium = isUserPremium(monitor.telegram_id);
-        premiumCache.set(monitor.telegram_id, premium);
+      if (monitorStopped) {
+        console.log('[Monitor] Loop stopped; abandoning the rest of this cycle.');
+        break;
       }
-      const starsEntitlement = getStarsMonitoringEntitlement(monitor.telegram_id);
-      if (!premium && Number(monitor.telegram_id) !== BOT_ADMIN_ID && !starsEntitlement) {
-        removeMonitor(monitor.telegram_id, monitor.target_id);
-        continue;
+      try {
+        let premium = premiumCache.get(monitor.telegram_id);
+        if (premium === undefined) {
+          premium = isUserPremium(monitor.telegram_id);
+          premiumCache.set(monitor.telegram_id, premium);
+        }
+        const starsEntitlement = getStarsMonitoringEntitlement(monitor.telegram_id);
+        if (!premium && Number(monitor.telegram_id) !== BOT_ADMIN_ID && !starsEntitlement) {
+          removeMonitor(monitor.telegram_id, monitor.target_id);
+          continue;
+        }
+        // Space out targets. Without this the loop issued every request
+        // back-to-back and reliably tripped Telegram's per-method flood limits.
+        if (checked > 0) {
+          await monitorSleep(
+            MONITOR_TARGET_DELAY_MS + Math.floor(Math.random() * MONITOR_TARGET_JITTER_MS),
+          );
+        }
+        checked += 1;
+        // Stagger the profile-photo check by monitor id so the extra call is
+        // spread across cycles rather than fired for every target every hour.
+        const checkPhoto =
+          (monitorCycleCount + monitor.id) % PHOTO_CHECK_EVERY_N_CYCLES === 0;
+        await checkSingleMonitor(monitor.id, checkPhoto);
+      } catch (error) {
+        // One bad row must never abort the cycle for everyone else.
+        console.error(
+          `[Monitor] Unhandled error while checking monitor ${monitor.id}:`,
+          error,
+        );
       }
-      await checkSingleMonitor(monitor.id);
     }
   } finally {
-    scheduleNextMonitorCheck();
+    monitorRunning = false;
+    scheduleNextMonitorCheck(startedAt);
   }
   return monitors.length;
 }
@@ -289,7 +369,19 @@ function recordDeliveredStories(
   }
 }
 
-export async function checkSingleMonitor(id: number): Promise<void> {
+/**
+ * Checks one monitored target for new stories, and optionally for a changed
+ * profile photo.
+ *
+ * @param checkPhoto Whether to issue the extra photos.GetUserPhotos call. The
+ *   hourly loop staggers this across cycles (see PHOTO_CHECK_EVERY_N_CYCLES)
+ *   because doing it for every target every hour was the largest single source
+ *   of flood waits. Direct callers get the full check by default.
+ */
+export async function checkSingleMonitor(
+  id: number,
+  checkPhoto = true,
+): Promise<void> {
   const monitor = getMonitor(id);
   if (!monitor) return;
   await refreshMonitorUsername(monitor);
@@ -308,10 +400,32 @@ export async function checkSingleMonitor(id: number): Promise<void> {
         : bigInt.zero,
     });
 
-    const [response, pinnedResponse] = await Promise.all([
+    // Settled rather than all: a failure on the pinned side (the more
+    // flood-prone of the two) previously discarded active stories that had
+    // already been fetched successfully, losing an hour of coverage.
+    const [responseResult, pinnedResult] = await Promise.allSettled([
       client.invoke(new Api.stories.GetPeerStories({ peer })),
       client.invoke(new Api.stories.GetPinnedStories({ peer })),
     ]);
+
+    if (responseResult.status === 'rejected' && pinnedResult.status === 'rejected') {
+      throw responseResult.reason;
+    }
+    if (responseResult.status === 'rejected') {
+      console.error(
+        `[Monitor] Failed to fetch active stories for ${targetLabel}:`,
+        responseResult.reason,
+      );
+    }
+    if (pinnedResult.status === 'rejected') {
+      console.error(
+        `[Monitor] Failed to fetch pinned stories for ${targetLabel}:`,
+        pinnedResult.reason,
+      );
+    }
+
+    const response = responseResult.status === 'fulfilled' ? responseResult.value : null;
+    const pinnedResponse = pinnedResult.status === 'fulfilled' ? pinnedResult.value : null;
 
     const activeStories = (response as any)?.stories?.stories || [];
     const pinnedStories = ((pinnedResponse as any)?.stories || []) as any[];
@@ -413,6 +527,7 @@ export async function checkSingleMonitor(id: number): Promise<void> {
     }
 
     try {
+      if (!checkPhoto) return;
       const photoResponse = await client.invoke(
         new Api.photos.GetUserPhotos({ userId: peer, limit: 1 }),
       );
@@ -421,18 +536,33 @@ export async function checkSingleMonitor(id: number): Promise<void> {
       const latestId = latest ? String(latest.id) : null;
 
       if (!latestId && monitor.last_photo_id) {
-        await bot.telegram.sendMessage(
-          monitor.telegram_id,
-          t(language, 'monitor.photoRemoved', { user: formatMonitorTarget(monitor) }),
-        );
-        updateMonitorPhoto(monitor.id, null);
+        // An empty result is not proof of deletion: it is also what a privacy
+        // change, a block, or a deleted account returns. Require a second
+        // consecutive empty read before telling the subscriber it was removed.
+        if (photoAbsenceStreak.get(monitor.id)) {
+          photoAbsenceStreak.delete(monitor.id);
+          await bot.telegram.sendMessage(
+            monitor.telegram_id,
+            t(language, 'monitor.photoRemoved', { user: formatMonitorTarget(monitor) }),
+          );
+          updateMonitorPhoto(monitor.id, null);
+        } else {
+          photoAbsenceStreak.set(monitor.id, true);
+        }
       } else if (latest && latestId && latestId !== monitor.last_photo_id) {
+        photoAbsenceStreak.delete(monitor.id);
         try {
-          const buffer = (await client.downloadMedia(latest as any)) as Buffer;
-          const isVideo =
-            'videoSizes' in latest &&
-            Array.isArray((latest as any).videoSizes) &&
-            (latest as any).videoSizes.length > 0;
+          const videoSizes = Array.isArray((latest as any).videoSizes)
+            ? (latest as any).videoSizes
+            : [];
+          const isVideo = videoSizes.length > 0;
+          // Select the size explicitly. downloadMedia with no thumb argument
+          // merges static sizes and video sizes and returns whichever is
+          // largest, so a high-resolution still could be downloaded and then
+          // sent as a video (which Telegram rejects).
+          const buffer = (await client.downloadMedia(latest as any, {
+            thumb: isVideo ? videoSizes[videoSizes.length - 1] : undefined,
+          })) as Buffer;
           const caption = `New profile ${isVideo ? 'video' : 'photo'} from ${formatMonitorTarget(monitor)}`;
           if (isVideo) {
             await bot.telegram.sendVideo(
