@@ -644,6 +644,9 @@ export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
     // menu syncs and would otherwise re-enter this middleware with the bot's own
     // id as ctx.from.
     if (ctx.from?.is_bot) return next();
+    // Block/unblock notifications carry no command and must not trigger a
+    // command-menu sync against a chat that may have just become unreachable.
+    if (ctx.updateType === 'my_chat_member') return next();
     const rawText = String(ctx.message?.text || '').trim();
     const locale = ctx.from?.language_code || 'en';
     const userId = String(ctx.from?.id ?? '');

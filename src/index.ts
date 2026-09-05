@@ -52,6 +52,8 @@ import {
   getSuspensionRemaining,
   isUserTemporarilySuspended,
   closeDatabase,
+  setBotBlocked,
+  hasBlockedBot,
 } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
@@ -222,6 +224,11 @@ bot.use(async (ctx, next) => {
   if (ctx.from) {
     // Update user's language in the database on every interaction
     saveUser(ctx.from);
+    // Any interaction proves the chat is reachable again. my_chat_member is
+    // the one update that can say the opposite, so leave it to its handler.
+    if (ctx.updateType !== 'my_chat_member' && hasBlockedBot(String(ctx.from.id))) {
+      setBotBlocked(String(ctx.from.id), false);
+    }
   }
   await next();
 });
@@ -1256,6 +1263,30 @@ export async function handleCallbackQuery(ctx: IContextBot) {
     await ctx.answerCbQuery();
   }
 }
+
+/**
+ * Telegram reports the bot being blocked or unblocked by a user, and removed
+ * from or re-added to a group, through my_chat_member. Ignoring it meant every
+ * later send to such a chat failed (a 403 per monitor alert, every hour,
+ * forever). Exported so the rule can be unit tested.
+ */
+export async function handleMyChatMember(ctx: any): Promise<void> {
+  const update = ctx.myChatMember ?? ctx.update?.my_chat_member;
+  const chat = update?.chat;
+  const status: string | undefined = update?.new_chat_member?.status;
+  if (!chat || !status) return;
+  const chatId = String(chat.id);
+  const gone = status === 'kicked' || status === 'left';
+  const back = status === 'member' || status === 'administrator';
+  if (gone) {
+    setBotBlocked(chatId, true);
+    console.log(`[Update] Chat ${chatId} (${chat.type}) blocked or removed the bot; deliveries paused.`);
+  } else if (back) {
+    setBotBlocked(chatId, false);
+    console.log(`[Update] Chat ${chatId} (${chat.type}) can receive messages again.`);
+  }
+}
+bot.on('my_chat_member', handleMyChatMember);
 
 bot.on('callback_query', handleCallbackQuery);
 

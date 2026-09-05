@@ -999,6 +999,32 @@ export function unblockUser(telegram_id: string): void {
   db.prepare(`DELETE FROM blocked_users WHERE telegram_id = ?`).run(telegram_id);
 }
 
+// Chats (private users or groups) that blocked, kicked or left the bot, as
+// reported by my_chat_member updates. Distinct from blocked_users, which is the
+// administrator's ban list: a user who blocks and later unblocks the bot must
+// not be treated as banned, and a banned user must not be unbanned by merely
+// unblocking. Deliveries to these chats are skipped until they come back.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bot_blocked_chats (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    blocked_at INTEGER NOT NULL
+  );
+`);
+
+export function setBotBlocked(chat_id: string, blocked: boolean): void {
+  if (blocked) {
+    db.prepare(
+      `INSERT OR REPLACE INTO bot_blocked_chats (chat_id, blocked_at) VALUES (?, strftime('%s','now'))`,
+    ).run(chat_id);
+  } else {
+    db.prepare(`DELETE FROM bot_blocked_chats WHERE chat_id = ?`).run(chat_id);
+  }
+}
+
+export function hasBlockedBot(chat_id: string): boolean {
+  return !!db.prepare(`SELECT 1 FROM bot_blocked_chats WHERE chat_id = ?`).get(chat_id);
+}
+
 export function isUserBlocked(telegram_id: string): boolean {
   const row = db
     .prepare(`SELECT 1 FROM blocked_users WHERE telegram_id = ?`)
