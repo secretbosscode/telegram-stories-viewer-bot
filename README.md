@@ -104,7 +104,8 @@ An administrator with an existing BTC configuration can select the legacy provid
 | `BTC_ZPUB` | optional legacy | Extended public key in ZPUB format. |
 | `LOG_FILE` | optional | Runtime error log path; defaults to `/data/error.log`. |
 | `DEBUG_LOG` | optional | Set to `true` or `1` to mirror console output to `/data/debug.log`. |
-| `DISABLE_STEALTH_MODE` | optional | Set to `true` or `1` to skip activating Telegram stealth mode. |
+| `ENABLE_STEALTH_MODE` | optional | Set to `true` or `1` to activate Telegram stealth mode (Premium account only). Off by default: the bot never registers a story view, so anonymity does not depend on it. |
+| `DISABLE_STEALTH_MODE` | optional | Legacy override; when set it always disables stealth mode. |
 
 Stars prices, payment enablement, bundle lifetime, delivery state, and statistics are stored in SQLite and managed by the bot. They are intentionally not environment variables.
 
@@ -128,3 +129,9 @@ npm test
 ---
 
 This fork is a heavy rewrite of the original project and aims to provide a simple container-based deployment. See the [LICENSE](LICENSE) for copyright details.
+
+## Profile photo archive
+
+Telegram keeps a user's previous avatars in their photo history until they delete them, and a deleted photo leaves the API for good. Each time monitoring fetches a target's photo history it records every photo it can see and stores a copy under `/data/profile-archive/<target_id>/` the first time each one appears. When a previously seen photo disappears from a complete history read, subscribers receive the archived copy with a deletion notice, and `/profile` appends archived deleted photos after the current ones. `/profile` also shows the public fallback photo a privacy-restricted account chose to display when no regular photos are visible.
+
+Storage is bounded to 100 photos per target and 10 new downloads per cycle. Archives for targets nobody monitors any more are purged after 30 days. Only photos the userbot could already see are ever stored.
