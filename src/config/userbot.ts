@@ -111,6 +111,16 @@ export class Userbot {
         console.error('[Userbot] Connection monitor error:', e)
       );
     }, Userbot.CHECK_INTERVAL_MS);
+    // The check must never be the only thing keeping the process alive: it
+    // held the jest worker open after every run and would hold a shutting-down
+    // process past its grace period.
+    Userbot.monitor.unref?.();
+  }
+
+  public static stopConnectionMonitor(): void {
+    if (!Userbot.monitor) return;
+    clearInterval(Userbot.monitor);
+    Userbot.monitor = null;
   }
 }
 

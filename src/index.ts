@@ -1424,6 +1424,7 @@ async function shutdown(signal: string): Promise<void> {
     } catch {}
     try {
       const { Userbot } = await import('config/userbot');
+      Userbot.stopConnectionMonitor();
       await Userbot.reset();
     } catch {}
     try {

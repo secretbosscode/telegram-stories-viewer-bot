@@ -25,7 +25,11 @@ class FakeTelegramClient {
 
 jest.mock('telegram', () => ({ TelegramClient: FakeTelegramClient }));
 
-import { initUserbot } from '../src/config/userbot';
+import { initUserbot, Userbot } from '../src/config/userbot';
+
+// initUserbot starts the periodic connection check; stop it so the worker can
+// exit and the fake client is not probed after the test finishes.
+afterAll(() => Userbot.stopConnectionMonitor());
 
 test('userbot onError forwards timeout errors', async () => {
   await initUserbot();
