@@ -534,7 +534,7 @@ export function runMaintenance(): void {
     // Prune the tables that are written on nearly every user action and had no
     // delete path at all, so they grew without bound and slowed the hot-path
     // lookups that scan them.
-    cleanupExpiredSentStories();
+    pruneOrphanedSentStories();
     db.exec(
       `DELETE FROM user_request_log WHERE requested_at < strftime('%s','now') - 604800;`,
     );
@@ -759,8 +759,16 @@ export function addMonitor(
 
 export function removeMonitor(
   telegram_id: string,
-  target_id: string
+  target_id: string,
 ): void {
+  const rows = db
+    .prepare(`SELECT id FROM monitors WHERE telegram_id = ? AND target_id = ?`)
+    .all(telegram_id, target_id) as { id: number }[];
+  for (const { id } of rows) {
+    // Monitor ids are never reused, so delivery records for a removed monitor
+    // are unreachable; drop them together with the monitor.
+    db.prepare(`DELETE FROM monitor_sent_stories WHERE monitor_id = ?`).run(id);
+  }
   db.prepare(
     `DELETE FROM monitors WHERE telegram_id = ? AND target_id = ?`
   ).run(telegram_id, target_id);
@@ -875,29 +883,43 @@ export function listSentStoryKeys(
 }
 
 /**
- * Every story key ever delivered to this monitor, of either type and whether
- * or not the active copy has expired. The active-only listing above excludes
- * expired rows on purpose, but that made a story delivered as active and later
- * pinned look brand new once its 24-hour window passed, so it was sent twice.
+ * Which of the given story keys have ever been delivered to this monitor, of
+ * either type and whether or not the active copy has expired. The active-only
+ * listing above excludes expired rows on purpose, but that made a story
+ * delivered as active and later pinned look brand new once its 24-hour window
+ * passed, so it was sent twice. This is an indexed lookup on the candidate
+ * keys only (primary key: monitor_id, story_key, story_type), not a scan of
+ * the monitor's full history.
  */
-export function listAllSentStoryKeys(monitor_id: number): string[] {
-  return (
-    db
-      .prepare(`SELECT DISTINCT story_key FROM monitor_sent_stories WHERE monitor_id = ?`)
-      .all(monitor_id) as { story_key: string }[]
-  ).map((row) => row.story_key);
+export function listSentStoryKeysAmong(monitor_id: number, keys: string[]): string[] {
+  const unique = [...new Set(keys)];
+  const found: string[] = [];
+  const CHUNK = 400; // stay well under SQLite's bound-parameter limit
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT story_key FROM monitor_sent_stories
+         WHERE monitor_id = ? AND story_key IN (${placeholders})`,
+      )
+      .all(monitor_id, ...chunk) as { story_key: string }[];
+    for (const row of rows) found.push(row.story_key);
+  }
+  return found;
 }
 
-// Retention for delivered-story records. Expired active rows must be kept for
-// a long time: they are the only proof that a now-pinned story was already
-// delivered while it was active.
-const SENT_STORY_RETENTION_SECONDS = 365 * 24 * 60 * 60;
-
-export function cleanupExpiredSentStories(): void {
-  const cutoff = Math.floor(Date.now() / 1000) - SENT_STORY_RETENTION_SECONDS;
+/**
+ * Prunes delivery records whose monitor no longer exists. Records for live
+ * monitors are kept indefinitely: an expired active row is the only proof
+ * that a now-pinned story was already delivered, and an author can pin a
+ * story years after posting it. Rows are small and indexed by monitor, so
+ * retention has no measurable cost; removeMonitor also deletes them eagerly.
+ */
+export function pruneOrphanedSentStories(): void {
   db.prepare(
-    `DELETE FROM monitor_sent_stories WHERE story_type != 'pinned' AND story_date <= ?`,
-  ).run(cutoff);
+    `DELETE FROM monitor_sent_stories WHERE monitor_id NOT IN (SELECT id FROM monitors)`,
+  ).run();
 }
 
 // ----- Payment utils -----

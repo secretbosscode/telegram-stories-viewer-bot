@@ -281,6 +281,10 @@ export async function archiveProfilePhotos(
  * purged.
  */
 export function purgeOrphanedPhotoArchives(): number {
+  // Acknowledgements belong to monitors; monitor ids are never reused.
+  db.prepare(
+    'DELETE FROM monitor_photo_deletion_acks WHERE monitor_id NOT IN (SELECT id FROM monitors)',
+  ).run();
   const cutoff = nowSeconds() - ORPHAN_ARCHIVE_TTL_SECONDS;
   const targets = db
     .prepare(
