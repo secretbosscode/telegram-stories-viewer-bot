@@ -89,6 +89,27 @@ function photoCheckDue(targetId: string): boolean {
 
 let nextMonitorCheckAt: number | null = null;
 let monitorTimer: NodeJS.Timeout | null = null;
+// Upper bound for everything done for one target in a cycle (fetch plus the
+// deliveries to its subscribers). Telegram calls can hang without rejecting;
+// without this bound one stuck target froze the entire hourly loop until the
+// next restart. Deliveries are still bounded per story by the download
+// timeout; this is the backstop for anything else. Overridable for tests.
+const TARGET_CHECK_DEADLINE_MS = Number(process.env.MONITOR_TARGET_DEADLINE_MS) || 15 * 60 * 1000;
+
+function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} exceeded ${Math.round(ms / 1000)}s and was abandoned for this cycle`)),
+      ms,
+    );
+    timer.unref?.();
+  });
+  return Promise.race([promise, deadline]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
 // Set by stopMonitorLoop() so an in-flight cycle does not reschedule itself.
 let monitorStopped = false;
 // Incremented by every stopMonitorLoop() call. A running cycle abandons its
@@ -677,10 +698,18 @@ async function checkTargetGroup(targetId: string, group: MonitorRow[]): Promise<
   try {
     for (const monitor of group) await refreshMonitorUsername(monitor);
     const lead = group.find((monitor) => monitor.target_access_hash) ?? group[0];
-    const snapshot = await fetchTargetSnapshot(lead, photoCheckDue(targetId));
+    const snapshot = await withDeadline(
+      fetchTargetSnapshot(lead, photoCheckDue(targetId)),
+      TARGET_CHECK_DEADLINE_MS,
+      `[Monitor] Fetching ${label}`,
+    );
     for (const monitor of group) {
       try {
-        await deliverSnapshotToMonitor(monitor, snapshot);
+        await withDeadline(
+          deliverSnapshotToMonitor(monitor, snapshot),
+          TARGET_CHECK_DEADLINE_MS,
+          `[Monitor] Delivering ${label} to ${monitor.telegram_id}`,
+        );
       } catch (error) {
         console.error(
           `[Monitor] Error delivering ${label} to subscriber ${monitor.telegram_id}:`,
@@ -714,8 +743,17 @@ export async function checkSingleMonitor(
     console.log(
       `[Monitor] Checking ${formatMonitorTarget(monitor)} for subscriber ${monitor.telegram_id}.`,
     );
-    const snapshot = await fetchTargetSnapshot(monitor, checkPhoto);
-    await deliverSnapshotToMonitor(monitor, snapshot);
+    const label = formatMonitorTarget(monitor);
+    const snapshot = await withDeadline(
+      fetchTargetSnapshot(monitor, checkPhoto),
+      TARGET_CHECK_DEADLINE_MS,
+      `[Monitor] Fetching ${label}`,
+    );
+    await withDeadline(
+      deliverSnapshotToMonitor(monitor, snapshot),
+      TARGET_CHECK_DEADLINE_MS,
+      `[Monitor] Delivering ${label} to ${monitor.telegram_id}`,
+    );
   } catch (error) {
     console.error(`[Monitor] Error checking ${formatMonitorTarget(monitor)}:`, error);
   } finally {

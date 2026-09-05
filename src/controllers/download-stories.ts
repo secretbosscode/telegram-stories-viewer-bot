@@ -11,6 +11,32 @@ import { isNotConnectedError } from 'lib/telegram-retry';
 const DOWNLOAD_CONCURRENCY_LIMIT = 3;
 const limit = pLimit(DOWNLOAD_CONCURRENCY_LIMIT);
 
+// Upper bound for a single story download. A gramJS transfer can hang without
+// ever rejecting after "Connection closed while receiving data" on an exported
+// data-centre sender; in production that froze the whole monitor loop behind
+// one story (Sep 4: 08:37 until the next restart; Sep 5: 19:01 until redeploy).
+// Stories are at most ~50 MB and a 12 MB video took ~25 s in the logs, so three
+// minutes is generous. Overridable for tests and slow links.
+export const DOWNLOAD_TIMEOUT_MS = Number(process.env.STORY_DOWNLOAD_TIMEOUT_MS) || 3 * 60 * 1000;
+
+class DownloadTimeoutError extends Error {
+  constructor(storyId: number, ms: number) {
+    super(`Download of story ${storyId} timed out after ${Math.round(ms / 1000)}s`);
+    this.name = 'DownloadTimeoutError';
+  }
+}
+
+function withDownloadTimeout<T>(promise: Promise<T>, storyId: number, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new DownloadTimeoutError(storyId, ms)), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, deadline]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
 // ===============================
 // Type Definitions - MOVED TO src/types.ts
 // These definitions are NOW ONLY imported from src/types.ts
@@ -58,14 +84,21 @@ export async function downloadStories(
         // the current instance and installs a new one, so a reference captured
         // before the loop would be permanently dead on the retry.
         const activeClient = await Userbot.getInstance();
-        return await activeClient.downloadMedia(media);
+        return await withDownloadTimeout(
+          activeClient.downloadMedia(media),
+          storyId,
+          DOWNLOAD_TIMEOUT_MS,
+        );
       } catch (err) {
         lastError = err;
-        if (!isNotConnectedError(err) || attempt === maxAttempts) {
+        // A timeout is treated like a dropped connection: the exported sender
+        // is most likely wedged, so reconnect once and retry before giving up.
+        const retryable = isNotConnectedError(err) || err instanceof DownloadTimeoutError;
+        if (!retryable || attempt === maxAttempts) {
           throw err;
         }
         console.warn(
-          `[DownloadStories] Connection lost while downloading story ${storyId}. Reconnecting (attempt ${attempt}/${maxAttempts})...`,
+          `[DownloadStories] ${err instanceof DownloadTimeoutError ? 'Download stalled' : 'Connection lost'} while downloading story ${storyId}. Reconnecting (attempt ${attempt}/${maxAttempts})...`,
         );
         await Userbot.reconnect(`download story ${storyId}`);
       }
