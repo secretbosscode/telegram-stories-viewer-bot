@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
 import { Userbot } from '../config/userbot';
@@ -20,10 +21,13 @@ import {
   type MonitorRow,
 } from '../db';
 import {
+  ackAllDeletions,
+  ackDeletion,
   archiveProfilePhotos,
+  clearDeletionAcks,
   downloadProfilePhoto,
+  listPendingDeletions,
   purgeOrphanedPhotoArchives,
-  type ArchivedPhoto,
 } from 'services/profile-photo-archive';
 import { sendActiveStories } from 'controllers/send-active-stories';
 import { mapStories } from 'controllers/download-stories';
@@ -73,7 +77,6 @@ interface TargetSnapshot {
   pinnedStories: any[];
   /** null when the photo check was skipped this cycle or failed. */
   photos: any[] | null;
-  deletedPhotos: ArchivedPhoto[];
 }
 
 function photoCheckDue(targetId: string): boolean {
@@ -87,6 +90,11 @@ let nextMonitorCheckAt: number | null = null;
 let monitorTimer: NodeJS.Timeout | null = null;
 // Set by stopMonitorLoop() so an in-flight cycle does not reschedule itself.
 let monitorStopped = false;
+// Incremented by every stopMonitorLoop() call. A running cycle abandons its
+// remaining targets only when a stop arrives *during* the cycle; a manual
+// /forcemonitor issued while the scheduler is stopped still runs in full and
+// simply does not schedule the next automatic cycle.
+let stopGeneration = 0;
 // Guards against a scheduled cycle overlapping a manual /forcemonitor run.
 let monitorRunning = false;
 
@@ -192,6 +200,7 @@ export async function removeProfileMonitor(
     // lifetime of the process.
     usernameRefreshTimes.delete(existing.id);
     photoAbsenceStreak.delete(existing.id);
+    clearDeletionAcks(existing.id);
   } finally {
     if (hasStarsEntitlement) {
       clearStarsMonitorRemovalAuthorization(telegramId, existing.target_id);
@@ -225,6 +234,7 @@ export function stopMonitorLoop(): void {
   // reschedules itself in its finally block, which previously made
   // /stopmonitor appear to work while the loop kept running.
   monitorStopped = true;
+  stopGeneration += 1;
   if (monitorTimer) {
     clearTimeout(monitorTimer);
     monitorTimer = null;
@@ -239,6 +249,7 @@ export async function forceCheckMonitors(): Promise<number> {
   }
   monitorRunning = true;
   const startedAt = Date.now();
+  const generation = stopGeneration;
   monitorCycleCount += 1;
   if (monitorTimer) {
     clearTimeout(monitorTimer);
@@ -292,7 +303,7 @@ export async function forceCheckMonitors(): Promise<number> {
 
     let checked = 0;
     for (const [targetId, group] of groups) {
-      if (monitorStopped) {
+      if (stopGeneration !== generation) {
         console.log('[Monitor] Loop stopped; abandoning the rest of this cycle.');
         break;
       }
@@ -456,7 +467,6 @@ async function fetchTargetSnapshot(
   const pinnedStories = ((pinnedResponse as any)?.stories || []) as any[];
 
   let photos: any[] | null = null;
-  let deletedPhotos: ArchivedPhoto[] = [];
   if (includePhotos) {
     try {
       const photoResponse = await client.invoke(
@@ -469,7 +479,9 @@ async function fetchTargetSnapshot(
         !(photoResponse instanceof Api.photos.PhotosSlice) &&
         photos.length < PHOTO_HISTORY_LIMIT;
       try {
-        deletedPhotos = (await archiveProfilePhotos(client, monitor.target_id, photos, complete)).deleted;
+        // Marks disappeared photos as deleted; delivery to each subscriber is
+        // tracked separately (see listPendingDeletions).
+        await archiveProfilePhotos(client, monitor.target_id, photos, complete);
       } catch (error) {
         console.error(`[Monitor] Photo archive failed for ${targetLabel}:`, error);
       }
@@ -478,7 +490,7 @@ async function fetchTargetSnapshot(
     }
   }
 
-  return { client, activeStories, pinnedStories, photos, deletedPhotos };
+  return { client, activeStories, pinnedStories, photos };
 }
 
 function monitorTask(monitor: MonitorRow, language: string) {
@@ -574,6 +586,10 @@ async function deliverSnapshotToMonitor(
   try {
     const latest = snapshot.photos[0];
     const latestId = latest ? String(latest.id) : null;
+    // Any non-empty history breaks an absence streak, whether or not the
+    // latest photo changed; otherwise one old empty read could pair with a
+    // much later one and raise a false "removed" alert.
+    if (latestId) photoAbsenceStreak.delete(monitor.id);
 
     if (!latestId && monitor.last_photo_id) {
       // An empty result is not proof of deletion: it is also what a privacy
@@ -590,7 +606,6 @@ async function deliverSnapshotToMonitor(
         photoAbsenceStreak.set(monitor.id, true);
       }
     } else if (latest && latestId && latestId !== monitor.last_photo_id) {
-      photoAbsenceStreak.delete(monitor.id);
       try {
         const { buffer, isVideo } = await downloadProfilePhoto(client, latest);
         const caption = `New profile ${isVideo ? 'video' : 'photo'} from ${targetLabel}`;
@@ -607,26 +622,34 @@ async function deliverSnapshotToMonitor(
       }
     }
 
-    // Photos that vanished from the target's history since the last complete
-    // read. The archive kept a copy, so the subscriber can still see it.
-    for (const photo of snapshot.deletedPhotos) {
-      try {
-        if (photo.file_path) {
-          const caption = t(language, 'monitor.photoDeleted', { user: targetLabel });
-          const media = { source: photo.file_path };
-          if (photo.is_video) {
-            await bot.telegram.sendVideo(monitor.telegram_id, media, { caption });
+    // Photos that vanished from the target's history. Deletions are detected
+    // once per target but delivered per subscriber, and acknowledged only after
+    // Telegram accepts the send, so a failed or skipped delivery is retried on
+    // a later cycle. A monitor that has never been checked takes the current
+    // deletions as its baseline instead of receiving them as a backlog.
+    if (!monitor.last_checked) {
+      ackAllDeletions(monitor.id, monitor.target_id);
+    } else {
+      for (const photo of listPendingDeletions(monitor.id, monitor.target_id)) {
+        try {
+          if (photo.file_path && fs.existsSync(photo.file_path)) {
+            const caption = t(language, 'monitor.photoDeleted', { user: targetLabel });
+            const media = { source: photo.file_path };
+            if (photo.is_video) {
+              await bot.telegram.sendVideo(monitor.telegram_id, media, { caption });
+            } else {
+              await bot.telegram.sendPhoto(monitor.telegram_id, media, { caption });
+            }
           } else {
-            await bot.telegram.sendPhoto(monitor.telegram_id, media, { caption });
+            await bot.telegram.sendMessage(
+              monitor.telegram_id,
+              t(language, 'monitor.photoDeletedNoCopy', { user: targetLabel }),
+            );
           }
-        } else {
-          await bot.telegram.sendMessage(
-            monitor.telegram_id,
-            t(language, 'monitor.photoDeletedNoCopy', { user: targetLabel }),
-          );
+          ackDeletion(monitor.id, monitor.target_id, photo.photo_id);
+        } catch (error) {
+          console.error(`[Monitor] Error sending archived photo for ${targetLabel}:`, error);
         }
-      } catch (error) {
-        console.error(`[Monitor] Error sending archived photo for ${targetLabel}:`, error);
       }
     }
   } catch (error) {

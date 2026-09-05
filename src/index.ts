@@ -199,7 +199,22 @@ if (!fs.existsSync(logDir)) {
 }
 
 bot.use(session());
-bot.use(async (ctx, next) => {
+/**
+ * Access guard: drops updates from bots, banned users and temporarily
+ * suspended users before any handler runs. Exported so the payment bypass
+ * below can be unit tested.
+ */
+export async function accessGuard(ctx: any, next: () => Promise<void>): Promise<void> {
+  // Payment updates must never be dropped here. A pre_checkout_query still
+  // needs an answer (validateCheckout refuses banned users, so no Stars are
+  // taken), and a successful_payment means Telegram has already collected the
+  // Stars: it must be recorded or refunded, never ignored. Both handlers are
+  // registered later in the chain, so they only run if this guard yields.
+  const isPaymentUpdate =
+    ctx.updateType === 'pre_checkout_query' ||
+    Boolean(ctx.message && 'successful_payment' in ctx.message);
+  if (isPaymentUpdate && !ctx.from?.is_bot) return next();
+
   if (ctx.from?.is_bot) {
     if (ctx.from.id && ctx.from.id !== bot.botInfo?.id) {
       blockUser(String(ctx.from.id), true);
@@ -231,7 +246,8 @@ bot.use(async (ctx, next) => {
     }
   }
   await next();
-});
+}
+bot.use(accessGuard);
 bot.use(async (ctx, next) => {
   const text = 'message' in ctx && ctx.message && 'text' in ctx.message ? ctx.message.text : '';
   console.log(`[Update] from ${ctx.from?.id} type=${ctx.updateType} text=${text}`);

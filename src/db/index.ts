@@ -651,11 +651,13 @@ export function getProfileRequestCooldownRemaining(
   const row = db
     .prepare(
       `SELECT requested_at FROM profile_requests
-       WHERE telegram_id = ? AND target_username = ?
+       WHERE telegram_id = ? AND ${NORMALIZED_TARGET_SQL} = ?
        ORDER BY requested_at DESC
        LIMIT 1`,
     )
-    .get(telegram_id, target_username) as { requested_at: number } | undefined;
+    .get(telegram_id, normalizeTargetUsername(target_username)) as
+    | { requested_at: number }
+    | undefined;
   if (!row) return 0;
   const expiresAt = row.requested_at + hours * 3600;
   const remaining = expiresAt - Math.floor(Date.now() / 1000);

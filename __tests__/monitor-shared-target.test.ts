@@ -87,3 +87,28 @@ test('subscribers who blocked the bot are skipped without losing their monitor',
     removeMonitor('blocked-user', '654');
   }
 });
+
+test('a forced check still runs after /stopmonitor and does not restart the scheduler', async () => {
+  const row = addMonitor('force-user', '987', 'forced', '999', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(987), accessHash: bigInt(999), username: 'forced' }];
+    }
+    if (query instanceof Api.stories.GetPeerStories) return { stories: { stories: [] } } as any;
+    if (query instanceof Api.stories.GetPinnedStories) return { stories: [] } as any;
+    if (query instanceof Api.photos.GetUserPhotos) return { photos: [] } as any;
+    return {};
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const { getNextMonitorCheck } = require('../src/services/monitor-service');
+
+  try {
+    stopMonitorLoop();
+    await forceCheckMonitors();
+    expect(invoke.mock.calls.some((c) => c[0] instanceof Api.stories.GetPeerStories)).toBe(true);
+    expect(getNextMonitorCheck()).toBeNull();
+    expect(row.id).toBeGreaterThan(0);
+  } finally {
+    removeMonitor('force-user', '987');
+  }
+});

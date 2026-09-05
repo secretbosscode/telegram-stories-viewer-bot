@@ -47,7 +47,22 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS monitor_profile_photos_target_idx
     ON monitor_profile_photos (target_id, deleted_at, last_seen);
+
+  -- Which subscriber has received which deletion notice. Deletions are
+  -- detected once per target, but delivery is per subscriber and can fail or
+  -- be skipped (subscriber blocked the bot), so it must be tracked per monitor
+  -- and retried until acknowledged.
+  CREATE TABLE IF NOT EXISTS monitor_photo_deletion_acks (
+    monitor_id INTEGER NOT NULL,
+    target_id TEXT NOT NULL,
+    photo_id TEXT NOT NULL,
+    acked_at INTEGER NOT NULL,
+    PRIMARY KEY (monitor_id, photo_id)
+  );
 `);
+
+// Deletions older than this are no longer delivered to late subscribers.
+const DELETION_DELIVERY_WINDOW_SECONDS = 30 * 24 * 60 * 60;
 
 export interface ArchivedPhoto {
   target_id: string;
@@ -109,6 +124,72 @@ export function listDeletedArchivedPhotos(targetId: string, limit = 10): Archive
   return rows.filter((row) => row.file_path && fs.existsSync(row.file_path));
 }
 
+/** Deletions this subscriber has not yet been told about, oldest first. */
+export function listPendingDeletions(monitorId: number, targetId: string): ArchivedPhoto[] {
+  const cutoff = nowSeconds() - DELETION_DELIVERY_WINDOW_SECONDS;
+  return db
+    .prepare(
+      `SELECT p.* FROM monitor_profile_photos p
+       WHERE p.target_id = ? AND p.deleted_at IS NOT NULL AND p.deleted_at >= ?
+         AND NOT EXISTS (
+           SELECT 1 FROM monitor_photo_deletion_acks a
+           WHERE a.monitor_id = ? AND a.photo_id = p.photo_id
+         )
+       ORDER BY p.deleted_at ASC`,
+    )
+    .all(targetId, cutoff, monitorId) as ArchivedPhoto[];
+}
+
+export function ackDeletion(monitorId: number, targetId: string, photoId: string): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO monitor_photo_deletion_acks (monitor_id, target_id, photo_id, acked_at)
+     VALUES (?, ?, ?, ?)`,
+  ).run(monitorId, targetId, photoId, nowSeconds());
+}
+
+/** Baseline for a monitor that has never been checked: past deletions are not a backlog to replay. */
+export function ackAllDeletions(monitorId: number, targetId: string): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO monitor_photo_deletion_acks (monitor_id, target_id, photo_id, acked_at)
+     SELECT ?, target_id, photo_id, ? FROM monitor_profile_photos
+     WHERE target_id = ? AND deleted_at IS NOT NULL`,
+  ).run(monitorId, nowSeconds(), targetId);
+}
+
+export function clearDeletionAcks(monitorId: number): void {
+  db.prepare('DELETE FROM monitor_photo_deletion_acks WHERE monitor_id = ?').run(monitorId);
+}
+
+/**
+ * Frees one archived file so a new photo can be stored once the per-target
+ * cap is reached. Photos still visible in the target's history are evicted
+ * first (they can be fetched again at any time); deleted photos, which exist
+ * nowhere else, go last and oldest first. Returns false when nothing could be
+ * evicted.
+ */
+function evictOneArchivedFile(targetId: string): boolean {
+  const victim = db
+    .prepare(
+      `SELECT photo_id, file_path FROM monitor_profile_photos
+       WHERE target_id = ? AND file_path IS NOT NULL
+       ORDER BY (deleted_at IS NOT NULL) ASC,
+                COALESCE(deleted_at, photo_date, first_seen) ASC,
+                CAST(photo_id AS INTEGER) ASC
+       LIMIT 1`,
+    )
+    .get(targetId) as { photo_id: string; file_path: string } | undefined;
+  if (!victim) return false;
+  try {
+    fs.rmSync(victim.file_path, { force: true });
+  } catch (error) {
+    console.error(`[PhotoArchive] Could not remove ${victim.file_path}:`, error);
+  }
+  db.prepare(
+    'UPDATE monitor_profile_photos SET file_path = NULL WHERE target_id = ? AND photo_id = ?',
+  ).run(targetId, victim.photo_id);
+  return true;
+}
+
 /**
  * Records a freshly fetched photo history for a target, stores files that are
  * not archived yet, and reports photos that have disappeared.
@@ -155,14 +236,15 @@ export async function archiveProfilePhotos(
   let filesOnDisk = [...known.values()].filter((row) => row.file_path).length;
   let archived = 0;
   for (const photo of valid) {
-    if (
-      archived >= MAX_ARCHIVE_DOWNLOADS_PER_CYCLE ||
-      filesOnDisk >= MAX_ARCHIVED_PHOTOS_PER_TARGET
-    ) {
-      break;
-    }
+    if (archived >= MAX_ARCHIVE_DOWNLOADS_PER_CYCLE) break;
     const photoId = String(photo.id);
     if (known.get(photoId)?.file_path) continue;
+    // At the cap, rotate rather than stop: otherwise a long-lived target would
+    // never get another photo archived once it had reached 100.
+    if (filesOnDisk >= MAX_ARCHIVED_PHOTOS_PER_TARGET) {
+      if (!evictOneArchivedFile(targetId)) break;
+      filesOnDisk -= 1;
+    }
     try {
       const { buffer, isVideo } = await downloadProfilePhoto(client, photo);
       const dir = path.join(PROFILE_ARCHIVE_DIR, targetId);
@@ -216,6 +298,7 @@ export function purgeOrphanedPhotoArchives(): number {
       console.error(`[PhotoArchive] Could not remove archive directory for ${target_id}:`, error);
     }
     db.prepare('DELETE FROM monitor_profile_photos WHERE target_id = ?').run(target_id);
+    db.prepare('DELETE FROM monitor_photo_deletion_acks WHERE target_id = ?').run(target_id);
   }
   return targets.length;
 }

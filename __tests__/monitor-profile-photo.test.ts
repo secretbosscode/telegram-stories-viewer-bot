@@ -94,6 +94,14 @@ test('sends profile photo when changed, archives history and reports deletions',
   expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(3);
   expect(listArchivedPhotos('123').find((p) => p.photo_id === '2')?.deleted_at).toBeNull();
 
+  // A non-empty read with the *same* latest photo resets the streak: the two
+  // empty reads must be consecutive, not merely two in total.
+  history = [2];
+  await checkSingleMonitor(row.id);
+  history = [];
+  await checkSingleMonitor(row.id);
+  expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(0);
+
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
   expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(3);

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { Telegraf } from 'telegraf';
-import { db } from 'db';
+import { db, isUserBlocked } from 'db';
 import { enqueueDownloadFx } from 'db/effects';
 import { BOT_ADMIN_ID, BTC_CONFIGURED } from 'config/env-config';
 import { IContextBot } from 'config/context-interface';
@@ -445,11 +445,21 @@ export async function maybeOfferStoryUnlock(params: SendStoriesFxParams): Promis
   return true;
 }
 
+/** Banned users must not be charged; the access guard lets payment updates through so this check has to live here. */
+function isBannedUser(userId: string): boolean {
+  try {
+    return typeof isUserBlocked === 'function' && isUserBlocked(userId);
+  } catch {
+    return false;
+  }
+}
+
 function validateCheckout(query: any): { ok: true; bundle: StarsBundleRow } | { ok: false; locale: string } {
   const bundle = getBundle(String(query.invoice_payload ?? ''));
   const locale = bundle?.locale || query.from?.language_code || 'en';
   const valid = Boolean(
     bundle &&
+    !isBannedUser(String(query.from?.id)) &&
     isStarsMode() &&
     areStarsEnabled() &&
     bundle.status === 'OFFERED' &&
