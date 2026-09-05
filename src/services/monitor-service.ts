@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
 import { Userbot } from '../config/userbot';
@@ -16,8 +17,18 @@ import {
   listSentStoryKeys,
   markStorySent,
   listAllMonitors,
+  hasBlockedBot,
   type MonitorRow,
 } from '../db';
+import {
+  ackAllDeletions,
+  ackDeletion,
+  archiveProfilePhotos,
+  clearDeletionAcks,
+  downloadProfilePhoto,
+  listPendingDeletions,
+  purgeOrphanedPhotoArchives,
+} from 'services/profile-photo-archive';
 import { sendActiveStories } from 'controllers/send-active-stories';
 import { mapStories } from 'controllers/download-stories';
 import { getEntityWithTempContact } from 'lib';
@@ -39,25 +50,85 @@ export const MAX_MONITORS_PER_USER = 5;
 
 const USERNAME_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 const usernameRefreshTimes = new Map<number, number>();
+// Tracks a single empty GetUserPhotos result per monitor, so a transient or
+// privacy-driven absence does not immediately raise "photo removed".
+const photoAbsenceStreak = new Map<number, boolean>();
+
+// Spacing between targets. The cycle has a full hour of budget and needs only
+// seconds of it, so pacing costs nothing and keeps the account well clear of
+// the per-method flood limits that previously fired every run.
+const MONITOR_TARGET_DELAY_MS = 1_500;
+const MONITOR_TARGET_JITTER_MS = 750;
+
+// Profile photos change far less often than stories. Checking them on every
+// target every hour was the single largest source of flood waits, so stagger
+// them across cycles instead.
+const PHOTO_CHECK_EVERY_N_CYCLES = 3;
+// One GetUserPhotos call returns up to this many entries. The full history is
+// requested (not just the latest) so the archive can record every avatar the
+// target still exposes and notice when one disappears.
+const PHOTO_HISTORY_LIMIT = 100;
+let monitorCycleCount = 0;
+
+/** Everything fetched from Telegram for one target, shared by its subscribers. */
+interface TargetSnapshot {
+  client: any;
+  activeStories: any[];
+  pinnedStories: any[];
+  /** null when the photo check was skipped this cycle or failed. */
+  photos: any[] | null;
+}
+
+function photoCheckDue(targetId: string): boolean {
+  // Stagger by target so the extra call is spread across cycles rather than
+  // fired for every target every hour.
+  const salt = Number(String(targetId).slice(-6)) || 0;
+  return (monitorCycleCount + salt) % PHOTO_CHECK_EVERY_N_CYCLES === 0;
+}
 
 let nextMonitorCheckAt: number | null = null;
 let monitorTimer: NodeJS.Timeout | null = null;
+// Set by stopMonitorLoop() so an in-flight cycle does not reschedule itself.
+let monitorStopped = false;
+// Incremented by every stopMonitorLoop() call. A running cycle abandons its
+// remaining targets only when a stop arrives *during* the cycle; a manual
+// /forcemonitor issued while the scheduler is stopped still runs in full and
+// simply does not schedule the next automatic cycle.
+let stopGeneration = 0;
+// Guards against a scheduled cycle overlapping a manual /forcemonitor run.
+let monitorRunning = false;
 
-function scheduleNextMonitorCheck() {
+function scheduleNextMonitorCheck(startedAt?: number) {
   if (monitorTimer) {
     clearTimeout(monitorTimer);
+    monitorTimer = null;
+  }
+  if (monitorStopped) {
+    nextMonitorCheckAt = null;
+    return;
   }
   const intervalMs = CHECK_INTERVAL_HOURS * 60 * 60 * 1000;
-  nextMonitorCheckAt = Date.now() + intervalMs;
+  // Anchor the next run to when this cycle *started*, not when it finished.
+  // Scheduling from completion made the interval drift by the cycle duration
+  // every hour (05:34 -> 06:35 -> 07:36 in production logs).
+  const dueAt = (startedAt ?? Date.now()) + intervalMs;
+  const delayMs = Math.max(0, dueAt - Date.now());
+  nextMonitorCheckAt = Date.now() + delayMs;
   monitorTimer = setTimeout(async () => {
     try {
       await forceCheckMonitors();
     } catch (error) {
       console.error('[Monitor] Scheduled check error:', error);
     }
-  }, intervalMs);
+  }, delayMs);
   monitorTimer.unref?.();
 }
+
+const monitorSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 
 export function getNextMonitorCheck(): number | null {
   return nextMonitorCheckAt;
@@ -125,6 +196,11 @@ export async function removeProfileMonitor(
   }
   try {
     removeMonitor(telegramId, existing.target_id);
+    // Drop the per-monitor bookkeeping so these maps cannot grow for the
+    // lifetime of the process.
+    usernameRefreshTimes.delete(existing.id);
+    photoAbsenceStreak.delete(existing.id);
+    clearDeletionAcks(existing.id);
   } finally {
     if (hasStarsEntitlement) {
       clearStarsMonitorRemovalAuthorization(telegramId, existing.target_id);
@@ -142,22 +218,39 @@ export function listUserMonitors(telegramId: string): MonitorRow[] {
 
 export function startMonitorLoop(runImmediately = true): void {
   stopMonitorLoop();
+  monitorStopped = false;
   if (runImmediately) {
-    void forceCheckMonitors();
+    // Catch the rejection: an unhandled one here at startup would be fatal.
+    void forceCheckMonitors().catch((error) =>
+      console.error('[Monitor] Initial check error:', error),
+    );
   } else {
     scheduleNextMonitorCheck();
   }
 }
 
 export function stopMonitorLoop(): void {
+  // The flag matters as much as the timer: a cycle already in flight
+  // reschedules itself in its finally block, which previously made
+  // /stopmonitor appear to work while the loop kept running.
+  monitorStopped = true;
+  stopGeneration += 1;
   if (monitorTimer) {
     clearTimeout(monitorTimer);
     monitorTimer = null;
-    nextMonitorCheckAt = null;
   }
+  nextMonitorCheckAt = null;
 }
 
 export async function forceCheckMonitors(): Promise<number> {
+  if (monitorRunning) {
+    console.warn('[Monitor] A check cycle is already running; skipping this request.');
+    return 0;
+  }
+  monitorRunning = true;
+  const startedAt = Date.now();
+  const generation = stopGeneration;
+  monitorCycleCount += 1;
   if (monitorTimer) {
     clearTimeout(monitorTimer);
     monitorTimer = null;
@@ -185,6 +278,10 @@ export async function forceCheckMonitors(): Promise<number> {
     }
 
     monitors = listAllMonitors();
+
+    // Group by target so a profile watched by several subscribers is fetched
+    // once per cycle and the result fanned out, instead of once per subscriber.
+    const groups = new Map<string, MonitorRow[]>();
     for (const monitor of monitors) {
       let premium = premiumCache.get(monitor.telegram_id);
       if (premium === undefined) {
@@ -196,10 +293,44 @@ export async function forceCheckMonitors(): Promise<number> {
         removeMonitor(monitor.telegram_id, monitor.target_id);
         continue;
       }
-      await checkSingleMonitor(monitor.id);
+      // A subscriber who blocked the bot cannot receive anything; skip their
+      // rows (the monitor is kept and resumes when they unblock).
+      if (hasBlockedBot(monitor.telegram_id)) continue;
+      const group = groups.get(monitor.target_id);
+      if (group) group.push(monitor);
+      else groups.set(monitor.target_id, [monitor]);
+    }
+
+    let checked = 0;
+    for (const [targetId, group] of groups) {
+      if (stopGeneration !== generation) {
+        console.log('[Monitor] Loop stopped; abandoning the rest of this cycle.');
+        break;
+      }
+      try {
+        // Space out targets. Without this the loop issued every request
+        // back-to-back and reliably tripped Telegram's per-method flood limits.
+        if (checked > 0) {
+          await monitorSleep(
+            MONITOR_TARGET_DELAY_MS + Math.floor(Math.random() * MONITOR_TARGET_JITTER_MS),
+          );
+        }
+        checked += 1;
+        await checkTargetGroup(targetId, group);
+      } catch (error) {
+        // One bad target must never abort the cycle for everyone else.
+        console.error(`[Monitor] Unhandled error while checking target ${targetId}:`, error);
+      }
+    }
+
+    try {
+      purgeOrphanedPhotoArchives();
+    } catch (error) {
+      console.error('[Monitor] Photo archive purge failed:', error);
     }
   } finally {
-    scheduleNextMonitorCheck();
+    monitorRunning = false;
+    scheduleNextMonitorCheck(startedAt);
   }
   return monitors.length;
 }
@@ -289,186 +420,294 @@ function recordDeliveredStories(
   }
 }
 
-export async function checkSingleMonitor(id: number): Promise<void> {
+function buildPeer(monitor: MonitorRow): Api.InputUser {
+  return new Api.InputUser({
+    userId: bigInt(monitor.target_id),
+    accessHash: monitor.target_access_hash
+      ? bigInt(monitor.target_access_hash)
+      : bigInt.zero,
+  });
+}
+
+/**
+ * Fetches everything the cycle needs for one target: active and pinned
+ * stories, and (when due) the profile-photo history. Issued once per target
+ * regardless of how many subscribers watch it.
+ */
+async function fetchTargetSnapshot(
+  monitor: MonitorRow,
+  includePhotos: boolean,
+): Promise<TargetSnapshot> {
+  const targetLabel = formatMonitorTarget(monitor);
+  const client = await Userbot.getInstance();
+  await ensureStealthMode();
+  const peer = buildPeer(monitor);
+
+  // Settled rather than all: a failure on the pinned side (the more
+  // flood-prone of the two) previously discarded active stories that had
+  // already been fetched successfully, losing an hour of coverage.
+  const [responseResult, pinnedResult] = await Promise.allSettled([
+    client.invoke(new Api.stories.GetPeerStories({ peer })),
+    client.invoke(new Api.stories.GetPinnedStories({ peer })),
+  ]);
+
+  if (responseResult.status === 'rejected' && pinnedResult.status === 'rejected') {
+    throw responseResult.reason;
+  }
+  if (responseResult.status === 'rejected') {
+    console.error(`[Monitor] Failed to fetch active stories for ${targetLabel}:`, responseResult.reason);
+  }
+  if (pinnedResult.status === 'rejected') {
+    console.error(`[Monitor] Failed to fetch pinned stories for ${targetLabel}:`, pinnedResult.reason);
+  }
+
+  const response = responseResult.status === 'fulfilled' ? responseResult.value : null;
+  const pinnedResponse = pinnedResult.status === 'fulfilled' ? pinnedResult.value : null;
+  const activeStories = (response as any)?.stories?.stories || [];
+  const pinnedStories = ((pinnedResponse as any)?.stories || []) as any[];
+
+  let photos: any[] | null = null;
+  if (includePhotos) {
+    try {
+      const photoResponse = await client.invoke(
+        new Api.photos.GetUserPhotos({ userId: peer, limit: PHOTO_HISTORY_LIMIT }),
+      );
+      photos = ((photoResponse as any)?.photos || []) as any[];
+      // A PhotosSlice (or a full page) means older photos exist beyond what we
+      // fetched, so absence from this page proves nothing.
+      const complete =
+        !(photoResponse instanceof Api.photos.PhotosSlice) &&
+        photos.length < PHOTO_HISTORY_LIMIT;
+      try {
+        // Marks disappeared photos as deleted; delivery to each subscriber is
+        // tracked separately (see listPendingDeletions).
+        await archiveProfilePhotos(client, monitor.target_id, photos, complete);
+      } catch (error) {
+        console.error(`[Monitor] Photo archive failed for ${targetLabel}:`, error);
+      }
+    } catch (error) {
+      console.error(`[Monitor] Error checking profile photo for ${targetLabel}:`, error);
+    }
+  }
+
+  return { client, activeStories, pinnedStories, photos };
+}
+
+function monitorTask(monitor: MonitorRow, language: string) {
+  return {
+    chatId: monitor.telegram_id,
+    link: formatMonitorTarget(monitor),
+    linkType: 'username',
+    locale: language,
+    initTime: Date.now(),
+    monitorDelivery: true,
+  } as any;
+}
+
+/**
+ * Compares a target snapshot against what this subscriber has already
+ * received and delivers the difference.
+ */
+async function deliverSnapshotToMonitor(
+  monitor: MonitorRow,
+  snapshot: TargetSnapshot,
+): Promise<void> {
+  const targetLabel = formatMonitorTarget(monitor);
+  const { activeStories, pinnedStories, client } = snapshot;
+
+  const persistedActiveKeys = new Set(listSentStoryKeys(monitor.id, 'active'));
+  const persistedPinnedKeys = new Set(listSentStoryKeys(monitor.id, 'pinned'));
+
+  const newActive = activeStories.filter(
+    (story: any) => !persistedActiveKeys.has(storyKey(story)),
+  );
+  const activeCandidateKeys = new Set(newActive.map(storyKey));
+  const newPinned = pinnedStories.filter((story: any) => {
+    if (typeof story?.id !== 'number' || typeof story?.date !== 'number') return false;
+    const key = storyKey(story);
+    return (
+      !persistedPinnedKeys.has(key) &&
+      !persistedActiveKeys.has(key) &&
+      !activeCandidateKeys.has(key)
+    );
+  });
+
+  const language = findUserById(monitor.telegram_id)?.language || 'en';
+
+  if (newActive.length > 0) {
+    console.log(`[Monitor] ${targetLabel}: ${newActive.length} new active stories queued for delivery.`);
+    const deliveredActiveIds = new Set(
+      await sendActiveStories({ stories: mapStories(newActive), task: monitorTask(monitor, language) }),
+    );
+    recordDeliveredStories(monitor.id, newActive, deliveredActiveIds, 'active');
+
+    // A story may appear in both the active and pinned responses. If the
+    // active copy was delivered, record the pinned key too so it is not sent
+    // again as a separate pinned alert during the next cycle.
+    const pinnedByKey = new Map(
+      pinnedStories
+        .filter((story: any) => typeof story?.id === 'number' && typeof story?.date === 'number')
+        .map((story: any) => [storyKey(story), story]),
+    );
+    for (const story of newActive) {
+      if (!deliveredActiveIds.has(Number(story.id))) continue;
+      const pinnedStory = pinnedByKey.get(storyKey(story));
+      if (pinnedStory && !persistedPinnedKeys.has(storyKey(story))) {
+        markStorySent(monitor.id, pinnedStory.id, pinnedStory.date, pinnedStory.expireDate ?? null, 'pinned');
+      }
+    }
+
+    if (deliveredActiveIds.size < newActive.length) {
+      console.warn(
+        `[Monitor] ${targetLabel}: ${newActive.length - deliveredActiveIds.size} active stories were not delivered and will be retried.`,
+      );
+    }
+  }
+
+  if (newPinned.length > 0) {
+    console.log(`[Monitor] ${targetLabel}: ${newPinned.length} new pinned stories queued for delivery.`);
+    const deliveredPinnedIds = new Set(
+      await sendActiveStories({ stories: mapStories(newPinned), task: monitorTask(monitor, language) }),
+    );
+    recordDeliveredStories(monitor.id, newPinned, deliveredPinnedIds, 'pinned');
+    if (deliveredPinnedIds.size < newPinned.length) {
+      console.warn(
+        `[Monitor] ${targetLabel}: ${newPinned.length - deliveredPinnedIds.size} pinned stories were not delivered and will be retried.`,
+      );
+    }
+  }
+
+  if (newActive.length === 0 && newPinned.length === 0) {
+    console.log(`[Monitor] ${targetLabel}: no new stories found.`);
+  }
+
+  if (snapshot.photos === null) return;
+
+  try {
+    const latest = snapshot.photos[0];
+    const latestId = latest ? String(latest.id) : null;
+    // Any non-empty history breaks an absence streak, whether or not the
+    // latest photo changed; otherwise one old empty read could pair with a
+    // much later one and raise a false "removed" alert.
+    if (latestId) photoAbsenceStreak.delete(monitor.id);
+
+    if (!latestId && monitor.last_photo_id) {
+      // An empty result is not proof of deletion: it is also what a privacy
+      // change, a block, or a deleted account returns. Require a second
+      // consecutive empty read before telling the subscriber it was removed.
+      if (photoAbsenceStreak.get(monitor.id)) {
+        photoAbsenceStreak.delete(monitor.id);
+        await bot.telegram.sendMessage(
+          monitor.telegram_id,
+          t(language, 'monitor.photoRemoved', { user: targetLabel }),
+        );
+        updateMonitorPhoto(monitor.id, null);
+      } else {
+        photoAbsenceStreak.set(monitor.id, true);
+      }
+    } else if (latest && latestId && latestId !== monitor.last_photo_id) {
+      try {
+        const { buffer, isVideo } = await downloadProfilePhoto(client, latest);
+        const caption = `New profile ${isVideo ? 'video' : 'photo'} from ${targetLabel}`;
+        if (isVideo) {
+          await bot.telegram.sendVideo(monitor.telegram_id, { source: buffer }, { caption });
+        } else {
+          await bot.telegram.sendPhoto(monitor.telegram_id, { source: buffer }, { caption });
+        }
+        // Persist only after Telegram confirms delivery. Failed profile-media
+        // notifications are retried on the next monitor cycle.
+        updateMonitorPhoto(monitor.id, latestId);
+      } catch (error) {
+        console.error(`[Monitor] Error sending profile media for ${targetLabel}:`, error);
+      }
+    }
+
+    // Photos that vanished from the target's history. Deletions are detected
+    // once per target but delivered per subscriber, and acknowledged only after
+    // Telegram accepts the send, so a failed or skipped delivery is retried on
+    // a later cycle. A monitor that has never been checked takes the current
+    // deletions as its baseline instead of receiving them as a backlog.
+    if (!monitor.last_checked) {
+      ackAllDeletions(monitor.id, monitor.target_id);
+    } else {
+      for (const photo of listPendingDeletions(monitor.id, monitor.target_id)) {
+        try {
+          if (photo.file_path && fs.existsSync(photo.file_path)) {
+            const caption = t(language, 'monitor.photoDeleted', { user: targetLabel });
+            const media = { source: photo.file_path };
+            if (photo.is_video) {
+              await bot.telegram.sendVideo(monitor.telegram_id, media, { caption });
+            } else {
+              await bot.telegram.sendPhoto(monitor.telegram_id, media, { caption });
+            }
+          } else {
+            await bot.telegram.sendMessage(
+              monitor.telegram_id,
+              t(language, 'monitor.photoDeletedNoCopy', { user: targetLabel }),
+            );
+          }
+          ackDeletion(monitor.id, monitor.target_id, photo.photo_id);
+        } catch (error) {
+          console.error(`[Monitor] Error sending archived photo for ${targetLabel}:`, error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error(`[Monitor] Error handling profile photo for ${targetLabel}:`, error);
+  }
+}
+
+/** Checks one target for all of its subscribers with a single fetch. */
+async function checkTargetGroup(targetId: string, group: MonitorRow[]): Promise<void> {
+  const label = formatMonitorTarget(group[0]);
+  console.log(
+    `[Monitor] Checking ${label} for ${group.length} subscriber${group.length === 1 ? '' : 's'}.`,
+  );
+  try {
+    for (const monitor of group) await refreshMonitorUsername(monitor);
+    const lead = group.find((monitor) => monitor.target_access_hash) ?? group[0];
+    const snapshot = await fetchTargetSnapshot(lead, photoCheckDue(targetId));
+    for (const monitor of group) {
+      try {
+        await deliverSnapshotToMonitor(monitor, snapshot);
+      } catch (error) {
+        console.error(
+          `[Monitor] Error delivering ${label} to subscriber ${monitor.telegram_id}:`,
+          error,
+        );
+      }
+    }
+  } catch (error) {
+    console.error(`[Monitor] Error checking ${label}:`, error);
+  } finally {
+    for (const monitor of group) updateMonitorChecked(monitor.id);
+  }
+}
+
+/**
+ * Checks one monitor row: refreshes the target, fetches a snapshot and
+ * delivers it to that subscriber. Used by direct callers (and tests); the
+ * hourly loop goes through checkTargetGroup so shared targets are fetched once.
+ *
+ * @param checkPhoto Whether to include the photo-history call.
+ */
+export async function checkSingleMonitor(
+  id: number,
+  checkPhoto = true,
+): Promise<void> {
   const monitor = getMonitor(id);
   if (!monitor) return;
   await refreshMonitorUsername(monitor);
 
   try {
-    const targetLabel = formatMonitorTarget(monitor);
     console.log(
-      `[Monitor] Checking ${targetLabel} for subscriber ${monitor.telegram_id}.`,
+      `[Monitor] Checking ${formatMonitorTarget(monitor)} for subscriber ${monitor.telegram_id}.`,
     );
-    const client = await Userbot.getInstance();
-    await ensureStealthMode();
-    const peer = new Api.InputUser({
-      userId: bigInt(monitor.target_id),
-      accessHash: monitor.target_access_hash
-        ? bigInt(monitor.target_access_hash)
-        : bigInt.zero,
-    });
-
-    const [response, pinnedResponse] = await Promise.all([
-      client.invoke(new Api.stories.GetPeerStories({ peer })),
-      client.invoke(new Api.stories.GetPinnedStories({ peer })),
-    ]);
-
-    const activeStories = (response as any)?.stories?.stories || [];
-    const pinnedStories = ((pinnedResponse as any)?.stories || []) as any[];
-
-    const persistedActiveKeys = new Set(listSentStoryKeys(monitor.id, 'active'));
-    const persistedPinnedKeys = new Set(listSentStoryKeys(monitor.id, 'pinned'));
-
-    const newActive = activeStories.filter(
-      (story: any) => !persistedActiveKeys.has(storyKey(story)),
-    );
-    const activeCandidateKeys = new Set(newActive.map(storyKey));
-    const newPinned = pinnedStories.filter((story: any) => {
-      if (typeof story?.id !== 'number' || typeof story?.date !== 'number') return false;
-      const key = storyKey(story);
-      return (
-        !persistedPinnedKeys.has(key) &&
-        !persistedActiveKeys.has(key) &&
-        !activeCandidateKeys.has(key)
-      );
-    });
-
-    const language = findUserById(monitor.telegram_id)?.language || 'en';
-
-    if (newActive.length > 0) {
-      console.log(
-        `[Monitor] ${targetLabel}: ${newActive.length} new active stories queued for delivery.`,
-      );
-      const deliveredActiveIds = new Set(
-        await sendActiveStories({
-          stories: mapStories(newActive),
-          task: {
-            chatId: monitor.telegram_id,
-            link: targetLabel,
-            linkType: 'username',
-            locale: language,
-            initTime: Date.now(),
-            monitorDelivery: true,
-          } as any,
-        }),
-      );
-      recordDeliveredStories(monitor.id, newActive, deliveredActiveIds, 'active');
-
-      // A story may appear in both the active and pinned responses. If the
-      // active copy was delivered, record the pinned key too so it is not sent
-      // again as a separate pinned alert during the next cycle.
-      const pinnedByKey = new Map(
-        pinnedStories
-          .filter((story: any) => typeof story?.id === 'number' && typeof story?.date === 'number')
-          .map((story: any) => [storyKey(story), story]),
-      );
-      for (const story of newActive) {
-        if (!deliveredActiveIds.has(Number(story.id))) continue;
-        const pinnedStory = pinnedByKey.get(storyKey(story));
-        if (pinnedStory && !persistedPinnedKeys.has(storyKey(story))) {
-          markStorySent(
-            monitor.id,
-            pinnedStory.id,
-            pinnedStory.date,
-            pinnedStory.expireDate ?? null,
-            'pinned',
-          );
-        }
-      }
-
-      if (deliveredActiveIds.size < newActive.length) {
-        console.warn(
-          `[Monitor] ${targetLabel}: ${newActive.length - deliveredActiveIds.size} active stories were not delivered and will be retried.`,
-        );
-      }
-    }
-
-    if (newPinned.length > 0) {
-      console.log(
-        `[Monitor] ${targetLabel}: ${newPinned.length} new pinned stories queued for delivery.`,
-      );
-      const deliveredPinnedIds = new Set(
-        await sendActiveStories({
-          stories: mapStories(newPinned),
-          task: {
-            chatId: monitor.telegram_id,
-            link: targetLabel,
-            linkType: 'username',
-            locale: language,
-            initTime: Date.now(),
-            monitorDelivery: true,
-          } as any,
-        }),
-      );
-      recordDeliveredStories(monitor.id, newPinned, deliveredPinnedIds, 'pinned');
-      if (deliveredPinnedIds.size < newPinned.length) {
-        console.warn(
-          `[Monitor] ${targetLabel}: ${newPinned.length - deliveredPinnedIds.size} pinned stories were not delivered and will be retried.`,
-        );
-      }
-    }
-
-    if (newActive.length === 0 && newPinned.length === 0) {
-      console.log(`[Monitor] ${targetLabel}: no new stories found.`);
-    }
-
-    try {
-      const photoResponse = await client.invoke(
-        new Api.photos.GetUserPhotos({ userId: peer, limit: 1 }),
-      );
-      const photos = (photoResponse as any)?.photos || [];
-      const latest = photos[0];
-      const latestId = latest ? String(latest.id) : null;
-
-      if (!latestId && monitor.last_photo_id) {
-        await bot.telegram.sendMessage(
-          monitor.telegram_id,
-          t(language, 'monitor.photoRemoved', { user: formatMonitorTarget(monitor) }),
-        );
-        updateMonitorPhoto(monitor.id, null);
-      } else if (latest && latestId && latestId !== monitor.last_photo_id) {
-        try {
-          const buffer = (await client.downloadMedia(latest as any)) as Buffer;
-          const isVideo =
-            'videoSizes' in latest &&
-            Array.isArray((latest as any).videoSizes) &&
-            (latest as any).videoSizes.length > 0;
-          const caption = `New profile ${isVideo ? 'video' : 'photo'} from ${formatMonitorTarget(monitor)}`;
-          if (isVideo) {
-            await bot.telegram.sendVideo(
-              monitor.telegram_id,
-              { source: buffer },
-              { caption },
-            );
-          } else {
-            await bot.telegram.sendPhoto(
-              monitor.telegram_id,
-              { source: buffer },
-              { caption },
-            );
-          }
-          // Persist only after Telegram confirms delivery. Failed profile-media
-          // notifications are retried on the next monitor cycle.
-          updateMonitorPhoto(monitor.id, latestId);
-        } catch (error) {
-          console.error(
-            `[Monitor] Error sending profile media for ${formatMonitorTarget(monitor)}:`,
-            error,
-          );
-        }
-      }
-    } catch (error) {
-      console.error(
-        `[Monitor] Error checking profile photo for ${formatMonitorTarget(monitor)}:`,
-        error,
-      );
-    }
+    const snapshot = await fetchTargetSnapshot(monitor, checkPhoto);
+    await deliverSnapshotToMonitor(monitor, snapshot);
   } catch (error) {
-    console.error(
-      `[Monitor] Error checking ${formatMonitorTarget(monitor)}:`,
-      error,
-    );
+    console.error(`[Monitor] Error checking ${formatMonitorTarget(monitor)}:`, error);
+  } finally {
+    updateMonitorChecked(id);
   }
-
-  updateMonitorChecked(id);
 }

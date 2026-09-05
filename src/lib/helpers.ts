@@ -17,40 +17,69 @@ const MAX_STORIES_SIZE = 45;
 export const timeout = (ms: number): Promise<null> =>
   new Promise((ok) => setTimeout(ok, ms));
 
-// Send a Telegram message and automatically delete it after a delay
+// Conditions under which the scheduled delete is expected to fail and there is
+// nothing to recover: the message is already gone, or the chat is unreachable.
+// These must not be logged at error level — every console.error is mirrored to
+// the debug log and fed into the connection-failure watchdog.
+const MESSAGE_ALREADY_GONE =
+  /message to delete not found|message can't be deleted|MESSAGE_ID_INVALID|message identifier is not specified|bot was blocked by the user|chat not found|user is deactivated|bot was kicked/i;
+
+// Send a Telegram message and automatically delete it after a delay.
+// Returns the message id so callers can cancel or replace it themselves.
 export async function sendTemporaryMessage(
   bot: import('telegraf').Telegraf<any>,
   chatId: number | string,
   text: string,
   options?: Parameters<typeof bot.telegram.sendMessage>[2],
   delayMs = 30_000,
-): Promise<void> {
+): Promise<number | undefined> {
   const msg = await bot.telegram.sendMessage(chatId, text, options);
-  setTimeout(async () => {
+  const timer = setTimeout(async () => {
     try {
       await bot.telegram.deleteMessage(chatId, msg.message_id);
     } catch (err) {
-      console.error('Failed to delete temporary message', err);
+      const description = String(
+        (err as any)?.response?.description ?? (err as any)?.description ?? (err as any)?.message ?? '',
+      );
+      if (MESSAGE_ALREADY_GONE.test(description)) return;
+      console.warn('Failed to delete temporary message:', description);
     }
   }, delayMs);
+  // Do not keep the process alive purely to delete a transient notice.
+  timer.unref?.();
+  return msg.message_id;
 }
 
-export function chunkMediafiles(files: StoriesModel): MappedStoryItem[][] { // Added return type and parameter type
-  return files.reduce(
-    (acc: MappedStoryItem[][], curr: MappedStoryItem) => { // CORRECTED: Explicitly typed 'acc' and 'curr'
-      const tempAccWithCurr = [...acc[acc.length - 1], curr];
+// Telegram accepts 2-10 items per media group and rejects an empty array.
+const TELEGRAM_ALBUM_LIMIT = 10;
+
+export function chunkMediafiles(files: StoriesModel): MappedStoryItem[][] {
+  const chunks = files.reduce(
+    (acc: MappedStoryItem[][], curr: MappedStoryItem) => {
+      const current = acc[acc.length - 1];
+      // An item that exceeds the size budget on its own still has to go
+      // somewhere. Placing it in the current chunk when that chunk is empty
+      // avoids emitting a leading empty album, which sendMediaGroup rejects and
+      // which previously aborted the rest of the batch.
+      if (current.length === 0) {
+        current.push(curr);
+        return acc;
+      }
+      const tempAccWithCurr = [...current, curr];
       if (
-        tempAccWithCurr.length === 10 ||
+        tempAccWithCurr.length > TELEGRAM_ALBUM_LIMIT ||
         sumOfSizes(tempAccWithCurr) >= MAX_STORIES_SIZE
       ) {
         acc.push([curr]);
         return acc;
       }
-      acc[acc.length - 1].push(curr);
+      current.push(curr);
       return acc;
     },
-    [[]]
+    [[]] as MappedStoryItem[][]
   );
+  // Guard against a trailing/leading empty group for an empty input.
+  return chunks.filter((chunk) => chunk.length > 0);
 }
 
 function sumOfSizes(list: { bufferSize?: number }[]): number { // Added return type

@@ -43,6 +43,13 @@ db.exec(`
     PRIMARY KEY (chat_id, user_id)
   );
 
+  -- Repair rows written by the earlier chatId-vs-userId group test, which
+  -- marked private chats (positive chat ids) as groups and made every later
+  -- menu sync fail with "can't use specified scope in private chats".
+  UPDATE bot_command_scopes
+     SET is_group = 0
+   WHERE is_group = 1 AND CAST(chat_id AS INTEGER) >= 0;
+
   -- Groups whose legacy chat-wide command menu has been cleared. Telegram
   -- exposes no API to enumerate historical command scopes, so the one-shot
   -- scope migration cannot discover every legacy group (e.g. groups that only
@@ -219,10 +226,17 @@ async function syncChatCommands(
   const numericChatId = Number(chatId);
   const numericUserId = Number(userId);
   if (!Number.isFinite(numericChatId) || !Number.isFinite(numericUserId)) return;
+  // A missing/zero user id (channel posts, anonymous admins, bot-authored
+  // service messages) cannot own a per-member menu; skip rather than send an
+  // invalid chat_member scope.
+  if (!numericUserId) return;
 
-  // Private chats can use a chat scope. Group and supergroup menus must use a
-  // member scope so one admin/Premium user cannot replace everyone else's menu.
-  const isGroup = chatId !== userId;
+  // Group/supergroup chat ids are negative; private chats are positive. Deciding
+  // group-ness from the chat id sign is the only reliable test. Comparing
+  // chatId !== userId misclassifies any private chat whose message was authored
+  // by a different account (e.g. the bot's own pin service message), which
+  // Telegram rejects with "can't use specified scope in private chats".
+  const isGroup = numericChatId < 0;
   const scope: any = isGroup
     ? { type: 'chat_member', chat_id: numericChatId, user_id: numericUserId }
     : { type: 'chat', chat_id: numericChatId };
@@ -569,8 +583,12 @@ export async function synchronizeLegacyCommandMenus(
   for (const tracked of trackedScopes) {
     const chatId = Number(tracked.chat_id);
     const userId = Number(tracked.user_id);
-    if (!Number.isFinite(chatId) || !Number.isFinite(userId)) continue;
-    if (tracked.is_group) {
+    if (!Number.isFinite(chatId) || !Number.isFinite(userId) || !userId) continue;
+    // Derive group-ness from the chat id sign rather than the stored is_group
+    // flag, which may have been written by the earlier chatId !== userId logic
+    // and be wrong for private chats. This lets poisoned rows self-heal.
+    const isGroup = chatId < 0;
+    if (isGroup) {
       if (!clearedGroups.has(tracked.chat_id)) {
         await (bot.telegram as any).callApi('deleteMyCommands', {
           scope: { type: 'chat', chat_id: chatId },
@@ -621,6 +639,14 @@ export function registerStarsCommandSurface(bot: Telegraf<IContextBot>): void {
   registered = true;
 
   bot.use(async (ctx: any, next: () => Promise<void>) => {
+    // Ignore updates authored by a bot (including this bot's own service
+    // messages, e.g. pinning the Premium message). They must not drive command
+    // menu syncs and would otherwise re-enter this middleware with the bot's own
+    // id as ctx.from.
+    if (ctx.from?.is_bot) return next();
+    // Block/unblock notifications carry no command and must not trigger a
+    // command-menu sync against a chat that may have just become unreachable.
+    if (ctx.updateType === 'my_chat_member') return next();
     const rawText = String(ctx.message?.text || '').trim();
     const locale = ctx.from?.language_code || 'en';
     const userId = String(ctx.from?.id ?? '');

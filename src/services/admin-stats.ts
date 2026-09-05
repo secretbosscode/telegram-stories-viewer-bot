@@ -67,7 +67,9 @@ function getTopRequesters(since: number, limit = 5): TopUser[] {
 export function getDailyStats() {
   const since = Math.floor(Date.now() / 1000) - 86400;
   const newUsers = countRows(
-    "SELECT COUNT(*) as c FROM users WHERE strftime('%s', created_at) > ?",
+    // See countNewUsersSince: created_at is text, so the comparison needs a
+    // CAST or SQLite's storage-class ordering makes it always true.
+    "SELECT COUNT(*) as c FROM users WHERE CAST(strftime('%s', created_at) AS INTEGER) > ?",
     since,
   );
   const paidInvoices = countRows(

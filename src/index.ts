@@ -1,7 +1,7 @@
 // src/index.ts
 
 // Global error handlers must be at the absolute top.
-import { recordTimeoutError, monitorConsoleErrors } from './config/timeout-monitor';
+import { recordTimeoutError } from './config/timeout-monitor';
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('CRITICAL_ERROR: Unhandled Rejection at:', promise, 'reason:', reason);
@@ -10,11 +10,16 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (error, origin) => {
   console.error('CRITICAL_ERROR: Uncaught Exception:', error, 'origin:', origin);
-  recordTimeoutError(error);
+  // An uncaught exception leaves the process in an undefined state: half-torn-down
+  // MTProto senders, possibly open SQLite statements. Continuing from here masks
+  // the real failure. Exit and let the supervisor (Docker restart policy / pm2)
+  // bring up a clean process.
+  if (process.env.NODE_ENV !== 'test') {
+    process.exit(1);
+  }
 });
 
 console.log('Global error handlers have been attached.');
-monitorConsoleErrors();
 
 // Redirect console output to a debug log file for easier troubleshooting
 import './config/setup-logs';
@@ -46,10 +51,14 @@ import {
   suspendUserTemp,
   getSuspensionRemaining,
   isUserTemporarilySuspended,
+  closeDatabase,
+  setBotBlocked,
+  hasBlockedBot,
 } from './db';
 import { getRecentHistoryFx } from './db/effects';
 import { processQueue, handleNewTask, getQueueStatusForUser } from './services/queue-manager';
 import { saveUser, findUserById, refreshUserUsername } from './repositories/user-repository';
+import { processStartReferral } from './services/referral-service';
 import {
   isUserPremium,
   addPremiumUser,
@@ -105,7 +114,11 @@ import {
 } from './db/effects';
 
 export const bot = new Telegraf<IContextBot>(BOT_TOKEN!);
-setBotInstance(bot);
+// NOTE: setBotInstance() registers the Stars payment and command-surface
+// middleware. It is deliberately called *after* the block/suspension guards
+// below (see "Stars surface registration" further down) so that banned,
+// suspended and bot-authored updates are filtered before the Stars handlers,
+// which terminate handling for several commands without calling next().
 const RESTART_COMMAND = 'restart';
 const extraOptions: any = { link_preview_options: { is_disabled: true } };
 const LIST_PAGE_SIZE = 100;
@@ -186,7 +199,22 @@ if (!fs.existsSync(logDir)) {
 }
 
 bot.use(session());
-bot.use(async (ctx, next) => {
+/**
+ * Access guard: drops updates from bots, banned users and temporarily
+ * suspended users before any handler runs. Exported so the payment bypass
+ * below can be unit tested.
+ */
+export async function accessGuard(ctx: any, next: () => Promise<void>): Promise<void> {
+  // Payment updates must never be dropped here. A pre_checkout_query still
+  // needs an answer (validateCheckout refuses banned users, so no Stars are
+  // taken), and a successful_payment means Telegram has already collected the
+  // Stars: it must be recorded or refunded, never ignored. Both handlers are
+  // registered later in the chain, so they only run if this guard yields.
+  const isPaymentUpdate =
+    ctx.updateType === 'pre_checkout_query' ||
+    Boolean(ctx.message && 'successful_payment' in ctx.message);
+  if (isPaymentUpdate && !ctx.from?.is_bot) return next();
+
   if (ctx.from?.is_bot) {
     if (ctx.from.id && ctx.from.id !== bot.botInfo?.id) {
       blockUser(String(ctx.from.id), true);
@@ -211,14 +239,26 @@ bot.use(async (ctx, next) => {
   if (ctx.from) {
     // Update user's language in the database on every interaction
     saveUser(ctx.from);
+    // Any interaction proves the chat is reachable again. my_chat_member is
+    // the one update that can say the opposite, so leave it to its handler.
+    if (ctx.updateType !== 'my_chat_member' && hasBlockedBot(String(ctx.from.id))) {
+      setBotBlocked(String(ctx.from.id), false);
+    }
   }
   await next();
-});
+}
+bot.use(accessGuard);
 bot.use(async (ctx, next) => {
   const text = 'message' in ctx && ctx.message && 'text' in ctx.message ? ctx.message.text : '';
   console.log(`[Update] from ${ctx.from?.id} type=${ctx.updateType} text=${text}`);
   await next();
 });
+
+// Stars surface registration. Must stay below the guard middleware above:
+// the Stars middleware answers /start, /help, /monitor and /unmonitor without
+// calling next(), so registering it earlier let blocked and suspended users
+// reach those commands (and the userbot calls they trigger).
+setBotInstance(bot);
 bot.catch((error, ctx) => {
   console.error(`A global error occurred for chat ${ctx.chat?.id}:`, error);
   const logEntry =
@@ -278,21 +318,11 @@ function isActivated(userId: number): boolean {
 
 bot.start(async (ctx) => {
   await saveUser(ctx.from);
-  const payload = ctx.startPayload;
-  if (payload) {
-    const inviter = findInviterByCode(payload);
-    if (inviter && inviter !== String(ctx.from.id)) {
-      recordReferral(inviter, String(ctx.from.id));
-      const total = countReferrals(inviter);
-      if (total % 5 === 0) {
-        extendPremium(inviter, 7);
-        try {
-          const inviterLang = findUserById(inviter)?.language;
-          await ctx.telegram.sendMessage(inviter, t(inviterLang, 'referral.fiveUsers'));
-        } catch {}
-      }
-    }
-  }
+  // Use the shared helper rather than a second copy of this logic. The inline
+  // version lacked the getInviterForUser replay guard, so re-sending
+  // /start <code> from an already-referred account re-awarded the inviter every
+  // time their referral count sat on a multiple of five.
+  await processStartReferral(ctx.telegram, String(ctx.from.id), ctx.startPayload);
   const inviteCode = getOrCreateInviteCode(String(ctx.from.id));
   const isAdmin = ctx.from.id === BOT_ADMIN_ID;
   const isPremium = isUserPremium(String(ctx.from.id));
@@ -396,7 +426,8 @@ bot.command('freetrial', async (ctx) => {
   await ctx.reply(t(locale, 'premium.freeTrialActivated'));
 });
 
-bot.command('verify', async (ctx) => {
+// Exported so the owner-credit rule can be unit tested.
+export async function handleVerify(ctx: any): Promise<unknown> {
   const locale = ctx.from.language_code || 'en';
   const args = ctx.message.text.split(' ').slice(1);
   if (args.length < 1) {
@@ -418,41 +449,66 @@ bot.command('verify', async (ctx) => {
   }
   const invoice = await verifyPaymentByTxid(txid);
   if (invoice && invoice.paid_at) {
+    // Credit the account that owns the invoice, never the caller. A txid is
+    // public on-chain data, so anyone who saw a paying user's transaction could
+    // otherwise run /verify first and take the Premium that user paid for.
+    const ownerId = String(invoice.user_id);
+    const callerId = String(ctx.from.id);
+    const isOwner = ownerId === callerId;
+    const ownerLocale = isOwner ? locale : findUserById(ownerId)?.language || 'en';
+
     const daysAdded = calcPremiumDays(invoice.invoice_amount, invoice.paid_amount);
-    extendPremium(String(ctx.from.id), daysAdded);
-    const inviter = getInviterForUser(String(ctx.from.id));
-    if (inviter && !wasReferralPaidRewarded(String(ctx.from.id))) {
+    extendPremium(ownerId, daysAdded);
+    const inviter = getInviterForUser(ownerId);
+    if (inviter && !wasReferralPaidRewarded(ownerId)) {
       extendPremium(inviter, daysAdded);
-      markReferralPaidRewarded(String(ctx.from.id));
+      markReferralPaidRewarded(ownerId);
       try {
         const inviterLang = findUserById(inviter)?.language;
         await ctx.telegram.sendMessage(inviter, t(inviterLang, 'referral.paid', { days: daysAdded }));
       } catch {}
     }
-    if (ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
+    if (isOwner && ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
       ctx.session.upgrade = undefined;
     }
-    const days = getPremiumDaysLeft(String(ctx.from.id));
-    await updatePremiumPinnedMessage(
-      bot,
-      ctx.chat!.id,
-      String(ctx.from.id),
-      days,
-      locale,
-      true,
-    );
+    const days = getPremiumDaysLeft(ownerId);
+    try {
+      // The owner's private chat id equals their user id.
+      await updatePremiumPinnedMessage(
+        bot,
+        isOwner ? ctx.chat!.id : Number(ownerId),
+        ownerId,
+        days,
+        ownerLocale,
+        true,
+      );
+    } catch (pinError) {
+      console.error('[verify] Could not update the Premium pinned message:', pinError);
+    }
+    const ownerRecord = isOwner ? undefined : findUserById(ownerId);
+    const ownerLabel = isOwner
+      ? ctx.from.username ? '@' + ctx.from.username : ctx.from.id
+      : ownerRecord?.username ? '@' + ownerRecord.username : ownerId;
     notifyAdmin({
-      task: { chatId: String(ctx.from.id), user: ctx.from } as any,
+      task: { chatId: ownerId, user: ctx.from } as any,
       status: 'info',
-      baseInfo: t('en', 'admin.upgradePayment', {
-        user: ctx.from.username ? '@' + ctx.from.username : ctx.from.id,
-        amount: invoice.paid_amount.toFixed(8),
-      }),
+      baseInfo:
+        t('en', 'admin.upgradePayment', {
+          user: ownerLabel,
+          amount: invoice.paid_amount.toFixed(8),
+        }) + (isOwner ? '' : ` (verified by ${callerId})`),
     });
-    return ctx.reply(t(locale, 'verify.success', { days: daysAdded }));
+    if (isOwner) {
+      return ctx.reply(t(locale, 'verify.success', { days: daysAdded }));
+    }
+    await ctx.telegram
+      .sendMessage(ownerId, t(ownerLocale, 'verify.success', { days: daysAdded }))
+      .catch(() => {});
+    return ctx.reply(t(locale, 'verify.creditedOwner'));
   }
   await ctx.reply(t(locale, 'verify.failure'));
-});
+}
+bot.command('verify', (ctx) => handleVerify(ctx));
 
 bot.command('queue', async (ctx) => {
   const locale = ctx.from.language_code || 'en';
@@ -1224,6 +1280,30 @@ export async function handleCallbackQuery(ctx: IContextBot) {
   }
 }
 
+/**
+ * Telegram reports the bot being blocked or unblocked by a user, and removed
+ * from or re-added to a group, through my_chat_member. Ignoring it meant every
+ * later send to such a chat failed (a 403 per monitor alert, every hour,
+ * forever). Exported so the rule can be unit tested.
+ */
+export async function handleMyChatMember(ctx: any): Promise<void> {
+  const update = ctx.myChatMember ?? ctx.update?.my_chat_member;
+  const chat = update?.chat;
+  const status: string | undefined = update?.new_chat_member?.status;
+  if (!chat || !status) return;
+  const chatId = String(chat.id);
+  const gone = status === 'kicked' || status === 'left';
+  const back = status === 'member' || status === 'administrator';
+  if (gone) {
+    setBotBlocked(chatId, true);
+    console.log(`[Update] Chat ${chatId} (${chat.type}) blocked or removed the bot; deliveries paused.`);
+  } else if (back) {
+    setBotBlocked(chatId, false);
+    console.log(`[Update] Chat ${chatId} (${chat.type}) can receive messages again.`);
+  }
+}
+bot.on('my_chat_member', handleMyChatMember);
+
 bot.on('callback_query', handleCallbackQuery);
 
 // --- Handle all other text messages ---
@@ -1298,24 +1378,89 @@ async function startApp() {
   await initUserbot();
   // FIX: Clarified the log message for consistency.
   console.log('[App] Kicking off initial queue processing...');
-  processQueue();
+  processQueue().catch((error) =>
+    console.error('[App] Initial queue processing failed:', error),
+  );
+  // Safety net: in-process wake timers do not survive a restart, and a job
+  // deferred past its enqueue time would otherwise wait for unrelated traffic.
+  // The processor exits immediately when the queue is empty, so this is cheap.
+  const queuePoll = setInterval(() => {
+    processQueue().catch((error) =>
+      console.error('[App] Scheduled queue poll failed:', error),
+    );
+  }, 60_000);
+  queuePoll.unref?.();
   startMonitorLoop();
   resumePendingChecks();
   scheduleDatabaseBackups();
+  // Start polling first. The command-menu synchronisation below issues one
+  // setMyCommands call per known user with a deliberate pause between them, so
+  // awaiting it here used to leave the bot unresponsive for minutes after every
+  // restart while the update backlog accumulated.
+  bot
+    .launch({ dropPendingUpdates: true }, () => {
+      console.log('✅ Telegram bot started successfully and is ready for commands.');
+    })
+    .catch((error) => {
+      // launch() rejects on a bad token (401) or a second polling instance (409).
+      // Without this the process stayed alive receiving nothing.
+      console.error('CRITICAL_ERROR: bot.launch failed:', error);
+      process.exit(1);
+    });
+
   const { synchronizeLegacyCommandMenus, synchronizeStarsCommandMenus } =
     await import('./services/stars-command-surface');
-  if (isStarsMode()) {
-    await synchronizeStarsCommandMenus(bot, true);
-  } else {
-    await synchronizeLegacyCommandMenus(bot);
-  }
-  bot.launch({ dropPendingUpdates: true }).then(() => {
-    console.log('✅ Telegram bot started successfully and is ready for commands.');
-  });
+  // Runs in the background. The rebuild issues one setMyCommands call per known
+  // user with a deliberate pause between them; awaiting it here left the bot
+  // unresponsive for minutes after every restart while updates piled up.
+  void (async () => {
+    if (isStarsMode()) {
+      await synchronizeStarsCommandMenus(bot, true);
+    } else {
+      await synchronizeLegacyCommandMenus(bot);
+    }
+  })().catch((error) =>
+    console.error('[App] Command menu synchronisation failed:', error),
+  );
+}
+
+/**
+ * Releases the resources that would otherwise keep the process alive (or leave
+ * rows stuck in `processing`) when the container is stopped.
+ */
+async function shutdown(signal: string): Promise<void> {
+  console.log(`[App] Received ${signal}, shutting down...`);
+  const done = (async () => {
+    try {
+      // Throws if polling never started (e.g. SIGTERM during userbot login).
+      bot.stop(signal);
+    } catch {}
+    try {
+      stopMonitorLoop();
+    } catch {}
+    try {
+      const { Userbot } = await import('config/userbot');
+      Userbot.stopConnectionMonitor();
+      await Userbot.reset();
+    } catch {}
+    try {
+      closeDatabase();
+    } catch {}
+  })();
+  // Never let cleanup hold the container past its grace period.
+  await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  process.exit(0);
 }
 
 if (process.env.NODE_ENV !== 'test') {
-  startApp();
-  process.once('SIGINT', () => bot.stop('SIGINT'));
-  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  startApp().catch((error) => {
+    console.error('CRITICAL_ERROR: startApp failed:', error);
+    process.exit(1);
+  });
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+  process.once('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
 }

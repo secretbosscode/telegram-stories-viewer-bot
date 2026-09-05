@@ -23,15 +23,20 @@ jest.mock('lib/i18n', () => ({
   t: () => '',
 }));
 
+import fs from 'fs';
 import { Userbot } from '../src/config/userbot';
-import { addMonitor, removeMonitor } from '../src/db';
+import { addMonitor, removeMonitor, db } from '../src/db';
 import { checkSingleMonitor } from '../src/services/monitor-service';
+import { listArchivedPhotos } from '../src/services/profile-photo-archive';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
 
-test('sends profile photo when changed', async () => {
+test('sends profile photo when changed, archives history and reports deletions', async () => {
+  db.prepare('DELETE FROM monitor_profile_photos WHERE target_id = ?').run('123');
   const row = addMonitor('user', '123', 'tester', '999', null);
-  let photoId: number | null = 1;
+  // photos.GetUserPhotos returns the whole history, newest first. Changing an
+  // avatar prepends; deleting removes an entry.
+  let history: number[] = [1];
   const invoke = jest.fn(async (query: any) => {
     if (query instanceof Api.users.GetUsers) {
       return [{ id: bigInt(123), accessHash: bigInt(999), username: 'tester' }];
@@ -40,9 +45,7 @@ test('sends profile photo when changed', async () => {
       return { stories: { stories: [] } } as any;
     }
     if (query instanceof Api.photos.GetUserPhotos) {
-      return {
-        photos: photoId ? [{ id: photoId, videoSizes: [] }] : [],
-      } as any;
+      return { photos: history.map((id) => ({ id, videoSizes: [] })) } as any;
     }
     return null;
   });
@@ -55,21 +58,58 @@ test('sends profile photo when changed', async () => {
 
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(1);
+  // The first sighting is archived to disk.
+  const archived = listArchivedPhotos('123');
+  expect(archived.map((p) => p.photo_id)).toEqual(['1']);
+  expect(archived[0].file_path && fs.existsSync(archived[0].file_path)).toBe(true);
 
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(1);
 
-  photoId = 2;
+  // A new avatar: the old one stays in history, so only the change is sent.
+  history = [2, 1];
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(2);
+  expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(0);
 
-  photoId = null;
+  // The old avatar is deleted from history: the archived copy is sent once,
+  // with the deletion caption, and the row is marked deleted.
+  history = [2];
+  await checkSingleMonitor(row.id);
+  expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(3);
+  const deletedCall = (bot.telegram.sendPhoto as jest.Mock).mock.calls[2] as any[];
+  expect(deletedCall[1]).toEqual({ source: expect.stringContaining('/profile-archive/123/1.jpg') });
+  expect(listArchivedPhotos('123').find((p) => p.photo_id === '1')?.deleted_at).toBeTruthy();
+
+  await checkSingleMonitor(row.id);
+  expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(3);
+
+  // An empty GetUserPhotos result is not proof of deletion: a privacy change, a
+  // block, or a deleted account returns the same thing. Two consecutive empty
+  // reads are required before telling the subscriber the photo was removed, so
+  // the first one is silent, and nothing is marked deleted in the archive.
+  history = [];
+  await checkSingleMonitor(row.id);
+  expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(0);
+  expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(3);
+  expect(listArchivedPhotos('123').find((p) => p.photo_id === '2')?.deleted_at).toBeNull();
+
+  // A non-empty read with the *same* latest photo resets the streak: the two
+  // empty reads must be consecutive, not merely two in total.
+  history = [2];
+  await checkSingleMonitor(row.id);
+  history = [];
+  await checkSingleMonitor(row.id);
+  expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(0);
+
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
-  expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(2);
+  expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(3);
 
+  // Once reported, it is not reported again.
   await checkSingleMonitor(row.id);
   expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
 
   removeMonitor('user', '123');
+  db.prepare('DELETE FROM monitor_profile_photos WHERE target_id = ?').run('123');
 });

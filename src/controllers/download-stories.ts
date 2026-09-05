@@ -40,7 +40,9 @@ export async function downloadStories(
   }
 
   await ensureStealthMode();
-  const client = await Userbot.getInstance();
+  // Warm the client, but do not hold the reference: downloadWithReconnect
+  // resolves it per attempt so a reconnect cannot leave callers on a dead one.
+  await Userbot.getInstance();
   console.log(`[DownloadStories] Starting download of ${stories.length} ${storiesType} stories. Concurrency: ${DOWNLOAD_CONCURRENCY_LIMIT}.`);
 
   const failedStories: MappedStoryItem[] = [];
@@ -52,7 +54,11 @@ export async function downloadStories(
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        return await client.downloadMedia(media);
+        // Resolve the client on every attempt. Userbot.reconnect() disconnects
+        // the current instance and installs a new one, so a reference captured
+        // before the loop would be permanently dead on the retry.
+        const activeClient = await Userbot.getInstance();
+        return await activeClient.downloadMedia(media);
       } catch (err) {
         lastError = err;
         if (!isNotConnectedError(err) || attempt === maxAttempts) {

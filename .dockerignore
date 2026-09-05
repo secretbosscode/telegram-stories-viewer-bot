@@ -1,0 +1,21 @@
+# Secrets and runtime state must never enter an image layer.
+.env
+.env.*
+userbot-session
+data/
+/data
+
+# Build artifacts and dependencies are rebuilt inside the image.
+node_modules
+dist
+
+# Version control and local tooling.
+.git
+.gitignore
+*.log
+npm-debug.log*
+
+# Editor and OS cruft.
+.DS_Store
+.vscode
+.idea

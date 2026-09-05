@@ -31,7 +31,10 @@ describe('final Stars safety invariants', () => {
     const monitor = source('src/services/monitor-service.ts');
     const safety = source('src/services/stars-mode-safety.ts');
     expect(monitor).toContain('getStarsMonitoringEntitlement(monitor.telegram_id)');
-    expect(monitor.match(/monitorDelivery: true/g)?.length).toBe(2);
+    // Both the active and the pinned delivery must be flagged as monitor
+    // deliveries; the flag now lives in one helper used by both call sites.
+    expect(monitor).toContain('monitorDelivery: true');
+    expect(monitor.match(/task: monitorTask\(monitor, language\)/g)?.length).toBe(2);
     expect(safety).not.toContain('startStarsMonitorLoop');
     expect(safety).not.toContain('runStarsMonitorCycle');
   });

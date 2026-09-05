@@ -143,7 +143,9 @@ export async function getEntityWithTempContact(input: string): Promise<EntityRes
   if (!isPhoneNumber(input)) {
     if (/^\d+$/.test(input)) {
       try {
-        return client.getEntity(bigInt(input));
+        // Must be awaited inside the try: without it the rejection escapes and
+        // the username fallback below becomes unreachable.
+        return await client.getEntity(bigInt(input));
       } catch {
         // fall back to treating as username below
       }

@@ -63,8 +63,10 @@ COPY healthcheck.sh /usr/local/bin/healthcheck.sh
 RUN chmod +x /usr/local/bin/healthcheck.sh
 RUN chown -R appuser:appgroup /app
 
-# Run the container as the non-root user by default
-USER appuser
+# Do NOT set `USER appuser` here. The container must start as root so that
+# entrypoint.sh can apply the PUID/PGID mapping and chown /data before dropping
+# privileges to appuser via gosu. Setting USER here would skip every
+# `id -u = 0` branch in entrypoint.sh, leaving /data potentially unwritable.
 
 # Set our script as the entrypoint for the container.
 ENTRYPOINT ["entrypoint.sh"]
