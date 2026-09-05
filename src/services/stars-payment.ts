@@ -113,6 +113,23 @@ function initializeSchema(): void {
 
     CREATE INDEX IF NOT EXISTS star_payments_user_idx
       ON star_payments (user_id, paid_at DESC);
+
+    -- Charges Telegram collected that no bundle can honour: a second payment
+    -- for a bundle that was already paid (the invoice message stays payable),
+    -- or a payment whose invoice payload matches no offer. They are refunded
+    -- immediately and retried by the recovery loop until Telegram confirms.
+    CREATE TABLE IF NOT EXISTS star_orphan_charges (
+      telegram_payment_charge_id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL,
+      bundle_id TEXT,
+      amount_stars INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at INTEGER,
+      last_error TEXT,
+      refunded_at INTEGER
+    );
   `);
 
   const now = nowSeconds();
@@ -292,6 +309,98 @@ async function callBotApi<T = unknown>(method: string, payload: Record<string, u
   return (botInstance.telegram as any).callApi(method, payload) as Promise<T>;
 }
 
+function describeError(error: unknown): string {
+  const anyError = error as any;
+  return String(
+    anyError?.response?.description ?? anyError?.description ?? anyError?.message ?? error ?? '',
+  );
+}
+
+/** Telegram rejects a second refund of the same charge with CHARGE_ALREADY_REFUNDED. */
+function isAlreadyRefundedError(error: unknown): boolean {
+  return /ALREADY_REFUNDED|already refunded/i.test(describeError(error));
+}
+
+/**
+ * Returns Stars that Telegram collected but that no bundle can honour. The
+ * charge is written to the orphan ledger before the API call so a failed
+ * refund is retried by the recovery loop instead of being lost.
+ */
+async function refundOrphanCharge(
+  userId: string,
+  chargeId: string,
+  amountStars: number,
+  bundleId: string | null,
+  reason: string,
+): Promise<boolean> {
+  db.prepare(
+    `INSERT OR IGNORE INTO star_orphan_charges (
+       telegram_payment_charge_id, user_id, bundle_id, amount_stars, reason, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(chargeId, userId, bundleId, amountStars, reason, nowSeconds());
+  const existing = db
+    .prepare('SELECT refunded_at FROM star_orphan_charges WHERE telegram_payment_charge_id = ?')
+    .get(chargeId) as { refunded_at?: number | null } | undefined;
+  if (existing?.refunded_at) return true;
+
+  try {
+    await callBotApi('refundStarPayment', {
+      user_id: Number(userId),
+      telegram_payment_charge_id: chargeId,
+    });
+  } catch (error) {
+    if (!isAlreadyRefundedError(error)) {
+      db.prepare(
+        `UPDATE star_orphan_charges
+         SET attempt_count = attempt_count + 1, last_attempt_at = ?, last_error = ?
+         WHERE telegram_payment_charge_id = ?`,
+      ).run(nowSeconds(), describeError(error), chargeId);
+      console.error(`[Stars] Could not refund orphan charge ${chargeId} (${reason}):`, error);
+      await botInstance?.telegram.sendMessage(
+        BOT_ADMIN_ID,
+        `⚠️ Stars: orphan charge ${chargeId} (${reason}, ⭐${amountStars}, user ${userId}) could not be refunded yet; it will be retried.`,
+      ).catch(() => {});
+      return false;
+    }
+  }
+  db.prepare(
+    `UPDATE star_orphan_charges SET refunded_at = ?, last_error = NULL
+     WHERE telegram_payment_charge_id = ?`,
+  ).run(nowSeconds(), chargeId);
+  await botInstance?.telegram.sendMessage(
+    BOT_ADMIN_ID,
+    `⭐ Stars: refunded orphan charge ${chargeId} (${reason}, ⭐${amountStars}, user ${userId}).`,
+  ).catch(() => {});
+  return true;
+}
+
+async function retryOrphanCharges(): Promise<void> {
+  const cutoff = nowSeconds() - DELIVERY_STALE_SECONDS;
+  const rows = db.prepare(
+    `SELECT telegram_payment_charge_id, user_id, bundle_id, amount_stars, reason
+     FROM star_orphan_charges
+     WHERE refunded_at IS NULL
+       AND (last_attempt_at IS NULL OR last_attempt_at <= ?)
+     ORDER BY created_at ASC
+     LIMIT 20`,
+  ).all(cutoff) as {
+    telegram_payment_charge_id: string;
+    user_id: string;
+    bundle_id: string | null;
+    amount_stars: number;
+    reason: string;
+  }[];
+  for (const row of rows) {
+    await refundOrphanCharge(
+      row.user_id,
+      row.telegram_payment_charge_id,
+      row.amount_stars,
+      row.bundle_id,
+      row.reason,
+    ).catch(() => {});
+  }
+}
+
 export async function maybeOfferStoryUnlock(params: SendStoriesFxParams): Promise<boolean> {
   if (!isPayableRequest(params)) return false;
   if (!botInstance) throw new Error('Stars payment service has not been registered');
@@ -408,14 +517,39 @@ async function recordSuccessfulPayment(ctx: any, payment: any): Promise<void> {
   const providerChargeId = payment.provider_payment_charge_id
     ? String(payment.provider_payment_charge_id)
     : null;
-  const bundle = getBundle(String(payment.invoice_payload ?? ''));
+  const bundleId = String(payment.invoice_payload ?? '');
+  const bundle = getBundle(bundleId);
   const userId = String(ctx.from?.id ?? '');
+  const amount = Number(payment.total_amount);
   const locale = bundle?.locale || ctx.from?.language_code || 'en';
 
-  if (!chargeId || !bundle || bundle.user_id !== userId || payment.currency !== 'XTR' || Number(payment.total_amount) !== bundle.price_stars) {
+  const matchesBundle = Boolean(
+    chargeId &&
+    bundle &&
+    bundle.user_id === userId &&
+    payment.currency === 'XTR' &&
+    amount === bundle.price_stars,
+  );
+  if (!matchesBundle) {
+    // Telegram has already collected the Stars. A charge that cannot be tied
+    // to a deliverable bundle is refunded rather than left stranded.
+    if (chargeId && userId && payment.currency === 'XTR') {
+      const refunded = await refundOrphanCharge(userId, chargeId, amount || 0, bundleId || null, 'unmatched');
+      await ctx.reply(
+        t(locale, refunded ? 'stars.duplicateChargeRefunded' : 'stars.refundPending', { amount: amount || 0 }),
+      ).catch(() => {});
+      return;
+    }
     throw new Error('Successful Stars payment did not match a valid result bundle');
   }
+  const offered = bundle as StarsBundleRow;
 
+  // Compare-and-swap: a bundle is claimed only from OFFERED, inside one
+  // transaction with the payment insert. Any other state means this update is
+  // either Telegram redelivering a payment already held (same charge id) or a
+  // second, real charge for a bundle that is already paid, delivering, fenced
+  // for refund, or settled. Neither may reset the bundle's state.
+  let outcome: 'claimed' | 'redelivered' | 'duplicate_charge' | 'unclaimable' = 'unclaimable';
   db.exec('BEGIN IMMEDIATE');
   try {
     const inserted = db.prepare(
@@ -423,37 +557,59 @@ async function recordSuccessfulPayment(ctx: any, payment: any): Promise<void> {
          telegram_payment_charge_id, provider_payment_charge_id, bundle_id,
          user_id, amount_stars, paid_at
        ) VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(chargeId, providerChargeId, bundle.id, userId, bundle.price_stars, nowSeconds());
+    ).run(chargeId, providerChargeId, offered.id, userId, offered.price_stars, nowSeconds());
 
-    if (inserted.changes > 0) {
-      db.prepare(
+    if (inserted.changes === 0) {
+      // star_payments.bundle_id is UNIQUE: the insert was ignored either
+      // because this exact charge is already recorded, or because the bundle
+      // already has a different payment attached.
+      const existing = getPaymentForBundle(offered.id);
+      outcome = existing?.telegram_payment_charge_id === chargeId ? 'redelivered' : 'duplicate_charge';
+    } else {
+      const claimed = db.prepare(
         `UPDATE star_result_bundles
          SET status = 'PAID', paid_at = ?, last_error = NULL
-         WHERE id = ? AND status NOT IN ('DELIVERED', 'REFUNDED')`,
-      ).run(nowSeconds(), bundle.id);
+         WHERE id = ? AND status = 'OFFERED'`,
+      ).run(nowSeconds(), offered.id);
+      if (claimed.changes > 0) {
+        outcome = 'claimed';
+      } else {
+        // Keep the ledger truthful: the payment row must not stay attached to
+        // a bundle it never claimed.
+        db.prepare('DELETE FROM star_payments WHERE telegram_payment_charge_id = ?').run(chargeId);
+        outcome = 'unclaimable';
+      }
     }
     db.exec('COMMIT');
-
-    const current = getBundle(bundle.id)!;
-    if (inserted.changes === 0) {
-      await ctx.reply(t(locale, 'stars.paymentDuplicate'));
-      if (current.status !== 'DELIVERED' && current.status !== 'REFUNDED') {
-        await enqueuePaidBundle(current, chargeId, true);
-      }
-      return;
-    }
-
-    await ctx.reply(t(locale, 'stars.paymentReceived'));
-    await enqueuePaidBundle(current, chargeId);
-    if (botInstance && userId !== String(BOT_ADMIN_ID)) {
-      await botInstance.telegram.sendMessage(
-        BOT_ADMIN_ID,
-        `⭐ Stars purchase: ${bundle.price_stars} Stars, ${bundle.result_count} results, ${bundle.target}, user ${userId}`,
-      ).catch(() => {});
-    }
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch {}
     throw error;
+  }
+
+  if (outcome === 'duplicate_charge' || outcome === 'unclaimable') {
+    const refunded = await refundOrphanCharge(userId, chargeId, amount, offered.id, outcome);
+    await ctx.reply(
+      t(locale, refunded ? 'stars.duplicateChargeRefunded' : 'stars.refundPending', { amount }),
+    ).catch(() => {});
+    return;
+  }
+
+  const current = getBundle(offered.id)!;
+  if (outcome === 'redelivered') {
+    await ctx.reply(t(locale, 'stars.paymentDuplicate')).catch(() => {});
+    if (current.status === 'PAID' || current.status === 'DELIVERING') {
+      await enqueuePaidBundle(current, chargeId, true);
+    }
+    return;
+  }
+
+  await ctx.reply(t(locale, 'stars.paymentReceived'));
+  await enqueuePaidBundle(current, chargeId);
+  if (botInstance && userId !== String(BOT_ADMIN_ID)) {
+    await botInstance.telegram.sendMessage(
+      BOT_ADMIN_ID,
+      `⭐ Stars purchase: ${offered.price_stars} Stars, ${offered.result_count} results, ${offered.target}, user ${userId}`,
+    ).catch(() => {});
   }
 }
 
@@ -562,11 +718,36 @@ async function refundBundle(
     }
     return true;
   } catch (error: any) {
+    if (isAlreadyRefundedError(error)) {
+      // Telegram already returned the Stars (for example a retry after a crash
+      // between the API call and the local commit). Settle locally so the
+      // bundle stops cycling through the recovery loop.
+      const now = nowSeconds();
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare(
+          `UPDATE star_payments SET refunded_at = COALESCE(refunded_at, ?)
+           WHERE telegram_payment_charge_id = ?`,
+        ).run(now, payment.telegram_payment_charge_id);
+        db.prepare(
+          `UPDATE star_result_bundles
+           SET status = 'REFUNDED', refunded_at = COALESCE(refunded_at, ?), last_error = NULL
+           WHERE id = ?`,
+        ).run(now, bundle.id);
+        db.exec('COMMIT');
+      } catch (settleError) {
+        try { db.exec('ROLLBACK'); } catch {}
+        throw settleError;
+      }
+      return true;
+    }
+    // Stamp the attempt so the recovery loop backs off (DELIVERY_STALE_SECONDS)
+    // instead of hitting the Telegram API for the same charge every minute.
     db.prepare(
       `UPDATE star_result_bundles
-       SET status = 'REFUND_PENDING', last_error = ?
+       SET status = 'REFUND_PENDING', last_error = ?, last_attempt_at = ?
        WHERE id = ?`,
-    ).run(error?.message || String(error), bundle.id);
+    ).run(describeError(error), nowSeconds(), bundle.id);
     if (notifyUser) {
       await botInstance.telegram.sendMessage(bundle.chat_id, t(bundle.locale, 'stars.refundPending')).catch(() => {});
     }
@@ -610,6 +791,10 @@ export async function recoverPaidBundles(): Promise<void> {
       if (!payment) continue;
       await enqueuePaidBundle(bundle, payment.telegram_payment_charge_id, true).catch(() => {});
     }
+
+    await retryOrphanCharges().catch((error) =>
+      console.error('[Stars] Orphan charge retry failed:', error),
+    );
 
     db.prepare(
       `DELETE FROM star_result_bundles

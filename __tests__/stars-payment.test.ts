@@ -36,14 +36,22 @@ jest.mock('../src/db/effects', () => ({
   enqueueDownloadFx: jest.fn(async () => 1),
 }));
 
+// enqueuePaidBundle wakes the queue processor after a paid enqueue. The real
+// module imports the bot entry point; isolate it here.
+jest.mock('../src/services/queue-manager', () => ({
+  processQueue: jest.fn(async () => undefined),
+}));
+
 jest.mock('../src/config/env-config', () => ({
   BOT_ADMIN_ID: 999,
   BTC_CONFIGURED: true,
 }));
 
 import { db } from '../src/db';
+import { enqueueDownloadFx } from '../src/db/effects';
 import {
   finalizeDeferredStarsRefund,
+  recoverPaidBundles,
   getPaymentMode,
   getStarsPrice,
   isStarsBundleDeliverable,
@@ -94,7 +102,9 @@ describe('Telegram Stars result unlocks', () => {
     (bot.telegram.callApi as jest.Mock).mockClear();
     db.prepare('DELETE FROM star_result_bundles').run();
     db.prepare('DELETE FROM star_payments').run();
+    db.prepare('DELETE FROM star_orphan_charges').run();
     db.prepare('DELETE FROM download_queue').run();
+    (enqueueDownloadFx as unknown as jest.Mock).mockClear();
     db.prepare("UPDATE bot_settings SET value = '1' WHERE key = 'stars_enabled'").run();
     setPaymentMode('stars', 'test');
   });
@@ -284,6 +294,127 @@ describe('Telegram Stars result unlocks', () => {
     expect(isStarsBundleDeliverable('refund-fenced')).toBe(false);
     markStarsBundleDelivered('refund-fenced');
     expect((db.prepare(`SELECT status FROM star_result_bundles WHERE id = 'refund-fenced'`).get() as any).status).toBe('REFUND_PENDING');
+  });
+
+  // --- successful_payment compare-and-swap -----------------------------------
+
+  function insertBundle(id: string, status: string) {
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(`
+      INSERT INTO star_result_bundles (
+        id, user_id, chat_id, target, locale, request_kind, story_ids,
+        task_json, result_count, price_stars, status, created_at, expires_at,
+        paid_at, attempt_count
+      ) VALUES (?, '123', '123', '@target', 'en', 'current', '[101]', '{}', 1, 25, ?, ?, ?, ?, 0)
+    `).run(id, status, now, now + 1800, status === 'OFFERED' ? null : now);
+  }
+  function insertPayment(bundleId: string, chargeId: string) {
+    db.prepare(`
+      INSERT INTO star_payments (telegram_payment_charge_id, bundle_id, user_id, amount_stars, paid_at)
+      VALUES (?, ?, '123', 25, ?)
+    `).run(chargeId, bundleId, Math.floor(Date.now() / 1000));
+  }
+  function successfulPaymentHandler() {
+    const call = (bot.on as jest.Mock).mock.calls.find((c: any[]) => c[0] === 'message');
+    if (!call) throw new Error('successful_payment handler was not registered');
+    return call[1] as (ctx: any, next: () => Promise<void>) => Promise<void>;
+  }
+  function paymentCtx(bundleId: string, chargeId: string) {
+    return {
+      from: { id: 123, language_code: 'en' },
+      message: {
+        successful_payment: {
+          telegram_payment_charge_id: chargeId,
+          invoice_payload: bundleId,
+          currency: 'XTR',
+          total_amount: 25,
+        },
+      },
+      reply: jest.fn(async () => ({ message_id: 1 })),
+    };
+  }
+  const noNext = async () => {};
+  const bundleStatus = (id: string) =>
+    (db.prepare('SELECT status FROM star_result_bundles WHERE id = ?').get(id) as any)?.status;
+  const refundCalls = () =>
+    (bot.telegram.callApi as jest.Mock).mock.calls.filter((c: any[]) => c[0] === 'refundStarPayment');
+
+  test('a first payment claims an OFFERED bundle exactly once and queues delivery', async () => {
+    insertBundle('claim-once', 'OFFERED');
+    await successfulPaymentHandler()(paymentCtx('claim-once', 'charge-first'), noNext);
+    expect(enqueueDownloadFx).toHaveBeenCalledTimes(1);
+    expect(bundleStatus('claim-once')).toBe('DELIVERING');
+    expect(refundCalls()).toHaveLength(0);
+  });
+
+  test('a redelivered successful_payment is idempotent and does not reset an in-flight delivery', async () => {
+    insertBundle('redelivered', 'DELIVERING');
+    insertPayment('redelivered', 'charge-same');
+    await successfulPaymentHandler()(paymentCtx('redelivered', 'charge-same'), noNext);
+    expect(bundleStatus('redelivered')).toBe('DELIVERING');
+    expect(refundCalls()).toHaveLength(0);
+    expect((db.prepare('SELECT COUNT(*) AS c FROM star_payments').get() as any).c).toBe(1);
+  });
+
+  test('a second charge for an already-paid bundle is refunded, not delivered twice', async () => {
+    insertBundle('double-pay', 'PAID');
+    insertPayment('double-pay', 'charge-original');
+    await successfulPaymentHandler()(paymentCtx('double-pay', 'charge-second'), noNext);
+    expect(refundCalls()).toEqual([
+      ['refundStarPayment', { user_id: 123, telegram_payment_charge_id: 'charge-second' }],
+    ]);
+    const payments = db
+      .prepare('SELECT telegram_payment_charge_id FROM star_payments WHERE bundle_id = ?')
+      .all('double-pay') as any[];
+    expect(payments.map((p) => p.telegram_payment_charge_id)).toEqual(['charge-original']);
+    expect(bundleStatus('double-pay')).toBe('PAID');
+    expect(enqueueDownloadFx).not.toHaveBeenCalled();
+    const orphan = db
+      .prepare('SELECT refunded_at FROM star_orphan_charges WHERE telegram_payment_charge_id = ?')
+      .get('charge-second') as any;
+    expect(orphan?.refunded_at).toBeTruthy();
+  });
+
+  test('a late payment cannot reopen a bundle fenced for refund', async () => {
+    insertBundle('fenced-late', 'REFUND_PENDING');
+    insertPayment('fenced-late', 'charge-fenced');
+    await successfulPaymentHandler()(paymentCtx('fenced-late', 'charge-fenced'), noNext);
+    expect(bundleStatus('fenced-late')).toBe('REFUND_PENDING');
+    expect(enqueueDownloadFx).not.toHaveBeenCalled();
+  });
+
+  test('a charge whose payload matches no offer is refunded instead of stranded', async () => {
+    const ctx = paymentCtx('no-such-bundle', 'charge-lost');
+    await expect(successfulPaymentHandler()(ctx, noNext)).resolves.toBeUndefined();
+    expect(refundCalls()).toEqual([
+      ['refundStarPayment', { user_id: 123, telegram_payment_charge_id: 'charge-lost' }],
+    ]);
+    expect(ctx.reply).toHaveBeenCalled();
+  });
+
+  test('a failed orphan refund is kept for retry and settles once Telegram confirms', async () => {
+    insertBundle('retry-orphan', 'PAID');
+    insertPayment('retry-orphan', 'charge-kept');
+    (bot.telegram.callApi as jest.Mock).mockImplementationOnce(async () => {
+      throw new Error('Bad Request: network');
+    });
+    await successfulPaymentHandler()(paymentCtx('retry-orphan', 'charge-dup'), noNext);
+    let orphan = db
+      .prepare('SELECT refunded_at, attempt_count FROM star_orphan_charges WHERE telegram_payment_charge_id = ?')
+      .get('charge-dup') as any;
+    expect(orphan.refunded_at).toBeNull();
+    expect(orphan.attempt_count).toBe(1);
+
+    // On retry Telegram reports the charge as already refunded: settle locally.
+    (bot.telegram.callApi as jest.Mock).mockImplementationOnce(async () => {
+      throw new Error('Bad Request: CHARGE_ALREADY_REFUNDED');
+    });
+    db.prepare('UPDATE star_orphan_charges SET last_attempt_at = 0').run();
+    await recoverPaidBundles();
+    orphan = db
+      .prepare('SELECT refunded_at FROM star_orphan_charges WHERE telegram_payment_charge_id = ?')
+      .get('charge-dup') as any;
+    expect(orphan.refunded_at).toBeTruthy();
   });
 
   test('legacy BTC mode leaves the existing delivery path untouched', async () => {
