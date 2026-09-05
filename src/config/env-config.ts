@@ -66,8 +66,12 @@ export const DEBUG_LOG = (() => {
 // Debug log file path is always relative to the application data directory
 export const DEBUG_LOG_FILE = path.join(DATA_DIR, 'debug.log');
 
-// Stealth mode can be disabled to avoid triggering Telegram flood limits
+// Stealth mode is opt-in. Nothing in this bot registers a story view (there is
+// no stories.readStories / incrementStoryViews call anywhere), so the
+// Premium-only stealth activation protects nothing and only spends a
+// rate-limited request. DISABLE_STEALTH_MODE is still honoured for existing
+// deployments and always wins.
+const truthy = (value: unknown) => ['1', 'true', 'yes'].includes(String(value ?? '').toLowerCase());
+const enableStealthFlag = process.env.ENABLE_STEALTH_MODE ?? parsed?.ENABLE_STEALTH_MODE ?? '';
 const disableStealthFlag = process.env.DISABLE_STEALTH_MODE ?? parsed?.DISABLE_STEALTH_MODE ?? '';
-export const STEALTH_MODE_ENABLED = !['1', 'true', 'yes'].includes(
-  String(disableStealthFlag).toLowerCase(),
-);
+export const STEALTH_MODE_ENABLED = truthy(enableStealthFlag) && !truthy(disableStealthFlag);
