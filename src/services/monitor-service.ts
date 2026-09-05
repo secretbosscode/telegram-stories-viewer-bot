@@ -15,6 +15,7 @@ import {
   updateMonitorChecked,
   updateMonitorPhoto,
   listSentStoryKeys,
+  listSentStoryKeysAmong,
   markStorySent,
   listAllMonitors,
   hasBlockedBot,
@@ -522,12 +523,22 @@ async function deliverSnapshotToMonitor(
     (story: any) => !persistedActiveKeys.has(storyKey(story)),
   );
   const activeCandidateKeys = new Set(newActive.map(storyKey));
-  const newPinned = pinnedStories.filter((story: any) => {
-    if (typeof story?.id !== 'number' || typeof story?.date !== 'number') return false;
+  const validPinned = pinnedStories.filter(
+    (story: any) => typeof story?.id === 'number' && typeof story?.date === 'number',
+  );
+  // The active listing excludes expired deliveries, so a story delivered while
+  // active and pinned by its author later would look new once its 24-hour
+  // window passed. Check the pinned candidates (and only them) against every
+  // delivery ever recorded for this monitor.
+  const everSentKeys = new Set(
+    listSentStoryKeysAmong(monitor.id, validPinned.map(storyKey)),
+  );
+  const newPinned = validPinned.filter((story: any) => {
     const key = storyKey(story);
     return (
       !persistedPinnedKeys.has(key) &&
       !persistedActiveKeys.has(key) &&
+      !everSentKeys.has(key) &&
       !activeCandidateKeys.has(key)
     );
   });
