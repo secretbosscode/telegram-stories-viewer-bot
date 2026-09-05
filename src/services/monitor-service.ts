@@ -598,7 +598,10 @@ export async function checkSingleMonitor(
       `[Monitor] Error checking ${formatMonitorTarget(monitor)}:`,
       error,
     );
+  } finally {
+    // Runs in finally so the early return taken when the staggered photo check
+    // is skipped (and any thrown error) still records that this cycle checked
+    // the target.
+    updateMonitorChecked(id);
   }
-
-  updateMonitorChecked(id);
 }
