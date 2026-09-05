@@ -403,7 +403,8 @@ bot.command('freetrial', async (ctx) => {
   await ctx.reply(t(locale, 'premium.freeTrialActivated'));
 });
 
-bot.command('verify', async (ctx) => {
+// Exported so the owner-credit rule can be unit tested.
+export async function handleVerify(ctx: any): Promise<unknown> {
   const locale = ctx.from.language_code || 'en';
   const args = ctx.message.text.split(' ').slice(1);
   if (args.length < 1) {
@@ -425,41 +426,66 @@ bot.command('verify', async (ctx) => {
   }
   const invoice = await verifyPaymentByTxid(txid);
   if (invoice && invoice.paid_at) {
+    // Credit the account that owns the invoice, never the caller. A txid is
+    // public on-chain data, so anyone who saw a paying user's transaction could
+    // otherwise run /verify first and take the Premium that user paid for.
+    const ownerId = String(invoice.user_id);
+    const callerId = String(ctx.from.id);
+    const isOwner = ownerId === callerId;
+    const ownerLocale = isOwner ? locale : findUserById(ownerId)?.language || 'en';
+
     const daysAdded = calcPremiumDays(invoice.invoice_amount, invoice.paid_amount);
-    extendPremium(String(ctx.from.id), daysAdded);
-    const inviter = getInviterForUser(String(ctx.from.id));
-    if (inviter && !wasReferralPaidRewarded(String(ctx.from.id))) {
+    extendPremium(ownerId, daysAdded);
+    const inviter = getInviterForUser(ownerId);
+    if (inviter && !wasReferralPaidRewarded(ownerId)) {
       extendPremium(inviter, daysAdded);
-      markReferralPaidRewarded(String(ctx.from.id));
+      markReferralPaidRewarded(ownerId);
       try {
         const inviterLang = findUserById(inviter)?.language;
         await ctx.telegram.sendMessage(inviter, t(inviterLang, 'referral.paid', { days: daysAdded }));
       } catch {}
     }
-    if (ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
+    if (isOwner && ctx.session?.upgrade && ctx.session.upgrade.invoice.id === invoice.id) {
       ctx.session.upgrade = undefined;
     }
-    const days = getPremiumDaysLeft(String(ctx.from.id));
-    await updatePremiumPinnedMessage(
-      bot,
-      ctx.chat!.id,
-      String(ctx.from.id),
-      days,
-      locale,
-      true,
-    );
+    const days = getPremiumDaysLeft(ownerId);
+    try {
+      // The owner's private chat id equals their user id.
+      await updatePremiumPinnedMessage(
+        bot,
+        isOwner ? ctx.chat!.id : Number(ownerId),
+        ownerId,
+        days,
+        ownerLocale,
+        true,
+      );
+    } catch (pinError) {
+      console.error('[verify] Could not update the Premium pinned message:', pinError);
+    }
+    const ownerRecord = isOwner ? undefined : findUserById(ownerId);
+    const ownerLabel = isOwner
+      ? ctx.from.username ? '@' + ctx.from.username : ctx.from.id
+      : ownerRecord?.username ? '@' + ownerRecord.username : ownerId;
     notifyAdmin({
-      task: { chatId: String(ctx.from.id), user: ctx.from } as any,
+      task: { chatId: ownerId, user: ctx.from } as any,
       status: 'info',
-      baseInfo: t('en', 'admin.upgradePayment', {
-        user: ctx.from.username ? '@' + ctx.from.username : ctx.from.id,
-        amount: invoice.paid_amount.toFixed(8),
-      }),
+      baseInfo:
+        t('en', 'admin.upgradePayment', {
+          user: ownerLabel,
+          amount: invoice.paid_amount.toFixed(8),
+        }) + (isOwner ? '' : ` (verified by ${callerId})`),
     });
-    return ctx.reply(t(locale, 'verify.success', { days: daysAdded }));
+    if (isOwner) {
+      return ctx.reply(t(locale, 'verify.success', { days: daysAdded }));
+    }
+    await ctx.telegram
+      .sendMessage(ownerId, t(ownerLocale, 'verify.success', { days: daysAdded }))
+      .catch(() => {});
+    return ctx.reply(t(locale, 'verify.creditedOwner'));
   }
   await ctx.reply(t(locale, 'verify.failure'));
-});
+}
+bot.command('verify', (ctx) => handleVerify(ctx));
 
 bot.command('queue', async (ctx) => {
   const locale = ctx.from.language_code || 'en';

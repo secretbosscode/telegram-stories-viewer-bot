@@ -45,6 +45,7 @@
   "verify.wait": "⏳ Please wait {{seconds}}s before verifying again.",
   "verify.success": "✅ Payment verified! Premium extended by {{days}} days.",
   "verify.failure": "❌ Unable to verify this transaction.",
+  "verify.creditedOwner": "✅ Payment verified. Premium was applied to the account that created this invoice.",
   "invite.msg": "Share this link with friends:\n{{link}}\nEarn 1 week free for every 5 sign ups and 30 days if a referral pays.",
   "profile.usage": "Usage: /profile <@username|+phone>",
   "profile.cooldown": "⏳ You can request profile media for \"{{user}}\" once every {{hours}} hours.\nTry again in {{h}}h {{m}}m.",
