@@ -26,15 +26,37 @@ class DownloadTimeoutError extends Error {
   }
 }
 
-function withDownloadTimeout<T>(promise: Promise<T>, storyId: number, ms: number): Promise<T> {
+// Bound for replacing the client after a stalled transfer. Reconnecting is a
+// fresh client.start() on the saved session and normally takes a second; the
+// bound only stops a pathological reconnect from becoming the next hang.
+const RECONNECT_TIMEOUT_MS = 60 * 1000;
+
+function raceTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new DownloadTimeoutError(storyId, ms)), ms);
+    timer = setTimeout(() => reject(onTimeout()), ms);
     timer.unref?.();
   });
   return Promise.race([promise, deadline]).finally(() => {
     if (timer) clearTimeout(timer);
   }) as Promise<T>;
+}
+
+/**
+ * Replaces the userbot client. A stalled transfer leaves its sender wedged,
+ * so this runs even when no retry follows: otherwise the next story (or the
+ * next request) inherits the dead sender and burns another full timeout.
+ */
+async function replaceClient(reason: string): Promise<void> {
+  try {
+    await raceTimeout(
+      Userbot.reconnect(reason),
+      RECONNECT_TIMEOUT_MS,
+      () => new Error(`Reconnect after "${reason}" timed out`),
+    );
+  } catch (error) {
+    console.error('[DownloadStories] Could not replace the client:', error);
+  }
 }
 
 // ===============================
@@ -84,23 +106,28 @@ export async function downloadStories(
         // the current instance and installs a new one, so a reference captured
         // before the loop would be permanently dead on the retry.
         const activeClient = await Userbot.getInstance();
-        return await withDownloadTimeout(
+        return await raceTimeout(
           activeClient.downloadMedia(media),
-          storyId,
           DOWNLOAD_TIMEOUT_MS,
+          () => new DownloadTimeoutError(storyId, DOWNLOAD_TIMEOUT_MS),
         );
       } catch (err) {
         lastError = err;
-        // A timeout is treated like a dropped connection: the exported sender
-        // is most likely wedged, so reconnect once and retry before giving up.
-        const retryable = isNotConnectedError(err) || err instanceof DownloadTimeoutError;
-        if (!retryable || attempt === maxAttempts) {
-          throw err;
+        const stalled = err instanceof DownloadTimeoutError;
+        if (!stalled && !isNotConnectedError(err)) throw err;
+        // Either way the sender is suspect: replace the client, then retry once.
+        // The replacement happens even on the final attempt so a wedged sender
+        // is not handed to the next story.
+        if (signal?.aborted) {
+          console.warn(`[DownloadStories] Story ${storyId}: request aborted; not retrying.`);
+          if (stalled) await replaceClient(`stalled download of story ${storyId}`);
+          throw new Error('aborted');
         }
         console.warn(
-          `[DownloadStories] ${err instanceof DownloadTimeoutError ? 'Download stalled' : 'Connection lost'} while downloading story ${storyId}. Reconnecting (attempt ${attempt}/${maxAttempts})...`,
+          `[DownloadStories] ${stalled ? 'Download stalled' : 'Connection lost'} while downloading story ${storyId}. Reconnecting (attempt ${attempt}/${maxAttempts})...`,
         );
-        await Userbot.reconnect(`download story ${storyId}`);
+        await replaceClient(`download story ${storyId}`);
+        if (attempt === maxAttempts) throw err;
       }
     }
     throw lastError;

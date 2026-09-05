@@ -27,9 +27,10 @@ test('a download that never completes fails that story instead of hanging the ba
   expect(result.successCount).toBe(0);
   expect(result.failed.map((s) => s.id).sort()).toEqual([1, 2]);
   expect(stories[0].downloadError).toMatch(/timed out/);
-  // One reconnect-and-retry per story, then give up: two attempts each.
+  // Two attempts per story. The client is replaced after every stalled
+  // attempt, including the final one, so a wedged sender is never handed on.
   expect(downloadMedia).toHaveBeenCalledTimes(4);
-  expect(reconnect).toHaveBeenCalledTimes(2);
+  expect(reconnect).toHaveBeenCalledTimes(4);
   // Bounded: well under a second at a 40 ms timeout, not forever.
   expect(elapsed).toBeLessThan(2000);
 });
@@ -50,5 +51,22 @@ test('a download that recovers after one stall succeeds', async () => {
 
   expect(result.successCount).toBe(1);
   expect(stories[0].downloadStatus).toBe('success');
+  expect(reconnect).toHaveBeenCalledTimes(1);
+});
+
+test('an aborted request does not start a retry after a stalled attempt', async () => {
+  reconnect.mockClear();
+  const downloadMedia = jest.fn(() => new Promise<Buffer>(() => undefined));
+  (Userbot.getInstance as any).mockResolvedValue({ downloadMedia });
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 10); // aborts while the first attempt is stalled
+
+  const stories: any[] = [{ id: 9, media: {}, mediaType: 'photo' }];
+  const result = await downloadStories(stories as any, 'active', undefined, controller.signal);
+
+  expect(result.failed.map((s) => s.id)).toEqual([9]);
+  expect(stories[0].downloadError).toBe('aborted');
+  expect(downloadMedia).toHaveBeenCalledTimes(1);
+  // The wedged client is still replaced, but no second download is started.
   expect(reconnect).toHaveBeenCalledTimes(1);
 });
