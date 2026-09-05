@@ -11,6 +11,54 @@ import { isNotConnectedError } from 'lib/telegram-retry';
 const DOWNLOAD_CONCURRENCY_LIMIT = 3;
 const limit = pLimit(DOWNLOAD_CONCURRENCY_LIMIT);
 
+// Upper bound for a single story download. A gramJS transfer can hang without
+// ever rejecting after "Connection closed while receiving data" on an exported
+// data-centre sender; in production that froze the whole monitor loop behind
+// one story (Sep 4: 08:37 until the next restart; Sep 5: 19:01 until redeploy).
+// Stories are at most ~50 MB and a 12 MB video took ~25 s in the logs, so three
+// minutes is generous. Overridable for tests and slow links.
+export const DOWNLOAD_TIMEOUT_MS = Number(process.env.STORY_DOWNLOAD_TIMEOUT_MS) || 3 * 60 * 1000;
+
+class DownloadTimeoutError extends Error {
+  constructor(storyId: number, ms: number) {
+    super(`Download of story ${storyId} timed out after ${Math.round(ms / 1000)}s`);
+    this.name = 'DownloadTimeoutError';
+  }
+}
+
+// Bound for replacing the client after a stalled transfer. Reconnecting is a
+// fresh client.start() on the saved session and normally takes a second; the
+// bound only stops a pathological reconnect from becoming the next hang.
+const RECONNECT_TIMEOUT_MS = 60 * 1000;
+
+function raceTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(onTimeout()), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, deadline]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
+/**
+ * Replaces the userbot client. A stalled transfer leaves its sender wedged,
+ * so this runs even when no retry follows: otherwise the next story (or the
+ * next request) inherits the dead sender and burns another full timeout.
+ */
+async function replaceClient(reason: string): Promise<void> {
+  try {
+    await raceTimeout(
+      Userbot.reconnect(reason),
+      RECONNECT_TIMEOUT_MS,
+      () => new Error(`Reconnect after "${reason}" timed out`),
+    );
+  } catch (error) {
+    console.error('[DownloadStories] Could not replace the client:', error);
+  }
+}
+
 // ===============================
 // Type Definitions - MOVED TO src/types.ts
 // These definitions are NOW ONLY imported from src/types.ts
@@ -58,16 +106,28 @@ export async function downloadStories(
         // the current instance and installs a new one, so a reference captured
         // before the loop would be permanently dead on the retry.
         const activeClient = await Userbot.getInstance();
-        return await activeClient.downloadMedia(media);
+        return await raceTimeout(
+          activeClient.downloadMedia(media),
+          DOWNLOAD_TIMEOUT_MS,
+          () => new DownloadTimeoutError(storyId, DOWNLOAD_TIMEOUT_MS),
+        );
       } catch (err) {
         lastError = err;
-        if (!isNotConnectedError(err) || attempt === maxAttempts) {
-          throw err;
+        const stalled = err instanceof DownloadTimeoutError;
+        if (!stalled && !isNotConnectedError(err)) throw err;
+        // Either way the sender is suspect: replace the client, then retry once.
+        // The replacement happens even on the final attempt so a wedged sender
+        // is not handed to the next story.
+        if (signal?.aborted) {
+          console.warn(`[DownloadStories] Story ${storyId}: request aborted; not retrying.`);
+          if (stalled) await replaceClient(`stalled download of story ${storyId}`);
+          throw new Error('aborted');
         }
         console.warn(
-          `[DownloadStories] Connection lost while downloading story ${storyId}. Reconnecting (attempt ${attempt}/${maxAttempts})...`,
+          `[DownloadStories] ${stalled ? 'Download stalled' : 'Connection lost'} while downloading story ${storyId}. Reconnecting (attempt ${attempt}/${maxAttempts})...`,
         );
-        await Userbot.reconnect(`download story ${storyId}`);
+        await replaceClient(`download story ${storyId}`);
+        if (attempt === maxAttempts) throw err;
       }
     }
     throw lastError;

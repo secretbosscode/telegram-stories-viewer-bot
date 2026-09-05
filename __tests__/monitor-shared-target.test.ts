@@ -36,6 +36,10 @@ test('a target watched by several subscribers is fetched once and delivered to e
       return [{ id: bigInt(321), accessHash: bigInt(999), username: 'shared' }];
     }
     if (query instanceof Api.stories.GetPeerStories) {
+      // Only the shared target has a story; other suites' monitors may exist
+      // in the shared database at the same time.
+      const id = (query as any).peer?.userId?.toString?.();
+      if (id !== '321') return { stories: { stories: [] } } as any;
       return { stories: { stories: [{ id: 5, date: 50, expireDate: 2000000000 }] } } as any;
     }
     if (query instanceof Api.stories.GetPinnedStories) {
@@ -56,12 +60,15 @@ test('a target watched by several subscribers is fetched once and delivered to e
     await forceCheckMonitors();
 
     const storyFetches = invoke.mock.calls.filter(
-      (call) => call[0] instanceof Api.stories.GetPeerStories,
+      (call) =>
+        call[0] instanceof Api.stories.GetPeerStories &&
+        (call[0] as any).peer?.userId?.toString?.() === '321',
     );
     expect(storyFetches).toHaveLength(1);
 
     const deliveredTo = (sendActiveStories as jest.Mock).mock.calls
       .map((call: any[]) => call[0].task.chatId)
+      .filter((chatId: string) => chatId.startsWith('shared-'))
       .sort();
     expect(deliveredTo).toEqual(['shared-a', 'shared-b']);
     expect(listSentStoryKeys(a.id, 'active')).toContain('5:50');

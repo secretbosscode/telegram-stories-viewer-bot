@@ -9,7 +9,14 @@ import { DownloadQueueItem, UserInfo } from 'types';
  * Base directory where all runtime data is stored inside the container.
  * The Docker compose file mounts a persistent host directory to `/data`.
  */
-export const DATA_DIR = '/data';
+// Fixed at /data in production (the compose file maps a host directory there).
+// Under jest, each worker gets its own directory so suites running in parallel
+// do not observe each other's rows: forceCheckMonitors, for one, processes
+// every monitor in the table, so a shared file made those tests order-dependent.
+export const DATA_DIR =
+  process.env.NODE_ENV === 'test' && process.env.TEST_DATA_DIR
+    ? process.env.TEST_DATA_DIR
+    : '/data';
 export const DB_PATH = path.join(DATA_DIR, 'database.db');
 // Ensure the data directory exists before using it
 if (!fs.existsSync(DATA_DIR)) {

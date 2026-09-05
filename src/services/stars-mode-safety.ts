@@ -30,17 +30,19 @@ function getSetting(key: string): string | undefined {
   return row?.value;
 }
 
-function initializeSafetySchema(): void {
-  const now = nowSeconds();
+let safetyTablesReady = false;
 
-  db.exec(`
-    DROP TRIGGER IF EXISTS bind_star_bundle_requesting_user;
-    DROP TRIGGER IF EXISTS fulfill_star_monitor_purchase;
-    DROP TRIGGER IF EXISTS revoke_latest_star_monitor_refund;
-    DROP TRIGGER IF EXISTS enforce_star_monitor_limit;
-    DROP TRIGGER IF EXISTS preserve_active_star_monitors;
-  `);
-
+/**
+ * Creates the Stars monitoring tables if they are missing. Idempotent and
+ * dependency-free, so it can run lazily from any reader: the full schema
+ * (triggers, backfills) is installed by initializeStarsModeSafety at bot
+ * startup, but the monitor loop reads these tables through
+ * getStarsMonitoringEntitlement without necessarily having started the bot.
+ * Without this, a fresh database made those reads fail with
+ * "no such table: star_monitor_entitlements".
+ */
+function ensureSafetyTables(): void {
+  if (safetyTablesReady) return;
   db.exec(`
     CREATE TABLE IF NOT EXISTS star_monitor_entitlements (
       user_id TEXT PRIMARY KEY NOT NULL,
@@ -82,6 +84,21 @@ function initializeSafetySchema(): void {
     CREATE INDEX IF NOT EXISTS star_monitor_grants_user_idx
       ON star_monitor_grants (user_id, granted_at DESC);
   `);
+  safetyTablesReady = true;
+}
+
+function initializeSafetySchema(): void {
+  const now = nowSeconds();
+
+  db.exec(`
+    DROP TRIGGER IF EXISTS bind_star_bundle_requesting_user;
+    DROP TRIGGER IF EXISTS fulfill_star_monitor_purchase;
+    DROP TRIGGER IF EXISTS revoke_latest_star_monitor_refund;
+    DROP TRIGGER IF EXISTS enforce_star_monitor_limit;
+    DROP TRIGGER IF EXISTS preserve_active_star_monitors;
+  `);
+
+  ensureSafetyTables();
 
   // Backfill immutable purchase details for grants created by earlier revisions.
   db.exec(`
@@ -497,6 +514,7 @@ export function getStarsMonitorTargetLimit(): number {
 export function getStarsMonitoringEntitlement(userId: string):
   | { expiresAt: number; maxTargets: number; plan: string }
   | undefined {
+  ensureSafetyTables();
   const row = db.prepare(
     `SELECT expires_at, max_targets, plan
      FROM star_monitor_entitlements
@@ -514,6 +532,7 @@ export function getStarsMonitoringEntitlement(userId: string):
 
 
 export function reconcileStarsMonitorLimit(userId: string): number {
+  ensureSafetyTables();
   const entitlement = getStarsMonitoringEntitlement(userId);
   if (!entitlement) return 0;
 
@@ -582,6 +601,7 @@ export function authorizeStarsMonitorRemoval(
   telegramId: string,
   targetId: string,
 ): void {
+  ensureSafetyTables();
   db.prepare(
     `INSERT INTO star_monitor_delete_authorizations (
        telegram_id, target_id, authorized_at
@@ -595,6 +615,7 @@ export function clearStarsMonitorRemovalAuthorization(
   telegramId: string,
   targetId: string,
 ): void {
+  ensureSafetyTables();
   db.prepare(
     `DELETE FROM star_monitor_delete_authorizations
      WHERE telegram_id = ? AND target_id = ?`,
