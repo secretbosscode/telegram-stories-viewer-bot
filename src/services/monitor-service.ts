@@ -15,6 +15,7 @@ import {
   updateMonitorChecked,
   updateMonitorPhoto,
   listSentStoryKeys,
+  listAllSentStoryKeys,
   markStorySent,
   listAllMonitors,
   hasBlockedBot,
@@ -517,6 +518,10 @@ async function deliverSnapshotToMonitor(
 
   const persistedActiveKeys = new Set(listSentStoryKeys(monitor.id, 'active'));
   const persistedPinnedKeys = new Set(listSentStoryKeys(monitor.id, 'pinned'));
+  // Includes expired active deliveries. Without it, a story delivered while
+  // active and pinned by its author later was sent again as "new pinned" as
+  // soon as its 24-hour active window had passed.
+  const everSentKeys = new Set(listAllSentStoryKeys(monitor.id));
 
   const newActive = activeStories.filter(
     (story: any) => !persistedActiveKeys.has(storyKey(story)),
@@ -528,6 +533,7 @@ async function deliverSnapshotToMonitor(
     return (
       !persistedPinnedKeys.has(key) &&
       !persistedActiveKeys.has(key) &&
+      !everSentKeys.has(key) &&
       !activeCandidateKeys.has(key)
     );
   });

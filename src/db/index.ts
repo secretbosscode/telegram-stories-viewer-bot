@@ -874,9 +874,30 @@ export function listSentStoryKeys(
   return rows.map((r) => r.story_key);
 }
 
+/**
+ * Every story key ever delivered to this monitor, of either type and whether
+ * or not the active copy has expired. The active-only listing above excludes
+ * expired rows on purpose, but that made a story delivered as active and later
+ * pinned look brand new once its 24-hour window passed, so it was sent twice.
+ */
+export function listAllSentStoryKeys(monitor_id: number): string[] {
+  return (
+    db
+      .prepare(`SELECT DISTINCT story_key FROM monitor_sent_stories WHERE monitor_id = ?`)
+      .all(monitor_id) as { story_key: string }[]
+  ).map((row) => row.story_key);
+}
+
+// Retention for delivered-story records. Expired active rows must be kept for
+// a long time: they are the only proof that a now-pinned story was already
+// delivered while it was active.
+const SENT_STORY_RETENTION_SECONDS = 365 * 24 * 60 * 60;
+
 export function cleanupExpiredSentStories(): void {
-  const now = Math.floor(Date.now() / 1000);
-  db.prepare(`DELETE FROM monitor_sent_stories WHERE story_type != 'pinned' AND expires_at <= ?`).run(now);
+  const cutoff = Math.floor(Date.now() / 1000) - SENT_STORY_RETENTION_SECONDS;
+  db.prepare(
+    `DELETE FROM monitor_sent_stories WHERE story_type != 'pinned' AND story_date <= ?`,
+  ).run(cutoff);
 }
 
 // ----- Payment utils -----
