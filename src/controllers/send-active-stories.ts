@@ -115,7 +115,6 @@ export async function sendActiveStories({
         const media = { source: single.buffer! };
         const extra = {
           caption: captionText.slice(0, 1024),
-          ...(single.noforwards ? { protect_content: true } : {}),
         };
         if (single.mediaType === 'photo') {
           await bot.telegram.sendPhoto(task.chatId, media, extra);
@@ -145,9 +144,6 @@ export async function sendActiveStories({
                 caption: captionText.slice(0, 1024),
               };
             }),
-            album.some((story: MappedStoryItem) => story.noforwards)
-              ? { protect_content: true }
-              : undefined,
           );
           album.forEach((story: MappedStoryItem) => deliveredStoryIds.add(story.id));
         }
