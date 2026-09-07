@@ -61,8 +61,6 @@ export async function sendParticularStory({
         `${singleStory.caption ? `${singleStory.caption}\n` : ''}` +
         `\n📅 Post date: ${singleStory.date.toUTCString()}`
       ).slice(0, 1024),
-      // Preserve the author's non-forwardable restriction on the relayed copy.
-      ...(singleStory.noforwards ? { protect_content: true } : {}),
     };
 
     if (singleStory.mediaType === 'photo') {

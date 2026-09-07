@@ -37,8 +37,7 @@ const buildPinnedCaption = (caption: string | undefined, suffix: string): string
 async function sendSinglePinned(story: MappedStoryItem, task: SendStoriesArgs['task']): Promise<void> {
   const caption = buildPinnedCaption(story.caption, `Pinned story from ${task.link}`);
   const media = { source: story.buffer! };
-  // Preserve the author's non-forwardable restriction on the relayed copy.
-  const extra = { caption, ...(story.noforwards ? { protect_content: true } : {}) };
+  const extra = { caption };
   if (story.mediaType === 'photo') {
     await bot.telegram.sendPhoto(task.chatId, media, extra);
   } else {
@@ -152,9 +151,6 @@ export async function sendPinnedStories({ stories, task }: SendStoriesArgs): Pro
                 type: story.mediaType!,
                 caption: buildPinnedCaption(story.caption, `Pinned story from ${task.link}`),
               })),
-              album.some((story: MappedStoryItem) => story.noforwards)
-                ? { protect_content: true }
-                : undefined,
             );
             album.forEach((story: MappedStoryItem) => deliveredStoryIds.add(story.id));
           }

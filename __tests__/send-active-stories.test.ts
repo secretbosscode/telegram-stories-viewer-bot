@@ -112,6 +112,29 @@ describe('sendActiveStories delivery accounting', () => {
     expect(bot.telegram.sendMessage).not.toHaveBeenCalledWith('1', 'active.none');
   });
 
+  test.each([
+    ['regular', '1', {}],
+    ['admin', '0', {}],
+    ['paid', '2', { starsBundleId: 1 }],
+  ])('keeps delivered media forwardable for %s users', async (_role, chatId, entitlement) => {
+    const photo = makeStory({ noforwards: true });
+    const video = makeStory({ id: 2, mediaType: 'video', noforwards: true });
+    const args = makeArgs([photo]);
+    Object.assign(args.task, { chatId, user: { id: Number(chatId) }, ...entitlement });
+
+    expect(await sendActiveStories(args)).toEqual([1]);
+    expect(bot.telegram.sendPhoto.mock.calls[0][2].protect_content).not.toBe(true);
+
+    expect(await sendActiveStories({ ...args, stories: [video] })).toEqual([2]);
+    expect(bot.telegram.sendVideo.mock.calls[0][2].protect_content).not.toBe(true);
+
+    // One restricted source must not lock every item in a mixed album.
+    const unrestricted = makeStory({ id: 3, noforwards: false });
+    expect(await sendActiveStories({ ...args, stories: [photo, unrestricted] })).toEqual([1, 3]);
+    expect(bot.telegram.sendMediaGroup).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.sendMediaGroup.mock.calls[0][2]?.protect_content).not.toBe(true);
+  });
+
   test('returns no IDs when media and fallback delivery both fail', async () => {
     const failedStory = makeStory({ id: 3, buffer: undefined, bufferSize: undefined });
     downloadStories.mockResolvedValue({

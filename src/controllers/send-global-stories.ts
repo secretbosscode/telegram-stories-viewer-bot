@@ -142,7 +142,6 @@ export async function sendGlobalStories({ stories, task, storyOwnersById }: Send
           const caption = single.caption ?? t(task.locale, 'global.label');
           const extra = {
             caption: caption.slice(0, 1024),
-            ...(single.noforwards ? { protect_content: true } : {}),
           };
           if (single.mediaType === 'photo') {
             await bot.telegram.sendPhoto(task.chatId, media, extra);
@@ -158,9 +157,6 @@ export async function sendGlobalStories({ stories, task, storyOwnersById }: Send
             type: x.mediaType,
             caption: x.caption ?? t(task.locale, 'global.label'),
           })),
-          album.some((x: MappedStoryItem) => x.noforwards)
-            ? { protect_content: true }
-            : undefined,
         );
       }
     } else {
