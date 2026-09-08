@@ -16,9 +16,12 @@ const recordTimeoutError = jest.fn();
 jest.mock('../src/config/timeout-monitor', () => ({ recordTimeoutError }));
 
 let probeBehaviour: 'hang' | 'ok' = 'hang';
+let startBehaviour: 'ok' | 'fail' = 'ok';
 class FakeTelegramClient {
   session: any = { save: () => '' };
-  async start() {}
+  async start() {
+    if (startBehaviour === 'fail') throw new Error('connect EHOSTUNREACH 149.154.175.60:80');
+  }
   async sendMessage() {}
   async disconnect() {}
   invoke() {
@@ -46,6 +49,31 @@ test('a probe that never answers is counted as a failure and marks the connectio
 });
 
 test('the connection is healthy again only after a probe succeeds', async () => {
+  probeBehaviour = 'ok';
+  await Userbot.runConnectionCheck();
+  expect(Userbot.isHealthy()).toBe(true);
+});
+
+test('a reconnect that fails fast is retried and counted on every probe until it succeeds', async () => {
+  // Probe stalls, and the reconnect it triggers fails immediately: the client
+  // is now gone. Previously the probe returned early forever in that state.
+  probeBehaviour = 'hang';
+  startBehaviour = 'fail';
+  await Userbot.runConnectionCheck();
+  expect(Userbot.isHealthy()).toBe(false);
+  const before = recordTimeoutError.mock.calls.length;
+
+  // Still down: each probe must attempt to re-establish the client and count
+  // the failure so the watchdog can reach its threshold.
+  await Userbot.runConnectionCheck();
+  expect(Userbot.isHealthy()).toBe(false);
+  expect(recordTimeoutError.mock.calls.length).toBeGreaterThan(before);
+  const last = String((recordTimeoutError.mock.calls.at(-1)?.[0] as Error)?.message);
+  expect(last).toMatch(/TIMEOUT/);
+  expect(last).toMatch(/EHOSTUNREACH/);
+
+  // Route comes back: the client is re-established and a clean probe restores health.
+  startBehaviour = 'ok';
   probeBehaviour = 'ok';
   await Userbot.runConnectionCheck();
   expect(Userbot.isHealthy()).toBe(true);

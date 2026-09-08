@@ -21,6 +21,17 @@ import {
 } from './env-config';
 import { handleHiddenStoryUpdate } from 'services/hidden-story-cache';
 
+/**
+ * The watchdog counts errors whose message mentions a timeout or a lost
+ * connection. Transport failures during a reconnect (EHOSTUNREACH,
+ * ECONNREFUSED, ...) are the same class of problem, so label them before
+ * recording.
+ */
+function asConnectionFailure(error: unknown, context: string): Error {
+  const message = (error as any)?.message ?? String(error);
+  return new Error(`[Userbot] ${context} failed (connection TIMEOUT class): ${message}`);
+}
+
 /** Races a promise against a timer; the timer never keeps the process alive. */
 function withTimeout<T>(promise: Promise<T>, ms: number, makeError: () => Error): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -158,11 +169,32 @@ export class Userbot {
       }
       return;
     }
-    if (!Userbot.client || Userbot.checking) return;
+    if (Userbot.checking) return;
     Userbot.checking = true;
     try {
+      if (!Userbot.client) {
+        // No client: a reconnect failed fast (e.g. client.start rejected with
+        // EHOSTUNREACH) or startup never completed. Nothing else will bring one
+        // up while the monitor loop is standing down on isHealthy(), so do it
+        // here, bounded, and count each failed attempt so the watchdog can
+        // still trip on an idle deployment.
+        try {
+          await withTimeout(
+            Userbot.getInstance(),
+            Userbot.RECONNECT_TIMEOUT_MS,
+            () => new Error(`[Userbot] Reconnect TIMEOUT after ${Math.round(Userbot.RECONNECT_TIMEOUT_MS / 1000)}s (no client)`),
+          );
+        } catch (err) {
+          console.error('[Userbot] Could not re-establish the client:', err);
+          Userbot.markUnhealthy();
+          recordTimeoutError(asConnectionFailure(err, 'Client re-establishment'));
+          return;
+        }
+      }
+      const client = Userbot.client;
+      if (!client) return;
       await withTimeout(
-        Userbot.client.invoke(new Api.updates.GetState()),
+        client.invoke(new Api.updates.GetState()),
         Userbot.PROBE_TIMEOUT_MS,
         () => new Error(`[Userbot] Connection probe TIMEOUT after ${Math.round(Userbot.PROBE_TIMEOUT_MS / 1000)}s`),
       );
@@ -184,7 +216,7 @@ export class Userbot {
         console.log('[Userbot] Reconnected after connection failure; awaiting a clean probe.');
       } catch (re) {
         console.error('[Userbot] Reconnection attempt failed:', re);
-        recordTimeoutError(re);
+        recordTimeoutError(asConnectionFailure(re, 'Reconnect'));
       }
     } finally {
       Userbot.checking = false;
