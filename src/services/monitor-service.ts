@@ -227,19 +227,79 @@ function isPhoneLabel(label: string | null | undefined): boolean {
   return typeof label === 'string' && label.startsWith('+');
 }
 
+/**
+ * Telegram (and gramJS) report a handle that no longer resolves with one of
+ * these. Only then is a lookup by account id a sensible retry; a timeout,
+ * flood wait or auth error must propagate rather than trigger a second
+ * request against an already struggling connection.
+ */
+export function isUsernameGoneError(error: unknown): boolean {
+  const code = String((error as any)?.errorMessage ?? '');
+  if (code === 'USERNAME_INVALID' || code === 'USERNAME_NOT_OCCUPIED') return true;
+  const message = String((error as any)?.message ?? error ?? '');
+  return (
+    /USERNAME_INVALID|USERNAME_NOT_OCCUPIED/.test(message) ||
+    /No user has ".*" as username/.test(message) ||
+    /Cannot find any entity corresponding to/.test(message) ||
+    /Could not find the input entity/.test(message)
+  );
+}
+
+/**
+ * A notice that can never be delivered (the subscriber blocked the bot,
+ * deleted their account, or the chat is gone) must not hold the stored label
+ * hostage; anything else is transient and worth retrying on the next refresh.
+ */
+function isPermanentDeliveryFailure(error: unknown): boolean {
+  const code = Number((error as any)?.response?.error_code ?? (error as any)?.code);
+  if (code === 403) return true;
+  const description = String(
+    (error as any)?.response?.description ?? (error as any)?.description ?? (error as any)?.message ?? '',
+  );
+  return /bot was blocked|user is deactivated|chat not found|bot can't initiate|PEER_ID_INVALID/i.test(
+    description,
+  );
+}
+
+/**
+ * Sends the notice first and persists the new label only once it went out,
+ * so a transient send failure leaves the stored username untouched and the
+ * next refresh (an hour later) observes the same difference and retries.
+ * Previously the label was cleared before sending, and a single failed send
+ * silenced the notice for good.
+ */
+async function persistUsernameAfterNotice(
+  monitor: MonitorRow,
+  newUsername: string | null,
+  notice: string | null,
+): Promise<void> {
+  if (notice && !hasBlockedBot(monitor.telegram_id)) {
+    try {
+      await bot.telegram.sendMessage(monitor.telegram_id, notice);
+    } catch (err) {
+      if (!isPermanentDeliveryFailure(err)) throw err;
+      console.warn(
+        `[Monitor] Username notice for ${formatMonitorTarget(monitor)} undeliverable; recording the change anyway:`,
+        (err as any)?.message ?? err,
+      );
+    }
+  }
+  updateMonitorUsername(monitor.id, newUsername);
+  monitor.target_username = newUsername;
+}
+
 async function notifyUsernameRemoved(monitor: MonitorRow): Promise<void> {
   const oldUsername = monitor.target_username;
-  updateMonitorUsername(monitor.id, null);
-  monitor.target_username = null;
-  if (!oldUsername) return;
+  if (!oldUsername) {
+    await persistUsernameAfterNotice(monitor, null, null);
+    return;
+  }
   const language = findUserById(monitor.telegram_id)?.language;
-  await bot.telegram.sendMessage(
-    monitor.telegram_id,
-    t(language, 'monitor.usernameRemoved', {
-      old: `@${oldUsername}`,
-      user: formatMonitorTarget(monitor),
-    }),
-  );
+  const notice = t(language, 'monitor.usernameRemoved', {
+    old: `@${oldUsername}`,
+    user: formatMonitorTarget({ ...monitor, target_username: null }),
+  });
+  await persistUsernameAfterNotice(monitor, null, notice);
 }
 
 /**
@@ -266,18 +326,17 @@ async function notifyUsernameChange(
   newUsername: string,
 ): Promise<void> {
   const oldUsername = monitor.target_username;
-  updateMonitorUsername(monitor.id, newUsername);
-  monitor.target_username = newUsername;
-  if (!oldUsername) return;
+  if (!oldUsername) {
+    await persistUsernameAfterNotice(monitor, newUsername, null);
+    return;
+  }
   const language = findUserById(monitor.telegram_id)?.language;
   const format = (username: string) => (username.startsWith('+') ? username : `@${username}`);
-  await bot.telegram.sendMessage(
-    monitor.telegram_id,
-    t(language, 'monitor.usernameChanged', {
-      old: format(oldUsername),
-      user: format(newUsername),
-    }),
-  );
+  const notice = t(language, 'monitor.usernameChanged', {
+    old: format(oldUsername),
+    user: format(newUsername),
+  });
+  await persistUsernameAfterNotice(monitor, newUsername, notice);
 }
 
 export async function addProfileMonitor(
@@ -501,12 +560,19 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
     }
 
     // Without an access hash the target is resolved by label. If the stored
-    // handle has been dropped that lookup fails, so fall back to the id.
+    // handle has been dropped that lookup fails with a username error, and
+    // only then is the id tried instead; other failures propagate as before.
     let entity: any;
     try {
       entity = await getEntityWithTempContact(monitor.target_username || monitor.target_id);
     } catch (lookupError) {
-      if (!monitor.target_username || isPhoneLabel(monitor.target_username)) throw lookupError;
+      if (
+        !monitor.target_username ||
+        isPhoneLabel(monitor.target_username) ||
+        !isUsernameGoneError(lookupError)
+      ) {
+        throw lookupError;
+      }
       entity = await getEntityWithTempContact(monitor.target_id);
     }
     const username = resolveUsername(entity);
