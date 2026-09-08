@@ -355,6 +355,8 @@ db.exec(`
     ON download_queue (status, enqueued_ts);
   CREATE INDEX IF NOT EXISTS download_queue_user_idx
     ON download_queue (telegram_id, target_username, status, processed_ts);
+  CREATE INDEX IF NOT EXISTS monitors_target_idx
+    ON monitors (target_id);
 `);
 
 // Track last /verify command per user
@@ -787,6 +789,21 @@ export function listMonitors(telegram_id: string): MonitorRow[] {
 
 export function listAllMonitors(): MonitorRow[] {
   return db.prepare(`SELECT * FROM monitors`).all() as MonitorRow[];
+}
+
+/**
+ * Any stored access hash for this account, from whichever subscriber's row
+ * has one. Indexed lookup so recovering many hash-less rows stays linear.
+ */
+export function findAccessHashForTarget(target_id: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT target_access_hash FROM monitors
+       WHERE target_id = ? AND target_access_hash IS NOT NULL AND target_access_hash != ''
+       LIMIT 1`,
+    )
+    .get(target_id) as { target_access_hash: string } | undefined;
+  return row?.target_access_hash ?? null;
 }
 
 export function getMonitor(id: number): MonitorRow | undefined {

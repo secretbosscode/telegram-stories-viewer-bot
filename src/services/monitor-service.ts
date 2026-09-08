@@ -19,6 +19,7 @@ import {
   markStorySent,
   listAllMonitors,
   hasBlockedBot,
+  findAccessHashForTarget,
   type MonitorRow,
 } from '../db';
 import {
@@ -306,6 +307,18 @@ async function persistUsernameAfterNotice(
   }
   updateMonitorUsername(monitor.id, newUsername);
   monitor.target_username = newUsername;
+}
+
+/**
+ * Telegram's answer that the (id, access hash) pair itself is bad, or our own
+ * "no user came back" marker. Only these justify treating a borrowed access
+ * hash as rejected; a timeout or flood wait must propagate unchanged.
+ */
+function isInvalidPeerError(error: unknown): boolean {
+  const code = String((error as any)?.errorMessage ?? '');
+  if (code === 'USER_ID_INVALID' || code === 'PEER_ID_INVALID') return true;
+  const message = String((error as any)?.message ?? error ?? '');
+  return /USER_ID_INVALID|PEER_ID_INVALID|returned no user/.test(message);
 }
 
 function isEmptyUser(user: any): boolean {
@@ -605,9 +618,15 @@ export async function forceCheckMonitors(): Promise<number> {
   return monitors.length;
 }
 
-export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void> {
+/**
+ * Reconciles the stored label and access hash with Telegram. Resolves to
+ * false only when the monitor was stopped because it can no longer be
+ * resolved at all; callers must then skip the story fetch and delivery for
+ * that row.
+ */
+export async function refreshMonitorUsername(monitor: MonitorRow): Promise<boolean> {
   const last = usernameRefreshTimes.get(monitor.id) || 0;
-  if (Date.now() - last < USERNAME_REFRESH_INTERVAL_MS) return;
+  if (Date.now() - last < USERNAME_REFRESH_INTERVAL_MS) return true;
   usernameRefreshTimes.set(monitor.id, Date.now());
 
   try {
@@ -617,10 +636,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
       // access hash (they were all obtained by this userbot, so it should be
       // valid here too). It is only persisted once Telegram has accepted it,
       // so a stale sibling value cannot poison an otherwise recoverable row.
-      const sibling = listAllMonitors().find(
-        (row) => row.target_id === monitor.target_id && row.target_access_hash,
-      );
-      borrowedHash = sibling?.target_access_hash ?? null;
+      borrowedHash = findAccessHashForTarget(monitor.target_id);
     }
     const accessHashInUse = monitor.target_access_hash || borrowedHash;
     // Only the probe itself is covered by borrowed-hash recovery. The
@@ -647,7 +663,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
         }
         probed = user;
       } catch (hashError) {
-        if (!borrowedHash) throw hashError;
+        if (!borrowedHash || !isInvalidPeerError(hashError)) throw hashError;
         console.warn(
           `[Monitor] Borrowed access hash for ${formatMonitorTarget(monitor)} was rejected; resolving by label instead:`,
           (hashError as any)?.message ?? hashError,
@@ -663,7 +679,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
         monitor.target_access_hash = accessHash;
       }
       await applyUsernameObservation(monitor, resolveUsername(probed, monitor.target_username));
-      return;
+      return true;
     }
 
     // Without an access hash the target is resolved by label. If the stored
@@ -689,7 +705,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
         // session keeps no entity cache), and every story request for this
         // row would fail the same way, so stop it with an honest notice.
         await stopUnresolvableMonitor(monitor);
-        return;
+        return false;
       }
     }
     const username = resolveUsername(entity, monitor.target_username);
@@ -713,6 +729,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
       error,
     );
   }
+  return true;
 }
 
 function storyKey(story: any): string {
@@ -996,10 +1013,16 @@ async function checkTargetGroup(targetId: string, group: MonitorRow[]): Promise<
     // which can hang just like a story fetch.
     await withDeadline(
       (async () => {
-        for (const monitor of group) await refreshMonitorUsername(monitor);
-        const lead = group.find((monitor) => monitor.target_access_hash) ?? group[0];
-        const snapshot = await fetchTargetSnapshot(lead, photoCheckDue(targetId));
+        const remaining: MonitorRow[] = [];
         for (const monitor of group) {
+          if (await refreshMonitorUsername(monitor)) remaining.push(monitor);
+        }
+        // A monitor stopped during the refresh must not be fetched for or
+        // delivered to: its rows are gone and its peer is unresolvable.
+        if (!remaining.length) return;
+        const lead = remaining.find((monitor) => monitor.target_access_hash) ?? remaining[0];
+        const snapshot = await fetchTargetSnapshot(lead, photoCheckDue(targetId));
+        for (const monitor of remaining) {
           try {
             await deliverBounded(monitor, snapshot, label);
           } catch (error) {
@@ -1040,7 +1063,7 @@ export async function checkSingleMonitor(
     );
     await withDeadline(
       (async () => {
-        await refreshMonitorUsername(monitor);
+        if (!(await refreshMonitorUsername(monitor))) return;
         const label = formatMonitorTarget(monitor);
         const snapshot = await fetchTargetSnapshot(monitor, checkPhoto);
         await deliverBounded(monitor, snapshot, label);

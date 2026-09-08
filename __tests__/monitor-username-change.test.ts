@@ -421,3 +421,45 @@ test('a notice failure after a borrowed hash was accepted keeps the hash and doe
   removeMonitor('other', '1600');
   removeMonitor('tester', '1600');
 });
+
+test('a transient failure while probing with a borrowed hash propagates and keeps the row', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  addMonitor('other', '1700', 'flap', '3333333333', null);
+  const without = addMonitor('tester', '1700', 'flap', null, null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) throw new Error('TIMEOUT');
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  lookup.mockReset();
+  (bot.telegram.sendMessage as jest.Mock<any>).mockClear();
+
+  expect(await refreshMonitorUsername(without)).toBe(true);
+
+  const kept = getMonitor(without.id)!;
+  expect(kept.target_username).toBe('flap');
+  expect(kept.target_access_hash).toBeNull();
+  expect(lookup).not.toHaveBeenCalled();
+  expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
+
+  removeMonitor('other', '1700');
+  removeMonitor('tester', '1700');
+});
+
+test('a monitor stopped during the refresh is not fetched for or delivered to', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  const row = addMonitor('tester', '1800', 'gonegone', null, null);
+  const invoke = jest.fn(async () => ({ stories: { stories: [] } }));
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  (bot.telegram.sendMessage as jest.Mock<any>).mockClear();
+  lookup.mockReset();
+  lookup
+    .mockRejectedValueOnce(new Error('No user has "gonegone" as username'))
+    .mockRejectedValueOnce(new Error('Could not find the input entity for {"userId":"1800"}.'));
+
+  await checkSingleMonitor(row.id);
+
+  expect(getMonitor(row.id)).toBeUndefined();
+  expect(invoke).not.toHaveBeenCalled();
+  expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
+});
