@@ -5,6 +5,15 @@ import bigInt, { BigInteger } from 'big-integer';
 
 type EntityResult = Api.TypeUser | Api.TypeChat;
 
+/** gramJS's own "nothing matches this id" answers from getEntity/getInputEntity. */
+export function isEntityNotFoundError(err: unknown): boolean {
+  const message = String((err as any)?.message ?? err ?? '');
+  return (
+    /Could not find the input entity/.test(message) ||
+    /Cannot find any entity corresponding to/.test(message)
+  );
+}
+
 function isPhoneNotOccupiedError(err: unknown): boolean {
   return Boolean(
     err &&
@@ -146,8 +155,13 @@ export async function getEntityWithTempContact(input: string): Promise<EntityRes
         // Must be awaited inside the try: without it the rejection escapes and
         // the username fallback below becomes unreachable.
         return await client.getEntity(bigInt(input));
-      } catch {
-        // fall back to treating as username below
+      } catch (err) {
+        // Only a definite "no such entity" answer falls through to the
+        // username form. A timeout, flood wait or disconnected client must
+        // surface as itself: callers treat a username-not-found error as
+        // proof that the account is gone, and a transient failure disguised
+        // as one would make them give up on a reachable account.
+        if (!isEntityNotFoundError(err)) throw err;
       }
     }
     return client.getEntity(input);

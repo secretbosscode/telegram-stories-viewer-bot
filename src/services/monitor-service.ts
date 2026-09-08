@@ -623,6 +623,11 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
       borrowedHash = sibling?.target_access_hash ?? null;
     }
     const accessHashInUse = monitor.target_access_hash || borrowedHash;
+    // Only the probe itself is covered by borrowed-hash recovery. The
+    // username reconciliation (which may send a notice) runs afterwards, so
+    // a transient send failure is handled by the outer catch as before and
+    // is never mistaken for a rejected access hash.
+    let probed: any = null;
     if (accessHashInUse) {
       try {
         const client = await Userbot.getInstance();
@@ -640,16 +645,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
         if (!user || isEmptyUser(user)) {
           throw new Error(`[Monitor] users.GetUsers returned no user for ${monitor.target_id}`);
         }
-        const username = resolveUsername(user, monitor.target_username);
-        const accessHash = (user as any).accessHash
-          ? String((user as any).accessHash)
-          : borrowedHash;
-        await applyUsernameObservation(monitor, username);
-        if (accessHash && accessHash !== monitor.target_access_hash) {
-          updateMonitorAccessHash(monitor.id, accessHash);
-          monitor.target_access_hash = accessHash;
-        }
-        return;
+        probed = user;
       } catch (hashError) {
         if (!borrowedHash) throw hashError;
         console.warn(
@@ -657,6 +653,17 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
           (hashError as any)?.message ?? hashError,
         );
       }
+    }
+    if (probed) {
+      // The hash has just been accepted by Telegram: persist it first so the
+      // row is resolvable even if the notice below fails and is retried.
+      const accessHash = probed.accessHash ? String(probed.accessHash) : borrowedHash;
+      if (accessHash && accessHash !== monitor.target_access_hash) {
+        updateMonitorAccessHash(monitor.id, accessHash);
+        monitor.target_access_hash = accessHash;
+      }
+      await applyUsernameObservation(monitor, resolveUsername(probed, monitor.target_username));
+      return;
     }
 
     // Without an access hash the target is resolved by label. If the stored

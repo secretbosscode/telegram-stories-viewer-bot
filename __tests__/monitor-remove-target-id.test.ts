@@ -25,6 +25,9 @@ describe('monitor removal target resolution', () => {
     const success = handler.indexOf("t(locale, 'stars.monitorStopped'");
 
     expect(handler).toContain('if (!existing)');
+    // An alias that is not the stored handle goes through the shared removal
+    // path, which resolves it to the account id, before "not found" is sent.
+    expect(handler).toContain('removeProfileMonitor(userId, target)');
     expect(notFound).toBeGreaterThan(-1);
     expect(removal).toBeGreaterThan(notFound);
     expect(success).toBeGreaterThan(removal);

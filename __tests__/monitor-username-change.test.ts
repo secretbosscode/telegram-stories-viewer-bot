@@ -393,3 +393,31 @@ test('a borrowed access hash that Telegram rejects is not persisted and the labe
   removeMonitor('other', '1500');
   removeMonitor('tester', '1500');
 });
+
+test('a notice failure after a borrowed hash was accepted keeps the hash and does not fall back', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  addMonitor('other', '1600', 'goner', '2222222222', null);
+  const without = addMonitor('tester', '1600', 'goner', null, null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(1600), accessHash: bigInt(2222222222) }]; // username removed
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  lookup.mockReset();
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  send.mockRejectedValueOnce(new Error('ETIMEDOUT'));
+
+  await refreshMonitorUsername(without);
+
+  const updated = getMonitor(without.id)!;
+  expect(updated.target_access_hash).toBe('2222222222');
+  expect(updated.target_username).toBe('goner'); // retained for the retry
+  expect(lookup).not.toHaveBeenCalled();
+  expect(send).toHaveBeenCalledTimes(1);
+
+  removeMonitor('other', '1600');
+  removeMonitor('tester', '1600');
+});
