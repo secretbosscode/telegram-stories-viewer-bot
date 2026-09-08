@@ -3,8 +3,9 @@ import { jest } from '@jest/globals';
 // Must be set before the module under test is imported.
 process.env.MONITOR_TARGET_DEADLINE_MS = '60';
 
+const isHealthy = jest.fn(() => true);
 jest.mock('../src/config/userbot', () => ({
-  Userbot: { getInstance: jest.fn() },
+  Userbot: { getInstance: jest.fn(), isHealthy },
 }));
 jest.mock('../src/index', () => ({
   bot: { telegram: { sendMessage: jest.fn(), sendPhoto: jest.fn(), sendVideo: jest.fn() } },
@@ -17,7 +18,7 @@ jest.mock('../src/services/premium-service', () => ({ isUserPremium: jest.fn(() 
 
 import { Userbot } from '../src/config/userbot';
 import { addMonitor, removeMonitor, getMonitor } from '../src/db';
-import { forceCheckMonitors, stopMonitorLoop } from '../src/services/monitor-service';
+import { forceCheckMonitors, startMonitorLoop, stopMonitorLoop } from '../src/services/monitor-service';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
 
@@ -135,5 +136,29 @@ test('an abandoned delivery is not started again while it is still in flight', a
     (sendActiveStories as jest.Mock).mockReset();
     (sendActiveStories as jest.Mock<any>).mockResolvedValue([]);
     removeMonitor('deadline-user', '111005');
+  }
+});
+
+test('a cycle is skipped and retried soon while the userbot connection is unhealthy', async () => {
+  const row = addMonitor('unhealthy-user', '111006', 'offline', '999', null);
+  const invoke = jest.fn(async () => ({ stories: { stories: [] } }));
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const { getNextMonitorCheck } = require('../src/services/monitor-service');
+  isHealthy.mockReturnValue(false);
+  try {
+    // A stopped loop never re-arms (by design), so run this against a live
+    // scheduler: start it without an immediate cycle, then force one.
+    startMonitorLoop(false);
+    await forceCheckMonitors();
+    expect(invoke).not.toHaveBeenCalled();
+    const next = getNextMonitorCheck();
+    expect(next).not.toBeNull();
+    // Retried in about ten minutes, not the usual hour.
+    expect(next! - Date.now()).toBeLessThanOrEqual(10 * 60 * 1000 + 1000);
+    expect(next! - Date.now()).toBeGreaterThan(9 * 60 * 1000);
+    expect(row.id).toBeGreaterThan(0);
+  } finally {
+    isHealthy.mockReturnValue(true);
+    removeMonitor('unhealthy-user', '111006');
   }
 });

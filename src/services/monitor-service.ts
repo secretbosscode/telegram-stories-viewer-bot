@@ -151,7 +151,18 @@ let stopGeneration = 0;
 // Guards against a scheduled cycle overlapping a manual /forcemonitor run.
 let monitorRunning = false;
 
-function scheduleNextMonitorCheck(startedAt?: number) {
+// When the userbot connection is known to be down, a cycle is skipped and
+// retried after this delay rather than walking every target into its deadline
+// or waiting a full hour.
+const UNHEALTHY_RETRY_MS = 10 * 60 * 1000;
+
+// Some test doubles of the Userbot expose only getInstance; treat them as healthy.
+function userbotHealthy(): boolean {
+  const probe = (Userbot as any)?.isHealthy;
+  return typeof probe === 'function' ? Boolean(probe.call(Userbot)) : true;
+}
+
+function scheduleNextMonitorCheck(startedAt?: number, overrideDelayMs?: number) {
   if (monitorTimer) {
     clearTimeout(monitorTimer);
     monitorTimer = null;
@@ -165,7 +176,7 @@ function scheduleNextMonitorCheck(startedAt?: number) {
   // Scheduling from completion made the interval drift by the cycle duration
   // every hour (05:34 -> 06:35 -> 07:36 in production logs).
   const dueAt = (startedAt ?? Date.now()) + intervalMs;
-  const delayMs = Math.max(0, dueAt - Date.now());
+  const delayMs = overrideDelayMs ?? Math.max(0, dueAt - Date.now());
   nextMonitorCheckAt = Date.now() + delayMs;
   monitorTimer = setTimeout(async () => {
     try {
@@ -308,6 +319,15 @@ export async function forceCheckMonitors(): Promise<number> {
     clearTimeout(monitorTimer);
     monitorTimer = null;
   }
+  if (!userbotHealthy()) {
+    console.warn(
+      `[Monitor] Userbot connection is unhealthy; skipping this cycle and retrying in ${UNHEALTHY_RETRY_MS / 60000} minutes.`,
+    );
+    monitorRunning = false;
+    scheduleNextMonitorCheck(undefined, UNHEALTHY_RETRY_MS);
+    return 0;
+  }
+  let abortedUnhealthy = false;
   let monitors = listAllMonitors();
   const premiumCache = new Map<string, boolean>();
   const reconciledUsers = new Set<string>();
@@ -360,6 +380,11 @@ export async function forceCheckMonitors(): Promise<number> {
         console.log('[Monitor] Loop stopped; abandoning the rest of this cycle.');
         break;
       }
+      if (!userbotHealthy()) {
+        console.warn('[Monitor] Userbot connection became unhealthy; abandoning the rest of this cycle.');
+        abortedUnhealthy = true;
+        break;
+      }
       try {
         // Space out targets. Without this the loop issued every request
         // back-to-back and reliably tripped Telegram's per-method flood limits.
@@ -383,7 +408,7 @@ export async function forceCheckMonitors(): Promise<number> {
     }
   } finally {
     monitorRunning = false;
-    scheduleNextMonitorCheck(startedAt);
+    scheduleNextMonitorCheck(startedAt, abortedUnhealthy ? UNHEALTHY_RETRY_MS : undefined);
   }
   return monitors.length;
 }
