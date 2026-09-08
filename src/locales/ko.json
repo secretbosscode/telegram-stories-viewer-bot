@@ -60,6 +60,7 @@
   "monitor.already": "⚠️ This profile is already being monitored.",
   "monitor.started": "✅ 이제 {{user}}의 활성 스토리와 프로필 사진 변경을 모니터링합니다. {{remaining}}",
   "monitor.usernameRemoved": "✏️ {{old}} removed their username. Monitoring continues by account id ({{user}}).",
+  "monitor.unresolvable": "⚠️ {{old}} removed their username and this monitor can no longer reach the account. Monitoring stopped.",
   "monitor.usernameChanged": "✏️ {{old}}의 사용자명이 {{user}}로 변경되었습니다.",
   "monitor.none": "You are not monitoring any profiles.",
   "monitor.current": "👀 Currently monitoring:\n{{list}}",

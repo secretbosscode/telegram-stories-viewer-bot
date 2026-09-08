@@ -320,7 +320,7 @@ test('a row without an access hash borrows one from a sibling monitor of the sam
   void withHash;
 });
 
-test('without an access hash, a handle that is gone and an unresolvable id still records the removal', async () => {
+test('without an access hash, a handle that is gone and an unresolvable id stops the monitor with a notice', async () => {
   const lookup = getEntityWithTempContact as jest.Mock<any>;
   const row = addMonitor('tester', '1300', 'vanished', null, null);
   (Userbot.getInstance as any).mockResolvedValue({ invoke: jest.fn() } as any);
@@ -334,8 +334,62 @@ test('without an access hash, a handle that is gone and an unresolvable id still
   await refreshMonitorUsername(row);
 
   expect(lookup).toHaveBeenCalledTimes(2);
-  expect(getMonitor(row.id)!.target_username).toBeNull();
   expect(send).toHaveBeenCalledWith('tester', 'translated');
+  expect(getMonitor(row.id)).toBeUndefined();
+});
 
-  removeMonitor('tester', '1300');
+test('a transient failure while stopping an unresolvable monitor keeps the row for a retry', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  const row = addMonitor('tester', '1350', 'vanished2', null, null);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke: jest.fn() } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  send.mockRejectedValueOnce(new Error('ETIMEDOUT'));
+  lookup.mockReset();
+  lookup
+    .mockRejectedValueOnce(new Error('No user has "vanished2" as username'))
+    .mockRejectedValueOnce(new Error('Could not find the input entity for {"userId":"1350"}.'));
+
+  await refreshMonitorUsername(row);
+
+  expect(getMonitor(row.id)).toBeDefined();
+  expect(getMonitor(row.id)!.target_username).toBe('vanished2');
+  removeMonitor('tester', '1350');
+});
+
+test('a transient lookup failure while removing by alias propagates instead of reading as not found', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  const row = addMonitor('tester', '1400', 'kept', '444', null);
+  lookup.mockReset();
+  lookup.mockRejectedValue(new Error('TIMEOUT'));
+
+  await expect(removeProfileMonitor('tester', 'somealias')).rejects.toThrow('TIMEOUT');
+  expect(getMonitor(row.id)).toBeDefined();
+  removeMonitor('tester', '1400');
+});
+
+test('a borrowed access hash that Telegram rejects is not persisted and the label is used instead', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  addMonitor('other', '1500', 'shared2', '1234567890', null);
+  const without = addMonitor('tester', '1500', 'shared2', null, null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) throw new Error('USER_ID_INVALID');
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  lookup.mockReset();
+  lookup.mockResolvedValue({ id: bigInt(1500), accessHash: bigInt(555), username: 'shared2' });
+  (bot.telegram.sendMessage as jest.Mock<any>).mockClear();
+
+  await refreshMonitorUsername(without);
+
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(lookup).toHaveBeenCalledWith('shared2');
+  const updated = getMonitor(without.id)!;
+  expect(updated.target_access_hash).toBe('555');
+  expect(updated.target_username).toBe('shared2');
+  expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
+
+  removeMonitor('other', '1500');
+  removeMonitor('tester', '1500');
 });

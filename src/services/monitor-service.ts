@@ -308,6 +308,38 @@ async function persistUsernameAfterNotice(
   monitor.target_username = newUsername;
 }
 
+function isEmptyUser(user: any): boolean {
+  return user instanceof Api.UserEmpty || user?.className === 'UserEmpty';
+}
+
+/**
+ * The stored handle is gone, no access hash is known, and Telegram cannot
+ * resolve the bare id either: nothing this row could ever fetch again. Say so
+ * and free the slot rather than claiming that monitoring continues. The
+ * notice goes first; a transient send failure leaves the row for the next
+ * refresh to retry, a permanent one (blocked bot, dead chat) does not.
+ */
+async function stopUnresolvableMonitor(monitor: MonitorRow): Promise<void> {
+  console.warn(
+    `[Monitor] ${formatMonitorTarget(monitor)} no longer resolves and no access hash is stored; stopping this monitor.`,
+  );
+  if (!hasBlockedBot(monitor.telegram_id)) {
+    const language = findUserById(monitor.telegram_id)?.language;
+    try {
+      await bot.telegram.sendMessage(
+        monitor.telegram_id,
+        t(language, 'monitor.unresolvable', {
+          old: `@${monitor.target_username}`,
+          user: monitor.target_id,
+        }),
+      );
+    } catch (err) {
+      if (!isPermanentDeliveryFailure(err)) throw err;
+    }
+  }
+  await removeProfileMonitor(monitor.telegram_id, monitor.target_id);
+}
+
 async function notifyUsernameRemoved(monitor: MonitorRow): Promise<void> {
   const oldUsername = monitor.target_username;
   if (!oldUsername) {
@@ -399,12 +431,15 @@ export async function removeProfileMonitor(
   if (!existing && wanted && !/^\d+$/.test(wanted)) {
     // The subscriber may use another of the account's handles than the one
     // stored (collectible alias vs. main handle). Resolve it to the account
-    // id before giving up; a failed lookup simply means "not found".
+    // id before giving up. Only a username-not-found answer means "not
+    // found"; a timeout, flood wait or disconnected userbot propagates so the
+    // caller can report an error instead of a misleading "not found".
     try {
       const entity: any = await getEntityWithTempContact(target.replace(/^@/, ''));
       const targetId = String(entity?.id ?? '');
       existing = listMonitors(telegramId).find((monitor) => monitor.target_id === targetId);
-    } catch {
+    } catch (lookupError) {
+      if (!isUsernameGoneError(lookupError)) throw lookupError;
       existing = undefined;
     }
   }
@@ -576,44 +611,52 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
   usernameRefreshTimes.set(monitor.id, Date.now());
 
   try {
+    let borrowedHash: string | null = null;
     if (!monitor.target_access_hash) {
       // Another subscriber's row for the same account may already carry the
-      // access hash (they were all obtained by this userbot, so it is valid
-      // here too). Borrowing it turns an id-only row, which Telegram cannot
-      // resolve after a restart, back into a resolvable peer.
+      // access hash (they were all obtained by this userbot, so it should be
+      // valid here too). It is only persisted once Telegram has accepted it,
+      // so a stale sibling value cannot poison an otherwise recoverable row.
       const sibling = listAllMonitors().find(
         (row) => row.target_id === monitor.target_id && row.target_access_hash,
       );
-      if (sibling?.target_access_hash) {
-        updateMonitorAccessHash(monitor.id, sibling.target_access_hash);
-        monitor.target_access_hash = sibling.target_access_hash;
-      }
+      borrowedHash = sibling?.target_access_hash ?? null;
     }
-    if (monitor.target_access_hash) {
-      const client = await Userbot.getInstance();
-      const response = await client.invoke(
-        new Api.users.GetUsers({
-          id: [
-            new Api.InputUser({
-              userId: bigInt(monitor.target_id),
-              accessHash: bigInt(monitor.target_access_hash),
-            }),
-          ],
-        }),
-      );
-      const user = Array.isArray(response) ? response[0] : response;
-      if (user) {
+    const accessHashInUse = monitor.target_access_hash || borrowedHash;
+    if (accessHashInUse) {
+      try {
+        const client = await Userbot.getInstance();
+        const response = await client.invoke(
+          new Api.users.GetUsers({
+            id: [
+              new Api.InputUser({
+                userId: bigInt(monitor.target_id),
+                accessHash: bigInt(accessHashInUse),
+              }),
+            ],
+          }),
+        );
+        const user = Array.isArray(response) ? response[0] : response;
+        if (!user || isEmptyUser(user)) {
+          throw new Error(`[Monitor] users.GetUsers returned no user for ${monitor.target_id}`);
+        }
         const username = resolveUsername(user, monitor.target_username);
         const accessHash = (user as any).accessHash
           ? String((user as any).accessHash)
-          : null;
+          : borrowedHash;
         await applyUsernameObservation(monitor, username);
         if (accessHash && accessHash !== monitor.target_access_hash) {
           updateMonitorAccessHash(monitor.id, accessHash);
           monitor.target_access_hash = accessHash;
         }
+        return;
+      } catch (hashError) {
+        if (!borrowedHash) throw hashError;
+        console.warn(
+          `[Monitor] Borrowed access hash for ${formatMonitorTarget(monitor)} was rejected; resolving by label instead:`,
+          (hashError as any)?.message ?? hashError,
+        );
       }
-      return;
     }
 
     // Without an access hash the target is resolved by label. If the stored
@@ -636,12 +679,9 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
         if (!isUsernameGoneError(idError)) throw idError;
         // Neither the handle nor the bare id resolves. Without an access hash
         // Telegram cannot look the account up after a restart (the string
-        // session keeps no entity cache), so record the removal now rather
-        // than showing a dead handle until a hash turns up.
-        console.warn(
-          `[Monitor] ${formatMonitorTarget(monitor)} no longer resolves and no access hash is stored; recording the removed username.`,
-        );
-        await notifyUsernameRemoved(monitor);
+        // session keeps no entity cache), and every story request for this
+        // row would fail the same way, so stop it with an honest notice.
+        await stopUnresolvableMonitor(monitor);
         return;
       }
     }
