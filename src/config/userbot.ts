@@ -21,12 +21,76 @@ import {
 } from './env-config';
 import { handleHiddenStoryUpdate } from 'services/hidden-story-cache';
 
+/**
+ * The watchdog counts errors whose message mentions a timeout or a lost
+ * connection. Transport failures during a reconnect (EHOSTUNREACH,
+ * ECONNREFUSED, ...) are the same class of problem, so label them before
+ * recording.
+ */
+function asConnectionFailure(error: unknown, context: string): Error {
+  const message = (error as any)?.message ?? String(error);
+  return new Error(`[Userbot] ${context} failed (connection TIMEOUT class): ${message}`);
+}
+
+/** Races a promise against a timer; the timer never keeps the process alive. */
+function withTimeout<T>(promise: Promise<T>, ms: number, makeError: () => Error): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(makeError()), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, deadline]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
 export class Userbot {
   private static client: TelegramClient | null = null;
   private static initPromise: Promise<TelegramClient> | null = null;
   private static reconnectPromise: Promise<TelegramClient> | null = null;
+  private static reconnectStartedAt: number | null = null;
   private static monitor: NodeJS.Timeout | null = null;
+  private static checking = false;
+  private static healthy = true;
+  private static unhealthySince: number | null = null;
   private static readonly CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
+  // A health probe that has not answered in this long counts as a failure.
+  // Without a bound the probe request simply queued behind a dead connection
+  // and never failed, so the watchdog could not trip during a network outage
+  // (Aug 29 and Sep 8: host-unreachable to the main data centre).
+  private static readonly PROBE_TIMEOUT_MS =
+    Number(process.env.USERBOT_PROBE_TIMEOUT_MS) || 30 * 1000;
+  // A reconnect that has not completed in this long counts as a failure on
+  // every subsequent probe tick, so five minutes of a wedged reconnect exits
+  // the process and the container restart policy brings it back clean.
+  private static readonly RECONNECT_TIMEOUT_MS =
+    Number(process.env.USERBOT_RECONNECT_TIMEOUT_MS) || 2 * 60 * 1000;
+
+  /**
+   * False from the first failed probe until a probe succeeds again. Callers
+   * that would otherwise walk every request into a timeout (the monitor loop)
+   * use this to stand down until the connection is back.
+   */
+  public static isHealthy(): boolean {
+    return Userbot.healthy;
+  }
+
+  private static markUnhealthy(): void {
+    if (Userbot.healthy) {
+      Userbot.unhealthySince = Date.now();
+      console.warn('[Userbot] Connection marked unhealthy.');
+    }
+    Userbot.healthy = false;
+  }
+
+  private static markHealthy(): void {
+    if (!Userbot.healthy) {
+      const downFor = Userbot.unhealthySince ? Math.round((Date.now() - Userbot.unhealthySince) / 1000) : 0;
+      console.log(`[Userbot] Connection healthy again after ${downFor}s.`);
+    }
+    Userbot.healthy = true;
+    Userbot.unhealthySince = null;
+  }
 
   /**
    * Force reinitialization of the Telegram client. Useful when the session
@@ -46,6 +110,7 @@ export class Userbot {
 
   public static async reconnect(reason?: string): Promise<TelegramClient> {
     if (Userbot.reconnectPromise) return Userbot.reconnectPromise;
+    Userbot.reconnectStartedAt = Date.now();
     Userbot.reconnectPromise = (async () => {
       const label = reason ? ` (${reason})` : '';
       console.warn(`[Userbot] Reconnecting${label}...`);
@@ -56,6 +121,7 @@ export class Userbot {
       return await Userbot.reconnectPromise;
     } finally {
       Userbot.reconnectPromise = null;
+      Userbot.reconnectStartedAt = null;
     }
   }
 
@@ -84,23 +150,76 @@ export class Userbot {
     return Userbot.initPromise;
   }
 
+  /** Runs one health probe now. Exposed for tests and explicit checks. */
+  public static runConnectionCheck(): Promise<void> {
+    return Userbot.checkConnection();
+  }
+
   private static async checkConnection(): Promise<void> {
-    if (!Userbot.client) return;
+    // A reconnect that has been in flight too long is itself a failure. The
+    // client is null meanwhile, so without this branch the probe skipped every
+    // tick and the watchdog could never trip while a reconnect was wedged.
+    if (Userbot.reconnectPromise && Userbot.reconnectStartedAt) {
+      const inFlightMs = Date.now() - Userbot.reconnectStartedAt;
+      if (inFlightMs > Userbot.RECONNECT_TIMEOUT_MS) {
+        Userbot.markUnhealthy();
+        recordTimeoutError(
+          new Error(`[Userbot] Reconnect TIMEOUT: still in flight after ${Math.round(inFlightMs / 1000)}s`),
+        );
+      }
+      return;
+    }
+    if (Userbot.checking) return;
+    Userbot.checking = true;
     try {
-      await Userbot.client.invoke(new Api.updates.GetState());
+      if (!Userbot.client) {
+        // No client: a reconnect failed fast (e.g. client.start rejected with
+        // EHOSTUNREACH) or startup never completed. Nothing else will bring one
+        // up while the monitor loop is standing down on isHealthy(), so do it
+        // here, bounded, and count each failed attempt so the watchdog can
+        // still trip on an idle deployment.
+        try {
+          await withTimeout(
+            Userbot.getInstance(),
+            Userbot.RECONNECT_TIMEOUT_MS,
+            () => new Error(`[Userbot] Reconnect TIMEOUT after ${Math.round(Userbot.RECONNECT_TIMEOUT_MS / 1000)}s (no client)`),
+          );
+        } catch (err) {
+          console.error('[Userbot] Could not re-establish the client:', err);
+          Userbot.markUnhealthy();
+          recordTimeoutError(asConnectionFailure(err, 'Client re-establishment'));
+          return;
+        }
+      }
+      const client = Userbot.client;
+      if (!client) return;
+      await withTimeout(
+        client.invoke(new Api.updates.GetState()),
+        Userbot.PROBE_TIMEOUT_MS,
+        () => new Error(`[Userbot] Connection probe TIMEOUT after ${Math.round(Userbot.PROBE_TIMEOUT_MS / 1000)}s`),
+      );
+      Userbot.markHealthy();
     } catch (err) {
       if (isNoWorkersError(err)) {
         console.warn('[Userbot] Connection check: No workers running. Retrying later.');
         return;
       }
       console.error('[Userbot] Connection check failed:', err);
+      Userbot.markUnhealthy();
       recordTimeoutError(err);
       try {
-        await Userbot.reconnect('connection check');
-        console.log('[Userbot] Reconnected after connection failure.');
+        await withTimeout(
+          Userbot.reconnect('connection check'),
+          Userbot.RECONNECT_TIMEOUT_MS,
+          () => new Error(`[Userbot] Reconnect TIMEOUT after ${Math.round(Userbot.RECONNECT_TIMEOUT_MS / 1000)}s`),
+        );
+        console.log('[Userbot] Reconnected after connection failure; awaiting a clean probe.');
       } catch (re) {
         console.error('[Userbot] Reconnection attempt failed:', re);
+        recordTimeoutError(asConnectionFailure(re, 'Reconnect'));
       }
+    } finally {
+      Userbot.checking = false;
     }
   }
 
