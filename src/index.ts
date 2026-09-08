@@ -766,7 +766,10 @@ bot.command('unmonitor', async (ctx) => {
   }
   const inputUn = args[0];
   const username = inputUn.replace(/^@/, '');
-  await removeProfileMonitor(userId, username);
+  const removed = await removeProfileMonitor(userId, username);
+  if (!removed) {
+    return ctx.reply(t(locale, 'stories.userNotFound', { user: inputUn }));
+  }
   await ctx.reply(t(locale, 'monitor.stopped', { user: inputUn }));
 });
 

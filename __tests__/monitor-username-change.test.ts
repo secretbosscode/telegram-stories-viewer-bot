@@ -29,8 +29,10 @@ import { Userbot } from '../src/config/userbot';
 import { getEntityWithTempContact } from '../src/lib';
 import { addMonitor, getMonitor, removeMonitor } from '../src/db';
 import {
+  addProfileMonitor,
   checkSingleMonitor,
   refreshMonitorUsername,
+  removeProfileMonitor,
   listUserMonitors,
 } from '../src/services/monitor-service';
 import { bot } from '../src/index';
@@ -243,4 +245,97 @@ test('without an access hash the id fallback only runs for username-not-found er
   expect(updated.target_access_hash).toBe('222');
   expect(bot.telegram.sendMessage).toHaveBeenCalledWith('tester', 'translated');
   removeMonitor('tester', '900');
+});
+
+test('a monitor added by a collectible alias keeps that alias and stays removable by it', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  const account = {
+    id: bigInt(1000),
+    accessHash: bigInt(111),
+    usernames: [
+      { username: 'Collectible', active: true, editable: false },
+      { username: 'mainhandle', active: true, editable: true },
+    ],
+  };
+  lookup.mockReset();
+  lookup.mockResolvedValue(account);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+
+  const row = await addProfileMonitor('tester', 'collectible');
+  expect(row!.target_username).toBe('Collectible');
+
+  // The hourly refresh sees the same handles and must not announce a change.
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) return [account];
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  await refreshMonitorUsername(getMonitor(row!.id)!);
+  expect(getMonitor(row!.id)!.target_username).toBe('Collectible');
+  expect(send).not.toHaveBeenCalled();
+
+  // Removal is case-insensitive on the stored alias.
+  expect(await removeProfileMonitor('tester', 'COLLECTIBLE')).toBe(true);
+  expect(getMonitor(row!.id)).toBeUndefined();
+});
+
+test('removing by another handle of the same account resolves it to the target id', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  const row = addMonitor('tester', '1100', 'storedhandle', '222', null);
+
+  lookup.mockReset();
+  lookup.mockRejectedValue(new Error('No user has "nobody" as username'));
+  expect(await removeProfileMonitor('tester', 'nobody')).toBe(false);
+  expect(getMonitor(row.id)).toBeDefined();
+
+  lookup.mockReset();
+  lookup.mockResolvedValue({ id: bigInt(1100), accessHash: bigInt(222) });
+  expect(await removeProfileMonitor('tester', '@otheralias')).toBe(true);
+  expect(lookup).toHaveBeenCalledWith('otheralias');
+  expect(getMonitor(row.id)).toBeUndefined();
+});
+
+test('a row without an access hash borrows one from a sibling monitor of the same account', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  lookup.mockReset();
+  const withHash = addMonitor('other', '1200', 'shared', '333', null);
+  const without = addMonitor('tester', '1200', 'shared', null, null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(1200), accessHash: bigInt(333), username: 'shared' }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  await refreshMonitorUsername(without);
+
+  expect(getMonitor(without.id)!.target_access_hash).toBe('333');
+  expect(invoke).toHaveBeenCalled();
+  expect(lookup).not.toHaveBeenCalled();
+
+  removeMonitor('other', '1200');
+  removeMonitor('tester', '1200');
+  void withHash;
+});
+
+test('without an access hash, a handle that is gone and an unresolvable id still records the removal', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  const row = addMonitor('tester', '1300', 'vanished', null, null);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke: jest.fn() } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  lookup.mockReset();
+  lookup
+    .mockRejectedValueOnce(new Error('No user has "vanished" as username'))
+    .mockRejectedValueOnce(new Error('Could not find the input entity for {"userId":"1300"}.'));
+
+  await refreshMonitorUsername(row);
+
+  expect(lookup).toHaveBeenCalledTimes(2);
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+  expect(send).toHaveBeenCalledWith('tester', 'translated');
+
+  removeMonitor('tester', '1300');
 });

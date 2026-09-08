@@ -207,14 +207,34 @@ export function formatMonitorTarget(monitor: MonitorRow): string {
   return monitor.target_id;
 }
 
+/** Every handle Telegram currently reports as active for the account. */
+function activeHandles(user: any): string[] {
+  const handles: string[] = [];
+  if (user?.username) handles.push(String(user.username));
+  const list: any[] = Array.isArray(user?.usernames) ? user.usernames : [];
+  for (const entry of list) {
+    if (entry?.active && entry?.username) handles.push(String(entry.username));
+  }
+  return handles;
+}
+
 /**
  * Telegram accounts can carry several usernames (including purchased
  * collectible ones). In that case `user.username` is often empty and the
- * active handle lives in `user.usernames`. Prefer the main field, then the
- * active editable handle, then any active one. Returns null when the account
- * currently has no username at all.
+ * active handle lives in `user.usernames`. When the handle we already hold
+ * (the alias the subscriber typed, or the stored label) is still one of the
+ * account's active handles it is kept, so /unmonitor by that alias keeps
+ * working and a multi-handle account does not churn "changed username"
+ * notices. Otherwise prefer the main field, then the active editable handle,
+ * then any active one. Returns null when the account has no username at all.
  */
-export function resolveUsername(user: any): string | null {
+export function resolveUsername(user: any, preferred?: string | null): string | null {
+  const handles = activeHandles(user);
+  if (preferred && !isPhoneLabel(preferred)) {
+    const wanted = preferred.toLowerCase();
+    const kept = handles.find((handle) => handle.toLowerCase() === wanted);
+    if (kept) return kept;
+  }
   if (user?.username) return String(user.username);
   const list: any[] = Array.isArray(user?.usernames) ? user.usernames : [];
   const active = list.find((u) => u?.active && u?.editable) ?? list.find((u) => u?.active);
@@ -313,7 +333,14 @@ async function applyUsernameObservation(
   username: string | null,
 ): Promise<void> {
   if (username) {
-    if (username !== monitor.target_username) await notifyUsernameChange(monitor, username);
+    if (username === monitor.target_username) return;
+    if (username.toLowerCase() === (monitor.target_username ?? '').toLowerCase()) {
+      // Same handle, different casing: record Telegram's spelling quietly.
+      updateMonitorUsername(monitor.id, username);
+      monitor.target_username = username;
+      return;
+    }
+    await notifyUsernameChange(monitor, username);
     return;
   }
   if (monitor.target_username && !isPhoneLabel(monitor.target_username)) {
@@ -351,21 +378,37 @@ export async function addProfileMonitor(
   const accessHash = (entity as any).accessHash
     ? String((entity as any).accessHash)
     : null;
-  const targetUsername = resolveUsername(entity) || username;
+  const targetUsername = resolveUsername(entity, username) || username;
   return addMonitor(telegramId, targetId, targetUsername, accessHash);
 }
 
 export async function removeProfileMonitor(
   telegramId: string,
   target: string,
-): Promise<void> {
+): Promise<boolean> {
   // Private or username-less monitors are displayed and removed by target ID.
   // Resolve both forms here so every caller shares the same authorization and
   // deletion path instead of reporting success for an unchanged monitor row.
-  const existing =
+  const wanted = target.replace(/^@/, '').toLowerCase();
+  let existing =
     findMonitorByUsername(telegramId, target) ||
-    listMonitors(telegramId).find((monitor) => monitor.target_id === target);
-  if (!existing) return;
+    listMonitors(telegramId).find((monitor) => monitor.target_id === target) ||
+    listMonitors(telegramId).find(
+      (monitor) => (monitor.target_username ?? '').toLowerCase() === wanted,
+    );
+  if (!existing && wanted && !/^\d+$/.test(wanted)) {
+    // The subscriber may use another of the account's handles than the one
+    // stored (collectible alias vs. main handle). Resolve it to the account
+    // id before giving up; a failed lookup simply means "not found".
+    try {
+      const entity: any = await getEntityWithTempContact(target.replace(/^@/, ''));
+      const targetId = String(entity?.id ?? '');
+      existing = listMonitors(telegramId).find((monitor) => monitor.target_id === targetId);
+    } catch {
+      existing = undefined;
+    }
+  }
+  if (!existing) return false;
 
   const hasStarsEntitlement = Boolean(getStarsMonitoringEntitlement(telegramId));
   if (hasStarsEntitlement) {
@@ -383,6 +426,7 @@ export async function removeProfileMonitor(
       clearStarsMonitorRemovalAuthorization(telegramId, existing.target_id);
     }
   }
+  return true;
 }
 
 export function userMonitorCount(telegramId: string): number {
@@ -532,6 +576,19 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
   usernameRefreshTimes.set(monitor.id, Date.now());
 
   try {
+    if (!monitor.target_access_hash) {
+      // Another subscriber's row for the same account may already carry the
+      // access hash (they were all obtained by this userbot, so it is valid
+      // here too). Borrowing it turns an id-only row, which Telegram cannot
+      // resolve after a restart, back into a resolvable peer.
+      const sibling = listAllMonitors().find(
+        (row) => row.target_id === monitor.target_id && row.target_access_hash,
+      );
+      if (sibling?.target_access_hash) {
+        updateMonitorAccessHash(monitor.id, sibling.target_access_hash);
+        monitor.target_access_hash = sibling.target_access_hash;
+      }
+    }
     if (monitor.target_access_hash) {
       const client = await Userbot.getInstance();
       const response = await client.invoke(
@@ -546,7 +603,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
       );
       const user = Array.isArray(response) ? response[0] : response;
       if (user) {
-        const username = resolveUsername(user);
+        const username = resolveUsername(user, monitor.target_username);
         const accessHash = (user as any).accessHash
           ? String((user as any).accessHash)
           : null;
@@ -573,9 +630,22 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
       ) {
         throw lookupError;
       }
-      entity = await getEntityWithTempContact(monitor.target_id);
+      try {
+        entity = await getEntityWithTempContact(monitor.target_id);
+      } catch (idError) {
+        if (!isUsernameGoneError(idError)) throw idError;
+        // Neither the handle nor the bare id resolves. Without an access hash
+        // Telegram cannot look the account up after a restart (the string
+        // session keeps no entity cache), so record the removal now rather
+        // than showing a dead handle until a hash turns up.
+        console.warn(
+          `[Monitor] ${formatMonitorTarget(monitor)} no longer resolves and no access hash is stored; recording the removed username.`,
+        );
+        await notifyUsernameRemoved(monitor);
+        return;
+      }
     }
-    const username = resolveUsername(entity);
+    const username = resolveUsername(entity, monitor.target_username);
     const idString = String((entity as any).id);
     const accessHash = (entity as any).accessHash
       ? String((entity as any).accessHash)
