@@ -59,6 +59,7 @@
   "monitor.remaining": "You have {{count}} monitor{{plural}} left.",
   "monitor.already": "⚠️ This profile is already being monitored.",
   "monitor.started": "✅ Surveillance de {{user}} pour les stories actives et les changements de photo de profil. {{remaining}}",
+  "monitor.usernameRemoved": "✏️ {{old}} removed their username. Monitoring continues by account id ({{user}}).",
   "monitor.usernameChanged": "✏️ {{old}} a changé son nom d'utilisateur en {{user}}.",
   "monitor.none": "You are not monitoring any profiles.",
   "monitor.current": "👀 Currently monitoring:\n{{list}}",

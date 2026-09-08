@@ -93,3 +93,154 @@ test('refreshMonitorUsername keeps /monitor list in sync', async () => {
 
   removeMonitor('tester', '200');
 });
+
+test('a removed username is cleared and announced so captions stop linking to a dead handle', async () => {
+  const row = addMonitor('tester', '300', 'gonehandle', '777', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(300), accessHash: bigInt(777) }]; // no username any more
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  (bot.telegram.sendMessage as jest.Mock).mockClear();
+
+  await refreshMonitorUsername(row);
+
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+  expect(bot.telegram.sendMessage).toHaveBeenCalledWith('tester', 'translated');
+
+  removeMonitor('tester', '300');
+});
+
+test('a phone-number label is not treated as a removed username', async () => {
+  const row = addMonitor('tester', '400', '+15555550100', '666', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(400), accessHash: bigInt(666) }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  (bot.telegram.sendMessage as jest.Mock).mockClear();
+
+  await refreshMonitorUsername(row);
+
+  expect(getMonitor(row.id)!.target_username).toBe('+15555550100');
+  expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
+
+  removeMonitor('tester', '400');
+});
+
+test('a handle carried only in the usernames list is picked up', async () => {
+  const row = addMonitor('tester', '500', 'oldname', '555', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{
+        id: bigInt(500),
+        accessHash: bigInt(555),
+        usernames: [
+          { username: 'collectible', active: true, editable: false },
+          { username: 'mainhandle', active: true, editable: true },
+          { username: 'inactive', active: false, editable: true },
+        ],
+      }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  await refreshMonitorUsername(row);
+
+  expect(getMonitor(row.id)!.target_username).toBe('mainhandle');
+
+  removeMonitor('tester', '500');
+});
+
+test('a transient send failure keeps the stored username so the removal notice is retried', async () => {
+  const row = addMonitor('tester', '600', 'flakyhandle', '444', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(600), accessHash: bigInt(444) }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  send.mockRejectedValueOnce(new Error('ETIMEDOUT'));
+
+  await refreshMonitorUsername(row);
+  expect(getMonitor(row.id)!.target_username).toBe('flakyhandle');
+  expect(send).toHaveBeenCalledTimes(1);
+
+  // An hour later the refresh runs again and this time the notice goes out.
+  const realNow = Date.now;
+  const later = realNow() + 60 * 60 * 1000 + 1;
+  jest.spyOn(Date, 'now').mockImplementation(() => later);
+  try {
+    await refreshMonitorUsername(getMonitor(row.id)!);
+  } finally {
+    (Date.now as jest.Mock<any>).mockRestore();
+  }
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+  expect(send).toHaveBeenCalledTimes(2);
+
+  removeMonitor('tester', '600');
+});
+
+test('a permanently undeliverable notice still records the removed username', async () => {
+  const row = addMonitor('tester', '700', 'blockedhandle', '333', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(700), accessHash: bigInt(333) }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  send.mockRejectedValueOnce(
+    Object.assign(new Error('403: Forbidden: bot was blocked by the user'), {
+      response: { error_code: 403, description: 'Forbidden: bot was blocked by the user' },
+    }),
+  );
+
+  await refreshMonitorUsername(row);
+
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+  expect(send).toHaveBeenCalledTimes(1);
+
+  removeMonitor('tester', '700');
+});
+
+test('without an access hash the id fallback only runs for username-not-found errors', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  (Userbot.getInstance as any).mockResolvedValue({ invoke: jest.fn() } as any);
+  (bot.telegram.sendMessage as jest.Mock<any>).mockClear();
+
+  // A transport failure must propagate without a second Telegram request.
+  const flaky = addMonitor('tester', '800', 'stalehandle', null, null);
+  lookup.mockReset();
+  lookup.mockRejectedValue(new Error('TIMEOUT'));
+  await refreshMonitorUsername(flaky);
+  expect(lookup).toHaveBeenCalledTimes(1);
+  expect(lookup).toHaveBeenCalledWith('stalehandle');
+  expect(getMonitor(flaky.id)!.target_username).toBe('stalehandle');
+  removeMonitor('tester', '800');
+
+  // A dropped handle is retried by account id and the removal is recorded.
+  const gone = addMonitor('tester', '900', 'gonehandle', null, null);
+  lookup.mockReset();
+  lookup
+    .mockRejectedValueOnce(new Error('No user has "gonehandle" as username'))
+    .mockResolvedValueOnce({ id: bigInt(900), accessHash: bigInt(222) });
+  await refreshMonitorUsername(gone);
+  expect(lookup).toHaveBeenCalledTimes(2);
+  expect(lookup).toHaveBeenNthCalledWith(2, '900');
+  const updated = getMonitor(gone.id)!;
+  expect(updated.target_username).toBeNull();
+  expect(updated.target_access_hash).toBe('222');
+  expect(bot.telegram.sendMessage).toHaveBeenCalledWith('tester', 'translated');
+  removeMonitor('tester', '900');
+});

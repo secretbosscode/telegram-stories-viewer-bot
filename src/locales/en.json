@@ -66,6 +66,7 @@
   "monitor.photoDeleted": "🗑 {{user}} deleted this profile photo. Archived copy:",
   "monitor.photoDeletedNoCopy": "🗑 {{user}} deleted a profile photo, and no archived copy was available.",
   "monitor.photoRemoved": "🖼️ Profile photo of {{user}} was removed.",
+  "monitor.usernameRemoved": "✏️ {{old}} removed their username. Monitoring continues by account id ({{user}}).",
   "monitor.usernameChanged": "✏️ {{old}} changed username to {{user}}.",
   "monitor.none": "You are not monitoring any profiles.",
   "monitor.current": "👀 Currently monitoring:\n{{list}}",
