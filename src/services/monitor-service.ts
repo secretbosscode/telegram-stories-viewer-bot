@@ -19,7 +19,7 @@ import {
   markStorySent,
   listAllMonitors,
   hasBlockedBot,
-  findAccessHashForTarget,
+  listAccessHashesForTarget,
   type MonitorRow,
 } from '../db';
 import {
@@ -321,6 +321,10 @@ function isInvalidPeerError(error: unknown): boolean {
   return /USER_ID_INVALID|PEER_ID_INVALID|returned no user/.test(message);
 }
 
+function isUserEntity(entity: any): boolean {
+  return entity instanceof Api.User || entity?.className === 'User';
+}
+
 function isEmptyUser(user: any): boolean {
   return user instanceof Api.UserEmpty || user?.className === 'UserEmpty';
 }
@@ -449,8 +453,12 @@ export async function removeProfileMonitor(
     // caller can report an error instead of a misleading "not found".
     try {
       const entity: any = await getEntityWithTempContact(target.replace(/^@/, ''));
-      const targetId = String(entity?.id ?? '');
-      existing = listMonitors(telegramId).find((monitor) => monitor.target_id === targetId);
+      // User, chat and channel ids are separate namespaces that can share a
+      // numeric value; only a user may be matched against user monitors.
+      if (isUserEntity(entity)) {
+        const targetId = String(entity.id);
+        existing = listMonitors(telegramId).find((monitor) => monitor.target_id === targetId);
+      }
     } catch (lookupError) {
       if (!isUsernameGoneError(lookupError)) throw lookupError;
       existing = undefined;
@@ -630,21 +638,21 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<boole
   usernameRefreshTimes.set(monitor.id, Date.now());
 
   try {
-    let borrowedHash: string | null = null;
-    if (!monitor.target_access_hash) {
-      // Another subscriber's row for the same account may already carry the
-      // access hash (they were all obtained by this userbot, so it should be
-      // valid here too). It is only persisted once Telegram has accepted it,
-      // so a stale sibling value cannot poison an otherwise recoverable row.
-      borrowedHash = findAccessHashForTarget(monitor.target_id);
-    }
-    const accessHashInUse = monitor.target_access_hash || borrowedHash;
+    // Candidate hashes to probe with: the row's own, or, for a hash-less
+    // row, every distinct hash other subscribers' rows hold for this account
+    // (all obtained by this userbot). A borrowed hash is persisted only once
+    // Telegram has accepted it, so a stale sibling value cannot poison an
+    // otherwise recoverable row, and every candidate is tried before the
+    // label/id fallbacks are considered.
+    const own = monitor.target_access_hash || null;
+    const candidates = own ? [own] : listAccessHashesForTarget(monitor.target_id);
     // Only the probe itself is covered by borrowed-hash recovery. The
     // username reconciliation (which may send a notice) runs afterwards, so
     // a transient send failure is handled by the outer catch as before and
     // is never mistaken for a rejected access hash.
     let probed: any = null;
-    if (accessHashInUse) {
+    let acceptedHash: string | null = null;
+    for (const candidate of candidates) {
       try {
         const client = await Userbot.getInstance();
         const response = await client.invoke(
@@ -652,7 +660,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<boole
             id: [
               new Api.InputUser({
                 userId: bigInt(monitor.target_id),
-                accessHash: bigInt(accessHashInUse),
+                accessHash: bigInt(candidate),
               }),
             ],
           }),
@@ -662,10 +670,15 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<boole
           throw new Error(`[Monitor] users.GetUsers returned no user for ${monitor.target_id}`);
         }
         probed = user;
+        acceptedHash = candidate;
+        break;
       } catch (hashError) {
-        if (!borrowedHash || !isInvalidPeerError(hashError)) throw hashError;
+        // The row's own hash, or any failure that is not Telegram rejecting
+        // the (id, hash) pair, propagates unchanged: a timeout or flood wait
+        // must never cascade into the give-up paths below.
+        if (own || !isInvalidPeerError(hashError)) throw hashError;
         console.warn(
-          `[Monitor] Borrowed access hash for ${formatMonitorTarget(monitor)} was rejected; resolving by label instead:`,
+          `[Monitor] Borrowed access hash for ${formatMonitorTarget(monitor)} was rejected; trying the next candidate:`,
           (hashError as any)?.message ?? hashError,
         );
       }
@@ -673,7 +686,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<boole
     if (probed) {
       // The hash has just been accepted by Telegram: persist it first so the
       // row is resolvable even if the notice below fails and is retried.
-      const accessHash = probed.accessHash ? String(probed.accessHash) : borrowedHash;
+      const accessHash = probed.accessHash ? String(probed.accessHash) : acceptedHash;
       if (accessHash && accessHash !== monitor.target_access_hash) {
         updateMonitorAccessHash(monitor.id, accessHash);
         monitor.target_access_hash = accessHash;

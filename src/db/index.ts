@@ -792,18 +792,20 @@ export function listAllMonitors(): MonitorRow[] {
 }
 
 /**
- * Any stored access hash for this account, from whichever subscriber's row
- * has one. Indexed lookup so recovering many hash-less rows stays linear.
+ * Every distinct access hash stored for this account across all subscribers'
+ * rows, newest row first (a fresher row is likelier to hold a hash the
+ * current session can use). Indexed lookup, so recovering many hash-less
+ * rows stays linear.
  */
-export function findAccessHashForTarget(target_id: string): string | null {
-  const row = db
+export function listAccessHashesForTarget(target_id: string): string[] {
+  const rows = db
     .prepare(
-      `SELECT target_access_hash FROM monitors
+      `SELECT DISTINCT target_access_hash FROM monitors
        WHERE target_id = ? AND target_access_hash IS NOT NULL AND target_access_hash != ''
-       LIMIT 1`,
+       ORDER BY id DESC`,
     )
-    .get(target_id) as { target_access_hash: string } | undefined;
-  return row?.target_access_hash ?? null;
+    .all(target_id) as { target_access_hash: string }[];
+  return rows.map((row) => String(row.target_access_hash));
 }
 
 export function getMonitor(id: number): MonitorRow | undefined {

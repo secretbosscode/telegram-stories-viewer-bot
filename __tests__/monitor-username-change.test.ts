@@ -289,8 +289,14 @@ test('removing by another handle of the same account resolves it to the target i
   expect(await removeProfileMonitor('tester', 'nobody')).toBe(false);
   expect(getMonitor(row.id)).toBeDefined();
 
+  // A channel or group that happens to share the numeric id must not match.
   lookup.mockReset();
-  lookup.mockResolvedValue({ id: bigInt(1100), accessHash: bigInt(222) });
+  lookup.mockResolvedValue({ className: 'Channel', id: bigInt(1100), accessHash: bigInt(1) });
+  expect(await removeProfileMonitor('tester', '@somechannel')).toBe(false);
+  expect(getMonitor(row.id)).toBeDefined();
+
+  lookup.mockReset();
+  lookup.mockResolvedValue(new Api.User({ id: bigInt(1100), accessHash: bigInt(222) } as any));
   expect(await removeProfileMonitor('tester', '@otheralias')).toBe(true);
   expect(lookup).toHaveBeenCalledWith('otheralias');
   expect(getMonitor(row.id)).toBeUndefined();
@@ -462,4 +468,64 @@ test('a monitor stopped during the refresh is not fetched for or delivered to', 
   expect(getMonitor(row.id)).toBeUndefined();
   expect(invoke).not.toHaveBeenCalled();
   expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
+});
+
+test('every distinct sibling hash is tried before falling back to the label', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  addMonitor('other1', '1900', 'multi', '1111111111', null); // stale
+  addMonitor('other2', '1900', 'multi', '2222222222', null); // valid, newer row
+  const without = addMonitor('tester', '1900', 'multi', null, null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      const hash = String((query.id[0] as any).accessHash);
+      if (hash === '2222222222') {
+        return [{ id: bigInt(1900), accessHash: bigInt(2222222222), username: 'multi' }];
+      }
+      throw Object.assign(new Error('USER_ID_INVALID'), { errorMessage: 'USER_ID_INVALID' });
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  lookup.mockReset();
+
+  await refreshMonitorUsername(without);
+
+  expect(getMonitor(without.id)!.target_access_hash).toBe('2222222222');
+  expect(lookup).not.toHaveBeenCalled();
+  const probedHashes = invoke.mock.calls.map((c: any) => String(c[0].id[0].accessHash));
+  expect(probedHashes).toEqual(['2222222222']); // newest row first, so the valid one wins outright
+
+  removeMonitor('other1', '1900');
+  removeMonitor('other2', '1900');
+  removeMonitor('tester', '1900');
+});
+
+test('a stale newest sibling hash is skipped in favour of an older valid one', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  addMonitor('other1', '2000', 'multi2', '3333333333', null); // valid, older row
+  addMonitor('other2', '2000', 'multi2', '4444444444', null); // stale, newer row
+  const without = addMonitor('tester', '2000', 'multi2', null, null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      const hash = String((query.id[0] as any).accessHash);
+      if (hash === '3333333333') {
+        return [{ id: bigInt(2000), accessHash: bigInt(3333333333), username: 'multi2' }];
+      }
+      throw Object.assign(new Error('USER_ID_INVALID'), { errorMessage: 'USER_ID_INVALID' });
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  lookup.mockReset();
+
+  await refreshMonitorUsername(without);
+
+  expect(getMonitor(without.id)!.target_access_hash).toBe('3333333333');
+  expect(lookup).not.toHaveBeenCalled();
+  const probedHashes = invoke.mock.calls.map((c: any) => String(c[0].id[0].accessHash));
+  expect(probedHashes).toEqual(['4444444444', '3333333333']);
+
+  removeMonitor('other1', '2000');
+  removeMonitor('other2', '2000');
+  removeMonitor('tester', '2000');
 });
