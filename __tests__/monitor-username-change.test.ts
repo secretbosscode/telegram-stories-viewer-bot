@@ -93,3 +93,66 @@ test('refreshMonitorUsername keeps /monitor list in sync', async () => {
 
   removeMonitor('tester', '200');
 });
+
+test('a removed username is cleared and announced so captions stop linking to a dead handle', async () => {
+  const row = addMonitor('tester', '300', 'gonehandle', '777', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(300), accessHash: bigInt(777) }]; // no username any more
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  (bot.telegram.sendMessage as jest.Mock).mockClear();
+
+  await refreshMonitorUsername(row);
+
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+  expect(bot.telegram.sendMessage).toHaveBeenCalledWith('tester', 'translated');
+
+  removeMonitor('tester', '300');
+});
+
+test('a phone-number label is not treated as a removed username', async () => {
+  const row = addMonitor('tester', '400', '+15555550100', '666', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(400), accessHash: bigInt(666) }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  (bot.telegram.sendMessage as jest.Mock).mockClear();
+
+  await refreshMonitorUsername(row);
+
+  expect(getMonitor(row.id)!.target_username).toBe('+15555550100');
+  expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
+
+  removeMonitor('tester', '400');
+});
+
+test('a handle carried only in the usernames list is picked up', async () => {
+  const row = addMonitor('tester', '500', 'oldname', '555', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{
+        id: bigInt(500),
+        accessHash: bigInt(555),
+        usernames: [
+          { username: 'collectible', active: true, editable: false },
+          { username: 'mainhandle', active: true, editable: true },
+          { username: 'inactive', active: false, editable: true },
+        ],
+      }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+
+  await refreshMonitorUsername(row);
+
+  expect(getMonitor(row.id)!.target_username).toBe('mainhandle');
+
+  removeMonitor('tester', '500');
+});

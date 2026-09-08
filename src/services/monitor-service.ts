@@ -207,6 +207,60 @@ export function formatMonitorTarget(monitor: MonitorRow): string {
   return monitor.target_id;
 }
 
+/**
+ * Telegram accounts can carry several usernames (including purchased
+ * collectible ones). In that case `user.username` is often empty and the
+ * active handle lives in `user.usernames`. Prefer the main field, then the
+ * active editable handle, then any active one. Returns null when the account
+ * currently has no username at all.
+ */
+export function resolveUsername(user: any): string | null {
+  if (user?.username) return String(user.username);
+  const list: any[] = Array.isArray(user?.usernames) ? user.usernames : [];
+  const active = list.find((u) => u?.active && u?.editable) ?? list.find((u) => u?.active);
+  return active?.username ? String(active.username) : null;
+}
+
+// Monitors added by phone number store the number as their label; it is not a
+// username and must never be treated as one that has been removed.
+function isPhoneLabel(label: string | null | undefined): boolean {
+  return typeof label === 'string' && label.startsWith('+');
+}
+
+async function notifyUsernameRemoved(monitor: MonitorRow): Promise<void> {
+  const oldUsername = monitor.target_username;
+  updateMonitorUsername(monitor.id, null);
+  monitor.target_username = null;
+  if (!oldUsername) return;
+  const language = findUserById(monitor.telegram_id)?.language;
+  await bot.telegram.sendMessage(
+    monitor.telegram_id,
+    t(language, 'monitor.usernameRemoved', {
+      old: `@${oldUsername}`,
+      user: formatMonitorTarget(monitor),
+    }),
+  );
+}
+
+/**
+ * Reconciles what Telegram reports for the target with the stored label.
+ * A new handle is recorded and announced; a handle that has disappeared is
+ * cleared and announced too, so captions stop linking to an account that
+ * "doesn't seem to exist". Previously only the first case was handled.
+ */
+async function applyUsernameObservation(
+  monitor: MonitorRow,
+  username: string | null,
+): Promise<void> {
+  if (username) {
+    if (username !== monitor.target_username) await notifyUsernameChange(monitor, username);
+    return;
+  }
+  if (monitor.target_username && !isPhoneLabel(monitor.target_username)) {
+    await notifyUsernameRemoved(monitor);
+  }
+}
+
 async function notifyUsernameChange(
   monitor: MonitorRow,
   newUsername: string,
@@ -238,7 +292,7 @@ export async function addProfileMonitor(
   const accessHash = (entity as any).accessHash
     ? String((entity as any).accessHash)
     : null;
-  const targetUsername = (entity as any).username || username;
+  const targetUsername = resolveUsername(entity) || username;
   return addMonitor(telegramId, targetId, targetUsername, accessHash);
 }
 
@@ -433,13 +487,11 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
       );
       const user = Array.isArray(response) ? response[0] : response;
       if (user) {
-        const username = (user as any).username || null;
+        const username = resolveUsername(user);
         const accessHash = (user as any).accessHash
           ? String((user as any).accessHash)
           : null;
-        if (username && username !== monitor.target_username) {
-          await notifyUsernameChange(monitor, username);
-        }
+        await applyUsernameObservation(monitor, username);
         if (accessHash && accessHash !== monitor.target_access_hash) {
           updateMonitorAccessHash(monitor.id, accessHash);
           monitor.target_access_hash = accessHash;
@@ -448,18 +500,22 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
       return;
     }
 
-    const entity = await getEntityWithTempContact(
-      monitor.target_username || monitor.target_id,
-    );
-    const username = (entity as any).username || null;
+    // Without an access hash the target is resolved by label. If the stored
+    // handle has been dropped that lookup fails, so fall back to the id.
+    let entity: any;
+    try {
+      entity = await getEntityWithTempContact(monitor.target_username || monitor.target_id);
+    } catch (lookupError) {
+      if (!monitor.target_username || isPhoneLabel(monitor.target_username)) throw lookupError;
+      entity = await getEntityWithTempContact(monitor.target_id);
+    }
+    const username = resolveUsername(entity);
     const idString = String((entity as any).id);
     const accessHash = (entity as any).accessHash
       ? String((entity as any).accessHash)
       : null;
 
-    if (username && username !== monitor.target_username) {
-      await notifyUsernameChange(monitor, username);
-    }
+    await applyUsernameObservation(monitor, username);
     if (idString !== monitor.target_id) {
       updateMonitorTarget(monitor.id, idString);
       monitor.target_id = idString;

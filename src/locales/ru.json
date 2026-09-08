@@ -59,6 +59,7 @@
   "monitor.remaining": "You have {{count}} monitor{{plural}} left.",
   "monitor.already": "⚠️ This profile is already being monitored.",
   "monitor.started": "✅ Теперь отслеживаем {{user}} на активные истории и изменения фото профиля. {{remaining}}",
+  "monitor.usernameRemoved": "✏️ {{old}} removed their username. Monitoring continues by account id ({{user}}).",
   "monitor.usernameChanged": "✏️ {{old}} сменил(а) имя пользователя на {{user}}.",
   "monitor.none": "You are not monitoring any profiles.",
   "monitor.current": "👀 Currently monitoring:\n{{list}}",
