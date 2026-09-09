@@ -27,12 +27,21 @@ jest.mock('../src/repositories/user-repository', () => ({
 
 import { Userbot } from '../src/config/userbot';
 import { getEntityWithTempContact } from '../src/lib';
-import { addMonitor, getMonitor, removeMonitor, updateMonitorUsername } from '../src/db';
+import {
+  addMonitor,
+  deletePendingUsernameNotice,
+  getMonitor,
+  listPendingUsernameNotices,
+  removeMonitor,
+  updateMonitorUsername,
+  upsertPendingUsernameNotice,
+} from '../src/db';
 import {
   addProfileMonitor,
   checkSingleMonitor,
   refreshMonitorUsername,
   removeProfileMonitor,
+  replayPendingUsernameNotices,
   listUserMonitors,
 } from '../src/services/monitor-service';
 import { bot } from '../src/index';
@@ -716,10 +725,17 @@ test('an observation made while a notice is in flight is deferred, not recorded 
   reported = 'later';
   const secondAt = Date.now() + hour;
   jest.spyOn(Date, 'now').mockImplementation(() => secondAt);
+  // The clock jump that gets past the hourly refresh gate also ages the
+  // in-flight entry by an hour, which is past its default abandonment bound.
+  // Deferral is only meaningful while the earlier send is still considered
+  // pending, so declare a bound that covers the jump; the case where the
+  // bound *has* elapsed is covered by the in-flight expiry test below.
+  process.env.MONITOR_NOTICE_INFLIGHT_MAX_MS = String(2 * hour);
   try {
     await refreshMonitorUsername(getMonitor(row.id)!);
   } finally {
     (Date.now as jest.Mock<any>).mockRestore();
+    delete process.env.MONITOR_NOTICE_INFLIGHT_MAX_MS;
   }
   expect(getMonitor(row.id)!.target_username).toBe('secondhandle');
   expect(send).toHaveBeenCalledTimes(1);
@@ -741,4 +757,161 @@ test('an observation made while a notice is in flight is deferred, not recorded 
   expect(getMonitor(row.id)!.target_username).toBe('later');
 
   removeMonitor('tester', '2600');
+});
+
+test('an in-flight notice that never settles stops blocking observations once it expires', async () => {
+  const row = addMonitor('tester', '2700', 'firsthandle', '2700111', null);
+  let reported = 'secondhandle';
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(2700), accessHash: bigInt(2700111), username: reported }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  send.mockReturnValueOnce(new Promise(() => {})); // never settles, ever
+  process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
+  try {
+    await refreshMonitorUsername(row);
+  } finally {
+    delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
+  }
+  expect(getMonitor(row.id)!.target_username).toBe('secondhandle');
+  expect(send).toHaveBeenCalledTimes(1);
+
+  // An hour later the handle changed again. The first send is still pending
+  // and always will be; once its slot has outlived the in-flight bound the
+  // observation must be recorded and announced rather than deferred forever.
+  reported = 'thirdhandle';
+  const later = Date.now() + 60 * 60 * 1000 + 1;
+  jest.spyOn(Date, 'now').mockImplementation(() => later);
+  process.env.MONITOR_NOTICE_INFLIGHT_MAX_MS = '1';
+  process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
+  try {
+    send.mockResolvedValueOnce({ message_id: 2 } as any);
+    await refreshMonitorUsername(getMonitor(row.id)!);
+  } finally {
+    (Date.now as jest.Mock<any>).mockRestore();
+    delete process.env.MONITOR_NOTICE_INFLIGHT_MAX_MS;
+    delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
+  }
+  expect(getMonitor(row.id)!.target_username).toBe('thirdhandle');
+  expect(send).toHaveBeenCalledTimes(2);
+
+  removeMonitor('tester', '2700');
+});
+
+test('a notice pending past the deadline is held in the outbox until the send settles', async () => {
+  const row = addMonitor('tester', '2800', 'outboxhandle', '2800111', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(2800), accessHash: bigInt(2800111) }]; // username gone
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  let resolveSend: (value: unknown) => void = () => {};
+  send.mockReturnValueOnce(new Promise((resolve) => { resolveSend = resolve; }));
+  process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
+  try {
+    await refreshMonitorUsername(row);
+  } finally {
+    delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
+  }
+  // The label is stored, so nothing would ever re-observe this change; the
+  // outbox row is what survives a restart at this exact point.
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+  const pending = listPendingUsernameNotices().filter((p) => p.monitor_id === row.id);
+  expect(pending).toHaveLength(1);
+  expect(pending[0].telegram_id).toBe('tester');
+  expect(pending[0].text).toBe('translated');
+
+  resolveSend({ message_id: 1 });
+  await new Promise((r) => setImmediate(r));
+  expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(false);
+
+  removeMonitor('tester', '2800');
+});
+
+test('a transient send failure leaves no outbox row behind', async () => {
+  const row = addMonitor('tester', '2900', 'rollbackhandle', '2900111', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(2900), accessHash: bigInt(2900111) }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  send.mockRejectedValueOnce(new Error('ETIMEDOUT'));
+
+  await refreshMonitorUsername(row);
+
+  // The label went back, so the next refresh observes the difference again;
+  // a surviving row would announce the same change a second time.
+  expect(getMonitor(row.id)!.target_username).toBe('rollbackhandle');
+  expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(false);
+
+  removeMonitor('tester', '2900');
+});
+
+test('a notice recorded before a restart is replayed on the next cycle', async () => {
+  for (const stale of listPendingUsernameNotices()) deletePendingUsernameNotice(stale.monitor_id);
+  const row = addMonitor('tester', '3000', 'replayhandle', '3000111', null);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+
+  // The process died after the label write; only the outbox row remains.
+  send.mockClear();
+  send.mockResolvedValueOnce({ message_id: 1 } as any);
+  upsertPendingUsernameNotice(row.id, 'tester', 'restart notice', Date.now());
+  await replayPendingUsernameNotices();
+  expect(send).toHaveBeenCalledWith('tester', 'restart notice');
+  expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(false);
+
+  // A transient failure keeps the row for the next cycle.
+  send.mockClear();
+  send.mockRejectedValueOnce(new Error('ETIMEDOUT'));
+  upsertPendingUsernameNotice(row.id, 'tester', 'retry notice', Date.now());
+  await replayPendingUsernameNotices();
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(listPendingUsernameNotices().find((p) => p.monitor_id === row.id)?.text).toBe(
+    'retry notice',
+  );
+  deletePendingUsernameNotice(row.id);
+
+  // A row whose monitor is gone is dropped without sending anything.
+  send.mockClear();
+  upsertPendingUsernameNotice(999999, 'tester', 'ghost notice', Date.now());
+  await replayPendingUsernameNotices();
+  expect(send).not.toHaveBeenCalled();
+  expect(listPendingUsernameNotices().some((p) => p.monitor_id === 999999)).toBe(false);
+
+  // A week-old notice describes a handle that has probably changed again.
+  send.mockClear();
+  upsertPendingUsernameNotice(
+    row.id,
+    'tester',
+    'stale notice',
+    Date.now() - 8 * 24 * 60 * 60 * 1000,
+  );
+  await replayPendingUsernameNotices();
+  expect(send).not.toHaveBeenCalled();
+  expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(false);
+
+  removeMonitor('tester', '3000');
+});
+
+test('removing a monitor drops the username notice it still owed', () => {
+  const row = addMonitor('tester', '3100', 'cleanuphandle', '3100111', null);
+  upsertPendingUsernameNotice(row.id, 'tester', 'owed notice', Date.now());
+  expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(true);
+
+  removeMonitor('tester', '3100');
+
+  expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(false);
 });

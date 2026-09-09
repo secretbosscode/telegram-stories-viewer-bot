@@ -321,6 +321,22 @@ if (needsSentStoryMigration) {
 db.exec('DROP INDEX IF EXISTS monitor_sent_idx');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_sent_idx ON monitor_sent_stories (monitor_id, story_key, story_type)');
 
+// Durable outbox for "the target changed / dropped its username" notices.
+// The row is written in the same transaction as the new label, so a process
+// that dies between the label write and Telegram's confirmation does not lose
+// the notification intent: the label is stored (later refreshes see no
+// difference to report) but the pending row makes the next monitor cycle send
+// the notice anyway. One notice per monitor is enough: only the latest
+// transition is worth announcing.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS monitor_username_notices (
+    monitor_id INTEGER PRIMARY KEY,
+    telegram_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`);
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS hidden_story_cache (
     peer_id TEXT NOT NULL,
@@ -860,6 +876,8 @@ export function removeMonitor(
     // Monitor ids are never reused, so delivery records for a removed monitor
     // are unreachable; drop them together with the monitor.
     db.prepare(`DELETE FROM monitor_sent_stories WHERE monitor_id = ?`).run(id);
+    // A notice about a monitor that no longer exists must never be replayed.
+    db.prepare(`DELETE FROM monitor_username_notices WHERE monitor_id = ?`).run(id);
   }
   db.prepare(
     `DELETE FROM monitors WHERE telegram_id = ? AND target_id = ?`
@@ -940,6 +958,71 @@ export function updateMonitorPhoto(id: number, last_photo_id: string | null): vo
 
 export function updateMonitorUsername(id: number, username: string | null): void {
   db.prepare(`UPDATE monitors SET target_username = ? WHERE id = ?`).run(username, id);
+}
+
+// ----- Pending username notices (durable outbox) -----
+export interface PendingUsernameNotice {
+  monitor_id: number;
+  telegram_id: string;
+  text: string;
+  created_at: number;
+}
+
+/** Records (or replaces) the notice still owed to this monitor's subscriber. */
+export function upsertPendingUsernameNotice(
+  monitor_id: number,
+  telegram_id: string,
+  text: string,
+  created_at: number,
+): void {
+  db.prepare(
+    `INSERT INTO monitor_username_notices (monitor_id, telegram_id, text, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(monitor_id) DO UPDATE SET
+       telegram_id = excluded.telegram_id,
+       text = excluded.text,
+       created_at = excluded.created_at`,
+  ).run(monitor_id, telegram_id, text, created_at);
+}
+
+export function deletePendingUsernameNotice(monitor_id: number): void {
+  db.prepare(`DELETE FROM monitor_username_notices WHERE monitor_id = ?`).run(monitor_id);
+}
+
+export function listPendingUsernameNotices(): PendingUsernameNotice[] {
+  return db
+    .prepare(
+      `SELECT monitor_id, telegram_id, text, created_at FROM monitor_username_notices
+       ORDER BY created_at ASC, monitor_id ASC`,
+    )
+    .all() as PendingUsernameNotice[];
+}
+
+/**
+ * Writes the new label and the notice still owed for it in one transaction.
+ * Split across two statements a crash in between would either lose the notice
+ * (label stored, nothing left to replay) or announce a change that was never
+ * recorded, so both must land together. The shim exposes no transaction
+ * helper; BEGIN IMMEDIATE takes the write lock up front, as elsewhere here.
+ */
+export function updateMonitorUsernameWithPendingNotice(
+  id: number,
+  username: string | null,
+  telegram_id: string,
+  text: string,
+  created_at: number,
+): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    updateMonitorUsername(id, username);
+    upsertPendingUsernameNotice(id, telegram_id, text, created_at);
+    db.exec('COMMIT');
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
+    throw error;
+  }
 }
 
 export function updateMonitorTarget(id: number, target_id: string): void {
