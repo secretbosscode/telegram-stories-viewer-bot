@@ -7,6 +7,10 @@ on:
   push:
     branches:
       - main
+  # Dispatched by pr-auto-merge.yml after it pushes a base-branch merge into a
+  # PR head: pushes made with the Actions token never trigger other workflows,
+  # so without this the merged head would carry no CI at all.
+  workflow_dispatch:
 
 concurrency:
   group: pr-validation-${{ github.ref }}
