@@ -6,6 +6,7 @@ import {
   addMonitor,
   removeMonitor,
   findMonitorByUsername,
+  findMonitorByTargetId,
   countMonitors,
   listMonitors,
   getMonitor,
@@ -427,6 +428,10 @@ export async function addProfileMonitor(
   const accessHash = (entity as any).accessHash
     ? String((entity as any).accessHash)
     : null;
+  // The account may already be monitored under another of its handles (or
+  // by phone / id). The insert below would be ignored and the existing row
+  // returned, so callers would announce a start that never happened.
+  if (findMonitorByTargetId(telegramId, targetId)) return null;
   const targetUsername = resolveUsername(entity, username) || username;
   return addMonitor(telegramId, targetId, targetUsername, accessHash);
 }

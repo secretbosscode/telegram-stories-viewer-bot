@@ -529,3 +529,27 @@ test('a stale newest sibling hash is skipped in favour of an older valid one', a
   removeMonitor('other2', '2000');
   removeMonitor('tester', '2000');
 });
+
+test('monitoring an account again through another of its handles reports it as already monitored', async () => {
+  const lookup = getEntityWithTempContact as jest.Mock<any>;
+  const account = {
+    id: bigInt(2100),
+    accessHash: bigInt(555),
+    username: 'mainname',
+    usernames: [
+      { username: 'altname', active: true, editable: false },
+      { username: 'mainname', active: true, editable: true },
+    ],
+  };
+  lookup.mockReset();
+  lookup.mockResolvedValue(account);
+
+  const first = await addProfileMonitor('tester', 'altname');
+  expect(first!.target_username).toBe('altname');
+
+  const second = await addProfileMonitor('tester', 'mainname');
+  expect(second).toBeNull();
+  expect(listUserMonitors('tester').filter((m) => m.target_id === '2100')).toHaveLength(1);
+
+  removeMonitor('tester', '2100');
+});
