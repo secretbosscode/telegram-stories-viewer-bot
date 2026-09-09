@@ -6,6 +6,7 @@ import {
   addMonitor,
   removeMonitor,
   findMonitorByUsername,
+  findMonitorByTargetId,
   countMonitors,
   listMonitors,
   getMonitor,
@@ -19,6 +20,7 @@ import {
   markStorySent,
   listAllMonitors,
   hasBlockedBot,
+  listAccessHashesForTarget,
   type MonitorRow,
 } from '../db';
 import {
@@ -207,14 +209,34 @@ export function formatMonitorTarget(monitor: MonitorRow): string {
   return monitor.target_id;
 }
 
+/** Every handle Telegram currently reports as active for the account. */
+function activeHandles(user: any): string[] {
+  const handles: string[] = [];
+  if (user?.username) handles.push(String(user.username));
+  const list: any[] = Array.isArray(user?.usernames) ? user.usernames : [];
+  for (const entry of list) {
+    if (entry?.active && entry?.username) handles.push(String(entry.username));
+  }
+  return handles;
+}
+
 /**
  * Telegram accounts can carry several usernames (including purchased
  * collectible ones). In that case `user.username` is often empty and the
- * active handle lives in `user.usernames`. Prefer the main field, then the
- * active editable handle, then any active one. Returns null when the account
- * currently has no username at all.
+ * active handle lives in `user.usernames`. When the handle we already hold
+ * (the alias the subscriber typed, or the stored label) is still one of the
+ * account's active handles it is kept, so /unmonitor by that alias keeps
+ * working and a multi-handle account does not churn "changed username"
+ * notices. Otherwise prefer the main field, then the active editable handle,
+ * then any active one. Returns null when the account has no username at all.
  */
-export function resolveUsername(user: any): string | null {
+export function resolveUsername(user: any, preferred?: string | null): string | null {
+  const handles = activeHandles(user);
+  if (preferred && !isPhoneLabel(preferred)) {
+    const wanted = preferred.toLowerCase();
+    const kept = handles.find((handle) => handle.toLowerCase() === wanted);
+    if (kept) return kept;
+  }
   if (user?.username) return String(user.username);
   const list: any[] = Array.isArray(user?.usernames) ? user.usernames : [];
   const active = list.find((u) => u?.active && u?.editable) ?? list.find((u) => u?.active);
@@ -288,6 +310,54 @@ async function persistUsernameAfterNotice(
   monitor.target_username = newUsername;
 }
 
+/**
+ * Telegram's answer that the (id, access hash) pair itself is bad, or our own
+ * "no user came back" marker. Only these justify treating a borrowed access
+ * hash as rejected; a timeout or flood wait must propagate unchanged.
+ */
+function isInvalidPeerError(error: unknown): boolean {
+  const code = String((error as any)?.errorMessage ?? '');
+  if (code === 'USER_ID_INVALID' || code === 'PEER_ID_INVALID') return true;
+  const message = String((error as any)?.message ?? error ?? '');
+  return /USER_ID_INVALID|PEER_ID_INVALID|returned no user/.test(message);
+}
+
+function isUserEntity(entity: any): boolean {
+  return entity instanceof Api.User || entity?.className === 'User';
+}
+
+function isEmptyUser(user: any): boolean {
+  return user instanceof Api.UserEmpty || user?.className === 'UserEmpty';
+}
+
+/**
+ * The stored handle is gone, no access hash is known, and Telegram cannot
+ * resolve the bare id either: nothing this row could ever fetch again. Say so
+ * and free the slot rather than claiming that monitoring continues. The
+ * notice goes first; a transient send failure leaves the row for the next
+ * refresh to retry, a permanent one (blocked bot, dead chat) does not.
+ */
+async function stopUnresolvableMonitor(monitor: MonitorRow): Promise<void> {
+  console.warn(
+    `[Monitor] ${formatMonitorTarget(monitor)} no longer resolves and no access hash is stored; stopping this monitor.`,
+  );
+  if (!hasBlockedBot(monitor.telegram_id)) {
+    const language = findUserById(monitor.telegram_id)?.language;
+    try {
+      await bot.telegram.sendMessage(
+        monitor.telegram_id,
+        t(language, 'monitor.unresolvable', {
+          old: `@${monitor.target_username}`,
+          user: monitor.target_id,
+        }),
+      );
+    } catch (err) {
+      if (!isPermanentDeliveryFailure(err)) throw err;
+    }
+  }
+  await removeProfileMonitor(monitor.telegram_id, monitor.target_id);
+}
+
 async function notifyUsernameRemoved(monitor: MonitorRow): Promise<void> {
   const oldUsername = monitor.target_username;
   if (!oldUsername) {
@@ -313,7 +383,14 @@ async function applyUsernameObservation(
   username: string | null,
 ): Promise<void> {
   if (username) {
-    if (username !== monitor.target_username) await notifyUsernameChange(monitor, username);
+    if (username === monitor.target_username) return;
+    if (username.toLowerCase() === (monitor.target_username ?? '').toLowerCase()) {
+      // Same handle, different casing: record Telegram's spelling quietly.
+      updateMonitorUsername(monitor.id, username);
+      monitor.target_username = username;
+      return;
+    }
+    await notifyUsernameChange(monitor, username);
     return;
   }
   if (monitor.target_username && !isPhoneLabel(monitor.target_username)) {
@@ -351,21 +428,48 @@ export async function addProfileMonitor(
   const accessHash = (entity as any).accessHash
     ? String((entity as any).accessHash)
     : null;
-  const targetUsername = resolveUsername(entity) || username;
+  // The account may already be monitored under another of its handles (or
+  // by phone / id). The insert below would be ignored and the existing row
+  // returned, so callers would announce a start that never happened.
+  if (findMonitorByTargetId(telegramId, targetId)) return null;
+  const targetUsername = resolveUsername(entity, username) || username;
   return addMonitor(telegramId, targetId, targetUsername, accessHash);
 }
 
 export async function removeProfileMonitor(
   telegramId: string,
   target: string,
-): Promise<void> {
+): Promise<boolean> {
   // Private or username-less monitors are displayed and removed by target ID.
   // Resolve both forms here so every caller shares the same authorization and
   // deletion path instead of reporting success for an unchanged monitor row.
-  const existing =
+  const wanted = target.replace(/^@/, '').toLowerCase();
+  let existing =
     findMonitorByUsername(telegramId, target) ||
-    listMonitors(telegramId).find((monitor) => monitor.target_id === target);
-  if (!existing) return;
+    listMonitors(telegramId).find((monitor) => monitor.target_id === target) ||
+    listMonitors(telegramId).find(
+      (monitor) => (monitor.target_username ?? '').toLowerCase() === wanted,
+    );
+  if (!existing && wanted && !/^\d+$/.test(wanted)) {
+    // The subscriber may use another of the account's handles than the one
+    // stored (collectible alias vs. main handle). Resolve it to the account
+    // id before giving up. Only a username-not-found answer means "not
+    // found"; a timeout, flood wait or disconnected userbot propagates so the
+    // caller can report an error instead of a misleading "not found".
+    try {
+      const entity: any = await getEntityWithTempContact(target.replace(/^@/, ''));
+      // User, chat and channel ids are separate namespaces that can share a
+      // numeric value; only a user may be matched against user monitors.
+      if (isUserEntity(entity)) {
+        const targetId = String(entity.id);
+        existing = listMonitors(telegramId).find((monitor) => monitor.target_id === targetId);
+      }
+    } catch (lookupError) {
+      if (!isUsernameGoneError(lookupError)) throw lookupError;
+      existing = undefined;
+    }
+  }
+  if (!existing) return false;
 
   const hasStarsEntitlement = Boolean(getStarsMonitoringEntitlement(telegramId));
   if (hasStarsEntitlement) {
@@ -383,6 +487,7 @@ export async function removeProfileMonitor(
       clearStarsMonitorRemovalAuthorization(telegramId, existing.target_id);
     }
   }
+  return true;
 }
 
 export function userMonitorCount(telegramId: string): number {
@@ -526,37 +631,73 @@ export async function forceCheckMonitors(): Promise<number> {
   return monitors.length;
 }
 
-export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void> {
+/**
+ * Reconciles the stored label and access hash with Telegram. Resolves to
+ * false only when the monitor was stopped because it can no longer be
+ * resolved at all; callers must then skip the story fetch and delivery for
+ * that row.
+ */
+export async function refreshMonitorUsername(monitor: MonitorRow): Promise<boolean> {
   const last = usernameRefreshTimes.get(monitor.id) || 0;
-  if (Date.now() - last < USERNAME_REFRESH_INTERVAL_MS) return;
+  if (Date.now() - last < USERNAME_REFRESH_INTERVAL_MS) return true;
   usernameRefreshTimes.set(monitor.id, Date.now());
 
   try {
-    if (monitor.target_access_hash) {
-      const client = await Userbot.getInstance();
-      const response = await client.invoke(
-        new Api.users.GetUsers({
-          id: [
-            new Api.InputUser({
-              userId: bigInt(monitor.target_id),
-              accessHash: bigInt(monitor.target_access_hash),
-            }),
-          ],
-        }),
-      );
-      const user = Array.isArray(response) ? response[0] : response;
-      if (user) {
-        const username = resolveUsername(user);
-        const accessHash = (user as any).accessHash
-          ? String((user as any).accessHash)
-          : null;
-        await applyUsernameObservation(monitor, username);
-        if (accessHash && accessHash !== monitor.target_access_hash) {
-          updateMonitorAccessHash(monitor.id, accessHash);
-          monitor.target_access_hash = accessHash;
+    // Candidate hashes to probe with: the row's own, or, for a hash-less
+    // row, every distinct hash other subscribers' rows hold for this account
+    // (all obtained by this userbot). A borrowed hash is persisted only once
+    // Telegram has accepted it, so a stale sibling value cannot poison an
+    // otherwise recoverable row, and every candidate is tried before the
+    // label/id fallbacks are considered.
+    const own = monitor.target_access_hash || null;
+    const candidates = own ? [own] : listAccessHashesForTarget(monitor.target_id);
+    // Only the probe itself is covered by borrowed-hash recovery. The
+    // username reconciliation (which may send a notice) runs afterwards, so
+    // a transient send failure is handled by the outer catch as before and
+    // is never mistaken for a rejected access hash.
+    let probed: any = null;
+    let acceptedHash: string | null = null;
+    for (const candidate of candidates) {
+      try {
+        const client = await Userbot.getInstance();
+        const response = await client.invoke(
+          new Api.users.GetUsers({
+            id: [
+              new Api.InputUser({
+                userId: bigInt(monitor.target_id),
+                accessHash: bigInt(candidate),
+              }),
+            ],
+          }),
+        );
+        const user = Array.isArray(response) ? response[0] : response;
+        if (!user || isEmptyUser(user)) {
+          throw new Error(`[Monitor] users.GetUsers returned no user for ${monitor.target_id}`);
         }
+        probed = user;
+        acceptedHash = candidate;
+        break;
+      } catch (hashError) {
+        // The row's own hash, or any failure that is not Telegram rejecting
+        // the (id, hash) pair, propagates unchanged: a timeout or flood wait
+        // must never cascade into the give-up paths below.
+        if (own || !isInvalidPeerError(hashError)) throw hashError;
+        console.warn(
+          `[Monitor] Borrowed access hash for ${formatMonitorTarget(monitor)} was rejected; trying the next candidate:`,
+          (hashError as any)?.message ?? hashError,
+        );
       }
-      return;
+    }
+    if (probed) {
+      // The hash has just been accepted by Telegram: persist it first so the
+      // row is resolvable even if the notice below fails and is retried.
+      const accessHash = probed.accessHash ? String(probed.accessHash) : acceptedHash;
+      if (accessHash && accessHash !== monitor.target_access_hash) {
+        updateMonitorAccessHash(monitor.id, accessHash);
+        monitor.target_access_hash = accessHash;
+      }
+      await applyUsernameObservation(monitor, resolveUsername(probed, monitor.target_username));
+      return true;
     }
 
     // Without an access hash the target is resolved by label. If the stored
@@ -573,9 +714,19 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
       ) {
         throw lookupError;
       }
-      entity = await getEntityWithTempContact(monitor.target_id);
+      try {
+        entity = await getEntityWithTempContact(monitor.target_id);
+      } catch (idError) {
+        if (!isUsernameGoneError(idError)) throw idError;
+        // Neither the handle nor the bare id resolves. Without an access hash
+        // Telegram cannot look the account up after a restart (the string
+        // session keeps no entity cache), and every story request for this
+        // row would fail the same way, so stop it with an honest notice.
+        await stopUnresolvableMonitor(monitor);
+        return false;
+      }
     }
-    const username = resolveUsername(entity);
+    const username = resolveUsername(entity, monitor.target_username);
     const idString = String((entity as any).id);
     const accessHash = (entity as any).accessHash
       ? String((entity as any).accessHash)
@@ -596,6 +747,7 @@ export async function refreshMonitorUsername(monitor: MonitorRow): Promise<void>
       error,
     );
   }
+  return true;
 }
 
 function storyKey(story: any): string {
@@ -879,10 +1031,16 @@ async function checkTargetGroup(targetId: string, group: MonitorRow[]): Promise<
     // which can hang just like a story fetch.
     await withDeadline(
       (async () => {
-        for (const monitor of group) await refreshMonitorUsername(monitor);
-        const lead = group.find((monitor) => monitor.target_access_hash) ?? group[0];
-        const snapshot = await fetchTargetSnapshot(lead, photoCheckDue(targetId));
+        const remaining: MonitorRow[] = [];
         for (const monitor of group) {
+          if (await refreshMonitorUsername(monitor)) remaining.push(monitor);
+        }
+        // A monitor stopped during the refresh must not be fetched for or
+        // delivered to: its rows are gone and its peer is unresolvable.
+        if (!remaining.length) return;
+        const lead = remaining.find((monitor) => monitor.target_access_hash) ?? remaining[0];
+        const snapshot = await fetchTargetSnapshot(lead, photoCheckDue(targetId));
+        for (const monitor of remaining) {
           try {
             await deliverBounded(monitor, snapshot, label);
           } catch (error) {
@@ -923,7 +1081,7 @@ export async function checkSingleMonitor(
     );
     await withDeadline(
       (async () => {
-        await refreshMonitorUsername(monitor);
+        if (!(await refreshMonitorUsername(monitor))) return;
         const label = formatMonitorTarget(monitor);
         const snapshot = await fetchTargetSnapshot(monitor, checkPhoto);
         await deliverBounded(monitor, snapshot, label);

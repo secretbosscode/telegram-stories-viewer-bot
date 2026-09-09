@@ -143,3 +143,25 @@ it('falls back to importing contacts when resolve fails with PHONE_NOT_OCCUPIED'
   expect(result).toBe(importedUser);
   expect(deleteSpy).toHaveBeenCalledTimes(1);
 });
+
+it('a transient failure on a numeric id propagates instead of being retried as a username', async () => {
+  const getEntity = jest.fn(async () => {
+    throw new Error('TIMEOUT');
+  }) as any;
+  (Userbot.getInstance as any).mockResolvedValue({ getEntity } as any);
+
+  await expect(getEntityWithTempContact('123456789')).rejects.toThrow('TIMEOUT');
+  expect(getEntity).toHaveBeenCalledTimes(1);
+});
+
+it('a numeric id that gramJS cannot find is retried as a username', async () => {
+  const getEntity = jest.fn(async (arg: any) => {
+    if (typeof arg === 'string') return { id: bigInt(5) };
+    throw new Error('Could not find the input entity for {"userId":"123456789"}.');
+  }) as any;
+  (Userbot.getInstance as any).mockResolvedValue({ getEntity } as any);
+
+  await getEntityWithTempContact('123456789');
+  expect(getEntity).toHaveBeenCalledTimes(2);
+  expect(getEntity.mock.calls[1][0]).toBe('123456789');
+});

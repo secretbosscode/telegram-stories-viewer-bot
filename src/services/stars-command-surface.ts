@@ -393,10 +393,22 @@ async function handleStarsUnmonitor(ctx: any, next: () => Promise<void>): Promis
       monitor.target_id === target,
   );
   if (!existing) {
-    return ctx.reply(t(locale, 'stories.userNotFound', { user: input }));
+    // Not stored under this handle. The shared removal path also resolves an
+    // alternate handle of the same account to its id, so Stars subscribers
+    // can /unmonitor by any alias just like Premium ones.
+    let removed = false;
+    try {
+      removed = await removeProfileMonitor(userId, target);
+    } catch (error) {
+      console.error(`[Stars] /unmonitor ${input} failed for ${userId}:`, error);
+      return ctx.reply(t(locale, 'error.unexpected'));
+    }
+    if (!removed) {
+      return ctx.reply(t(locale, 'stories.userNotFound', { user: input }));
+    }
+  } else {
+    await removeProfileMonitor(userId, existing.target_id);
   }
-
-  await removeProfileMonitor(userId, existing.target_id);
   return ctx.reply(t(locale, 'stars.monitorStopped', { target: input }));
 }
 

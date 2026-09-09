@@ -60,6 +60,7 @@
   "monitor.already": "⚠️ This profile is already being monitored.",
   "monitor.started": "✅ {{user}} wordt nu gevolgd voor actieve stories en profielfoto-wijzigingen. {{remaining}}",
   "monitor.usernameRemoved": "✏️ {{old}} removed their username. Monitoring continues by account id ({{user}}).",
+  "monitor.unresolvable": "⚠️ {{old}} removed their username and this monitor can no longer reach the account. Monitoring stopped.",
   "monitor.usernameChanged": "✏️ {{old}} heeft de gebruikersnaam gewijzigd naar {{user}}.",
   "monitor.none": "You are not monitoring any profiles.",
   "monitor.current": "👀 Currently monitoring:\n{{list}}",
