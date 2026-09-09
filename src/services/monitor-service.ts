@@ -359,11 +359,31 @@ function noticeTargetLabel(monitorId: number, telegramId: string): string {
  * Every delete is scoped to this attempt. A newer observation replaces the
  * row with a fresh token, so a late settlement can never discard a notice
  * nobody has sent yet.
+ *
+ * The claim is also what decides whether to send at all. A replay awaits its
+ * rows one at a time from a snapshot, so by the time one is reached its row
+ * may already be gone (its own timed-out send settled) or replaced by a newer
+ * observation. The claim then matches nothing, and sending the snapshot would
+ * repeat a notice already delivered or announce a transition since
+ * superseded. Returns whether a send was actually started.
  */
-async function attemptPendingNotice(row: PendingUsernameNotice): Promise<void> {
+async function attemptPendingNotice(row: PendingUsernameNotice): Promise<boolean> {
   const monitorId = row.monitor_id;
   const label = noticeTargetLabel(monitorId, row.telegram_id);
-  markPendingUsernameNoticeAttempted(monitorId, row.attempt, nextNoticeAttemptStamp());
+  const claimed = markPendingUsernameNoticeAttempted(
+    monitorId,
+    row.attempt,
+    nextNoticeAttemptStamp(),
+  );
+  if (claimed === 0) {
+    // Nothing to reconcile: whatever this row described has been settled or
+    // superseded since it was read. Registering it as in flight would only
+    // block the row that replaced it.
+    console.log(
+      `[Monitor] The username notice for ${label} was already settled or superseded before it could be sent; skipping it.`,
+    );
+    return false;
+  }
   const startedAt = Date.now();
   inFlightNotices.set(monitorId, startedAt);
   const settled = (async () => {
@@ -409,10 +429,11 @@ async function attemptPendingNotice(row: PendingUsernameNotice): Promise<void> {
       console.warn(
         `[Monitor] Username notice for ${label} is still pending after the send deadline; it stays in the outbox until the send settles.`,
       );
-      return;
+      return true;
     }
     throw err;
   }
+  return true;
 }
 
 // A notice nobody could deliver for a week is not worth announcing any more:
@@ -540,9 +561,13 @@ export async function replayPendingUsernameNotices(): Promise<void> {
         continue;
       }
       // Counted before the send: a row whose send throws or hangs has still
-      // used a slot of this cycle's budget.
+      // used a slot of this cycle's budget. A row whose claim no longer
+      // matches never started one — it was settled or replaced while an
+      // earlier row in this snapshot was being sent — so it gives the slot
+      // back and the row that replaced it waits for the next cycle.
       attempted += 1;
-      await attemptPendingNotice(row);
+      const started = await attemptPendingNotice(row);
+      if (!started) attempted -= 1;
     } catch (error) {
       console.error(
         `[Monitor] Could not replay the username notice for monitor ${row.monitor_id}:`,

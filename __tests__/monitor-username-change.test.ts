@@ -1256,3 +1256,73 @@ test('the replay cap counts attempts, so held rows do not starve deliverable one
   removeMonitor('blocker', '3900');
   removeMonitor('tester', '3901');
 });
+
+test('a row deleted while an earlier notice was being sent is not sent from the stale snapshot', async () => {
+  clearOutbox();
+  const first = addMonitor('tester', '4000', 'firstrow', '4000111', null);
+  const second = addMonitor('tester', '4001', 'secondrow', '4001111', null);
+  const base = Date.now() - 60 * 60 * 1000;
+  upsertPendingUsernameNotice(first.id, 'tester', 'first notice', base);
+  upsertPendingUsernameNotice(second.id, 'tester', 'second notice', base + 1000);
+
+  // The replay snapshots the outbox and then awaits each row in turn, so the
+  // second row can be gone by the time it is reached: its own send, abandoned
+  // at an earlier deadline, has settled and deleted it in the meantime.
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockReset();
+  send.mockImplementation(async (_chat: string, text: string) => {
+    if (text === 'first notice') deletePendingUsernameNoticesForMonitor(second.id);
+    return undefined;
+  });
+
+  await replayPendingUsernameNotices();
+
+  // Sending the snapshot regardless would have told the subscriber twice.
+  expect(send.mock.calls.map((c: any[]) => c[1])).toEqual(['first notice']);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(pendingFor(first.id)).toBeUndefined();
+  expect(pendingFor(second.id)).toBeUndefined();
+
+  send.mockReset();
+  removeMonitor('tester', '4000');
+  removeMonitor('tester', '4001');
+});
+
+test('a row replaced while an earlier notice was being sent keeps the newer text for the next cycle', async () => {
+  clearOutbox();
+  const first = addMonitor('tester', '4100', 'firstrow', '4100111', null);
+  const second = addMonitor('tester', '4101', 'secondrow', '4101111', null);
+  const base = Date.now() - 60 * 60 * 1000;
+  upsertPendingUsernameNotice(first.id, 'tester', 'first notice', base);
+  upsertPendingUsernameNotice(second.id, 'tester', 'stale notice', base + 1000);
+
+  // This time a fresh observation replaces the second row while the first is
+  // being sent, so the snapshot's text describes a transition already
+  // superseded and the row carries a new attempt token.
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockReset();
+  send.mockImplementation(async (_chat: string, text: string) => {
+    if (text === 'first notice') {
+      upsertPendingUsernameNotice(second.id, 'tester', 'newer notice', Date.now());
+    }
+    return undefined;
+  });
+
+  await replayPendingUsernameNotices();
+
+  expect(send.mock.calls.map((c: any[]) => c[1])).toEqual(['first notice']);
+  // The replacement is not re-read in this pass; it simply waits.
+  expect(pendingFor(second.id)?.text).toBe('newer notice');
+  expect(pendingFor(second.id)?.last_attempt_at).toBeNull();
+
+  // The next cycle delivers it.
+  send.mockReset();
+  send.mockResolvedValue(undefined);
+  await replayPendingUsernameNotices();
+  expect(send.mock.calls.map((c: any[]) => c[1])).toEqual(['newer notice']);
+  expect(pendingFor(second.id)).toBeUndefined();
+
+  send.mockReset();
+  removeMonitor('tester', '4100');
+  removeMonitor('tester', '4101');
+});

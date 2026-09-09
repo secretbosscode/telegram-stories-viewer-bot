@@ -1057,16 +1057,21 @@ export function deletePendingUsernameNoticesForMonitor(monitor_id: number): void
  * behind rows nothing has tried yet (or that were tried longer ago), so a
  * send that never settles cannot fill every capped batch from now on. Scoped
  * to the attempt for the same reason the delete is.
+ *
+ * Returns how many rows the claim matched: 0 means the row this send holds is
+ * no longer the one owed — it was already settled, or a newer observation
+ * replaced it under a fresh token — and the caller must not send it.
  */
 export function markPendingUsernameNoticeAttempted(
   monitor_id: number,
   attempt: string,
   at: number,
-): void {
-  db.prepare(
+): number {
+  const result = db.prepare(
     `UPDATE monitor_username_notices SET last_attempt_at = ?
      WHERE monitor_id = ? AND attempt = ?`,
   ).run(at, monitor_id, attempt);
+  return result.changes as number;
 }
 
 export function listPendingUsernameNotices(): PendingUsernameNotice[] {
