@@ -164,26 +164,45 @@ test('a phone-number label is not treated as a removed username', async () => {
   removeMonitor('tester', '400');
 });
 
-test('a case-only spelling change is recorded quietly', async () => {
+test('a case-only spelling change is recorded quietly and keeps a pending notice', async () => {
   clearOutbox();
-  const row = addMonitor('tester', '450', 'MixedCase', '456', null);
+  const row = addMonitor('tester', '450', 'oldhandle', '456', null);
+  let reported = 'newhandle';
   const invoke = jest.fn(async (query: any) => {
     if (query instanceof Api.users.GetUsers) {
-      return [{ id: bigInt(450), accessHash: bigInt(456), username: 'mixedcase' }];
+      return [{ id: bigInt(450), accessHash: bigInt(456), username: reported }];
     }
     return null;
   });
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
   const send = bot.telegram.sendMessage as jest.Mock<any>;
   send.mockClear();
+  send.mockRejectedValueOnce(new Error('ETIMEDOUT'));
 
+  // A real change whose notice could not be delivered: it is still owed.
   await refreshMonitorUsername(row);
+  expect(getMonitor(row.id)!.target_username).toBe('newhandle');
+  const owed = pendingFor(row.id);
+  expect(owed?.text).toBe('translated');
+
+  // An hour later Telegram reports the same handle spelled differently.
+  reported = 'NewHandle';
+  const later = Date.now() + 60 * 60 * 1000 + 1;
+  jest.spyOn(Date, 'now').mockImplementation(() => later);
+  try {
+    await refreshMonitorUsername(getMonitor(row.id)!);
+  } finally {
+    (Date.now as jest.Mock<any>).mockRestore();
+  }
 
   // Telegram's spelling wins, but the same handle is not a change worth
-  // announcing, so nothing is sent and nothing is owed.
-  expect(getMonitor(row.id)!.target_username).toBe('mixedcase');
-  expect(send).not.toHaveBeenCalled();
-  expect(pendingFor(row.id)).toBeUndefined();
+  // announcing, so nothing more is sent — and the notice already owed for the
+  // real change is still owed, unchanged.
+  expect(getMonitor(row.id)!.target_username).toBe('NewHandle');
+  expect(send).toHaveBeenCalledTimes(1);
+  const stillOwed = pendingFor(row.id);
+  expect(stillOwed?.attempt).toBe(owed?.attempt);
+  expect(stillOwed?.text).toBe('translated');
 
   removeMonitor('tester', '450');
 });

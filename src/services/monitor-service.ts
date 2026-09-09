@@ -10,6 +10,7 @@ import {
   countMonitors,
   listMonitors,
   getMonitor,
+  updateMonitorUsername,
   updateMonitorAccessHash,
   updateMonitorTarget,
   updateMonitorChecked,
@@ -534,9 +535,9 @@ export async function replayPendingUsernameNotices(): Promise<void> {
  * when a legacy NOT NULL on the column rejected the update after the notice
  * had already gone out.
  *
- * A notice-less transition (the label was empty, or only its spelling
- * changed) clears whatever was pending instead: a "dropped their username"
- * notice describes a state the account has already left.
+ * A transition worth no notice (a label acquired where there was none)
+ * clears whatever was pending instead: a "dropped their username" notice
+ * describes a state the account has already left.
  *
  * Each observation supersedes the last, so the newest row always carries the
  * newest text under a fresh attempt token; an older send still in flight can
@@ -661,7 +662,12 @@ async function applyUsernameObservation(
     if (username === monitor.target_username) return;
     if (username.toLowerCase() === (monitor.target_username ?? '').toLowerCase()) {
       // Same handle, different casing: record Telegram's spelling quietly.
-      await persistUsernameAfterNotice(monitor, username, null);
+      // The outbox is deliberately left alone. A notice pending here
+      // describes a real transition nobody has been told about yet, and a
+      // change of spelling does not make it untrue, so clearing it would drop
+      // an announcement that is still owed.
+      updateMonitorUsername(monitor.id, username);
+      monitor.target_username = username;
       return;
     }
     await notifyUsernameChange(monitor, username);
