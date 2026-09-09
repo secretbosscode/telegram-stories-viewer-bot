@@ -37,6 +37,7 @@ import {
   addMonitor,
   deletePendingUsernameNoticesForMonitor,
   getMonitor,
+  listAllMonitors,
   listPendingUsernameNotices,
   removeMonitor,
   setBotBlocked,
@@ -1183,4 +1184,75 @@ test('pending notices are replayed even while the userbot connection is unhealth
   expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(false);
 
   removeMonitor('tester', '3500');
+});
+
+test('a leftover removal notice is dropped when the refresh finds a handle again', async () => {
+  clearOutbox();
+  // forceCheckMonitors walks every monitor; leave it only this one to check.
+  for (const stale of listAllMonitors()) removeMonitor(stale.telegram_id, stale.target_id);
+  // Restart state: the label was already stored as null and only the outbox
+  // row still remembers that the subscriber has to be told about it.
+  const row = addMonitor('tester', '3800', null, '3800111', null);
+  upsertPendingUsernameNotice(row.id, 'tester', 'removal notice', Date.now());
+
+  // Meanwhile the account has acquired a handle again.
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(3800), accessHash: bigInt(3800111), username: 'backagain' }];
+    }
+    if (query instanceof Api.stories.GetPeerStories) {
+      return { stories: { stories: [] } };
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockReset();
+
+  try {
+    await forceCheckMonitors();
+  } finally {
+    stopMonitorLoop();
+  }
+
+  // On a healthy cycle the replay runs after the target loop, so the refresh
+  // has already cleared this row on the silent null-to-handle transition.
+  // Replaying first sent the obsolete notice, and nothing would ever correct
+  // it, because that transition announces nothing of its own.
+  expect(send.mock.calls.map((c: any[]) => c[1])).not.toContain('removal notice');
+  expect(pendingFor(row.id)).toBeUndefined();
+  expect(getMonitor(row.id)!.target_username).toBe('backagain');
+
+  removeMonitor('tester', '3800');
+});
+
+test('the replay cap counts attempts, so held rows do not starve deliverable ones', async () => {
+  clearOutbox();
+  const held = addMonitor('blocker', '3900', 'heldrow', '3900111', null);
+  const deliverable = addMonitor('tester', '3901', 'deliverablerow', '3901111', null);
+  setBotBlocked('blocker', true);
+  const base = Date.now() - 60 * 60 * 1000;
+  // The held row is the older one, so it comes first in the replay order.
+  upsertPendingUsernameNotice(held.id, 'blocker', 'held notice', base);
+  upsertPendingUsernameNotice(deliverable.id, 'tester', 'deliverable notice', base + 1000);
+
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockReset();
+  process.env.MONITOR_NOTICE_REPLAY_BATCH = '1';
+  try {
+    await replayPendingUsernameNotices();
+  } finally {
+    delete process.env.MONITOR_NOTICE_REPLAY_BATCH;
+  }
+
+  // A fixed slice of the ordered list would have selected only the blocked
+  // row, cycle after cycle, without ever touching its last_attempt_at, and
+  // the deliverable row behind it would have waited until it aged out.
+  expect(send.mock.calls.map((c: any[]) => c[1])).toEqual(['deliverable notice']);
+  expect(pendingFor(held.id)?.text).toBe('held notice');
+  expect(pendingFor(deliverable.id)).toBeUndefined();
+
+  setBotBlocked('blocker', false);
+  removeMonitor('blocker', '3900');
+  removeMonitor('tester', '3901');
 });

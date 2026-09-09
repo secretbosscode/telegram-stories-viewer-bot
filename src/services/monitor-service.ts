@@ -457,12 +457,28 @@ function isMonitorSubscriberEligible(
 
 /**
  * Re-sends the notices whose sends never reached a confirmed outcome before
- * the process ended. Called at the start of every monitor cycle, before the
- * userbot health gate and before any target is checked, because the label
- * these notices describe is already stored: no later refresh would ever
- * observe the difference again, so without this the subscriber is simply
- * never told. Each row is only sent to a subscriber still entitled to
- * monitoring, since the cycle's own entitlement reconciliation runs later.
+ * the process ended. The label these notices describe is already stored, so
+ * no later refresh would ever observe the difference again: without this the
+ * subscriber is simply never told.
+ *
+ * A cycle runs this in one of two places, never both:
+ *
+ * - Userbot unhealthy: before the health gate returns early. Replaying needs
+ *   only the bot API, and during an outage lasting days the cycle returns
+ *   early every time, so a replay placed after the gate would never run until
+ *   the rows aged out and were discarded unsent.
+ * - Userbot healthy: after the target loop, so every monitor's
+ *   refreshMonitorUsername has already run. A leftover row can describe a
+ *   state the account has since left — a pending "dropped their username"
+ *   notice for an account that has a handle again — and that refresh is what
+ *   clears it, silently, on the null-to-handle transition. Replaying first
+ *   would send the obsolete notice, and the silent transition means nothing
+ *   would ever correct it. Notices created during the cycle are attempted
+ *   immediately by the persist path, so only leftovers wait for this.
+ *
+ * Each row is only sent to a subscriber still entitled to monitoring: on the
+ * unhealthy path the cycle's own entitlement reconciliation never runs, and
+ * on the healthy path a row for a removed monitor is dropped here anyway.
  *
  * Accepted trade-off: if Telegram accepted the message and the process died
  * before the row could be deleted, the subscriber gets the notice twice.
@@ -477,7 +493,15 @@ export async function replayPendingUsernameNotices(): Promise<void> {
     console.error('[Monitor] Could not read the pending username notices:', error);
     return;
   }
-  for (const row of pending.slice(0, maxNoticeReplaysPerCycle())) {
+  // The cap bounds the work a cycle does, so only rows this actually tries to
+  // send count against it. A fixed slice of the ordered list let a run of rows
+  // that are merely held (blocked, ineligible, in flight) or dropped fill every
+  // batch without ever touching last_attempt_at, so they were re-selected each
+  // cycle and the deliverable rows behind them waited until they aged out.
+  const budget = maxNoticeReplaysPerCycle();
+  let attempted = 0;
+  for (const row of pending) {
+    if (attempted >= budget) break;
     // One bad row must never abort the cycle for everyone else.
     try {
       // A send started by this process is still running; it will clear the row.
@@ -515,6 +539,9 @@ export async function replayPendingUsernameNotices(): Promise<void> {
         );
         continue;
       }
+      // Counted before the send: a row whose send throws or hangs has still
+      // used a slot of this cycle's budget.
+      attempted += 1;
       await attemptPendingNotice(row);
     } catch (error) {
       console.error(
@@ -804,6 +831,19 @@ export function stopMonitorLoop(): void {
   nextMonitorCheckAt = null;
 }
 
+/**
+ * Replays the outbox for a cycle, where a failure must never abort or fail the
+ * cycle itself. Called from exactly one of the two places described on
+ * replayPendingUsernameNotices, depending on the userbot's health.
+ */
+async function replayLeftoverUsernameNotices(): Promise<void> {
+  try {
+    await replayPendingUsernameNotices();
+  } catch (error) {
+    console.error('[Monitor] Replaying pending username notices failed:', error);
+  }
+}
+
 export async function forceCheckMonitors(): Promise<number> {
   if (monitorRunning) {
     console.warn('[Monitor] A check cycle is already running; skipping this request.');
@@ -817,20 +857,11 @@ export async function forceCheckMonitors(): Promise<number> {
     clearTimeout(monitorTimer);
     monitorTimer = null;
   }
-  // Notices whose outcome was never confirmed (typically a restart while a
-  // send was still pending) are owed to subscribers regardless of what this
-  // cycle finds, and the labels they describe are already stored, so no later
-  // refresh would ever observe the difference again. Replaying them needs
-  // only the bot API, so it happens before the userbot health gate below:
-  // during an outage lasting days the cycle returns early every time, and a
-  // replay placed after the gate would never run until the rows aged out and
-  // were discarded unsent.
-  try {
-    await replayPendingUsernameNotices();
-  } catch (error) {
-    console.error('[Monitor] Replaying pending username notices failed:', error);
-  }
   if (!userbotHealthy()) {
+    // Nothing will refresh a label this cycle, and replaying needs only the
+    // bot API: send the leftovers now rather than let them age out through an
+    // outage that returns early every time.
+    await replayLeftoverUsernameNotices();
     console.warn(
       `[Monitor] Userbot connection is unhealthy; skipping this cycle and retrying in ${UNHEALTHY_RETRY_MS / 60000} minutes.`,
     );
@@ -905,6 +936,11 @@ export async function forceCheckMonitors(): Promise<number> {
         console.error(`[Monitor] Unhandled error while checking target ${targetId}:`, error);
       }
     }
+
+    // Only now, with every monitor's refresh done: a leftover notice that
+    // describes a state the account has already left has been cleared by that
+    // refresh, so replaying here cannot send an obsolete one.
+    await replayLeftoverUsernameNotices();
 
     try {
       purgeOrphanedPhotoArchives();
