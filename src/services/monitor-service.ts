@@ -302,7 +302,14 @@ async function persistUsernameAfterNotice(
   monitor.target_username = newUsername;
   if (!notice || hasBlockedBot(monitor.telegram_id)) return;
   try {
-    await bot.telegram.sendMessage(monitor.telegram_id, notice);
+    // Bounded on its own: the target deadline abandons this refresh without
+    // cancelling the send, and a send that never settles must still count as
+    // a failure here so the label is restored and the notice retried.
+    await withDeadline(
+      bot.telegram.sendMessage(monitor.telegram_id, notice),
+      noticeSendTimeoutMs(),
+      `[Monitor] Username notice to ${monitor.telegram_id}`,
+    );
   } catch (err) {
     if (isPermanentDeliveryFailure(err)) {
       console.warn(
@@ -311,10 +318,21 @@ async function persistUsernameAfterNotice(
       );
       return;
     }
-    updateMonitorUsername(monitor.id, previous);
-    monitor.target_username = previous;
+    // Restore only what this attempt wrote. A send abandoned by an earlier
+    // cycle can fail late, after a later refresh already recorded a newer
+    // observation; that newer value must win.
+    const stored = getMonitor(monitor.id);
+    if (stored && stored.target_username === newUsername) {
+      updateMonitorUsername(monitor.id, previous);
+    }
+    if (monitor.target_username === newUsername) monitor.target_username = previous;
     throw err;
   }
+}
+
+// Read per call so tests can shorten it; 30s is well inside the target deadline.
+function noticeSendTimeoutMs(): number {
+  return Number(process.env.MONITOR_NOTICE_TIMEOUT_MS) || 30 * 1000;
 }
 
 /**

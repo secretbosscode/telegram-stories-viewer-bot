@@ -27,7 +27,7 @@ jest.mock('../src/repositories/user-repository', () => ({
 
 import { Userbot } from '../src/config/userbot';
 import { getEntityWithTempContact } from '../src/lib';
-import { addMonitor, getMonitor, removeMonitor } from '../src/db';
+import { addMonitor, getMonitor, removeMonitor, updateMonitorUsername } from '../src/db';
 import {
   addProfileMonitor,
   checkSingleMonitor,
@@ -552,4 +552,49 @@ test('monitoring an account again through another of its handles reports it as a
   expect(listUserMonitors('tester').filter((m) => m.target_id === '2100')).toHaveLength(1);
 
   removeMonitor('tester', '2100');
+});
+
+test('a notice send that never settles is treated as a transient failure and rolled back', async () => {
+  const row = addMonitor('tester', '2200', 'hanging', '777', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) return [{ id: bigInt(2200), accessHash: bigInt(777) }];
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  send.mockReturnValueOnce(new Promise(() => {})); // never settles
+  process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
+  try {
+    await refreshMonitorUsername(row);
+  } finally {
+    delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
+  }
+  expect(getMonitor(row.id)!.target_username).toBe('hanging');
+  removeMonitor('tester', '2200');
+});
+
+test('a late send failure does not overwrite a username recorded by a later refresh', async () => {
+  const row = addMonitor('tester', '2300', 'first', '888', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) return [{ id: bigInt(2300), accessHash: bigInt(888) }];
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  let rejectSend: (e: Error) => void = () => {};
+  send.mockReturnValueOnce(new Promise((_, reject) => { rejectSend = reject; }));
+
+  const pending = refreshMonitorUsername(row); // clears the username, send still in flight
+  await new Promise((r) => setImmediate(r));
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+
+  // A later observation lands while the first send is still pending.
+  updateMonitorUsername(row.id, 'newer');
+  rejectSend(new Error('ETIMEDOUT'));
+  await pending;
+
+  expect(getMonitor(row.id)!.target_username).toBe('newer');
+  removeMonitor('tester', '2300');
 });

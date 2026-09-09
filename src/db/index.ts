@@ -130,9 +130,38 @@ if (legacyUsernameColumn && Number(legacyUsernameColumn.notnull) === 1) {
     (db.prepare('PRAGMA table_info(monitors)').all() as any[]).map((c) => String(c.name)),
   );
   const columns = wanted.filter((c) => present.has(c)).join(', ');
+  // Triggers and views that mention this table (the Stars safety triggers,
+  // one of which lives on star_payments and references monitors) would make
+  // the rename fail with "no such table: main.monitors" once the old table is
+  // dropped. Drop them first and recreate them verbatim afterwards.
+  const dependents = db
+    .prepare(
+      `SELECT type, name, sql FROM sqlite_master
+       WHERE type IN ('trigger', 'view') AND sql IS NOT NULL
+         AND (tbl_name = 'monitors' OR sql LIKE '%monitors%')`,
+    )
+    .all() as { type: string; name: string; sql: string }[];
+  // AUTOINCREMENT keeps a high-water mark in sqlite_sequence so deleted ids
+  // are never reused (monitor_sent_stories rows are keyed by monitor id).
+  // Copying only live rows would reset it to the largest live id.
+  let previousSeq = 0;
+  try {
+    const row = db
+      .prepare(`SELECT seq FROM sqlite_sequence WHERE name = 'monitors'`)
+      .get() as { seq: number } | undefined;
+    previousSeq = Number(row?.seq ?? 0);
+  } catch {
+    previousSeq = 0;
+  }
+  const quote = (name: string) => `"${name.replace(/"/g, '""')}"`;
+  const dropDependents = dependents
+    .map((d) => `DROP ${d.type.toUpperCase()} IF EXISTS ${quote(d.name)};`)
+    .join('\n');
+  const recreateDependents = dependents.map((d) => `${d.sql};`).join('\n');
   try {
     db.exec(`
       BEGIN IMMEDIATE;
+      ${dropDependents}
       CREATE TABLE monitors_migrated (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telegram_id TEXT NOT NULL,
@@ -146,9 +175,15 @@ if (legacyUsernameColumn && Number(legacyUsernameColumn.notnull) === 1) {
       INSERT INTO monitors_migrated (${columns}) SELECT ${columns} FROM monitors;
       DROP TABLE monitors;
       ALTER TABLE monitors_migrated RENAME TO monitors;
+      DELETE FROM sqlite_sequence WHERE name = 'monitors';
+      INSERT INTO sqlite_sequence (name, seq)
+        VALUES ('monitors', MAX(${Math.floor(previousSeq)}, (SELECT COALESCE(MAX(id), 0) FROM monitors)));
+      ${recreateDependents}
       COMMIT;
     `);
-    console.log('[DB] monitors.target_username is now nullable (legacy NOT NULL dropped).');
+    console.log(
+      `[DB] monitors.target_username is now nullable (legacy NOT NULL dropped; ${dependents.length} dependent trigger(s)/view(s) recreated).`,
+    );
   } catch (error) {
     try {
       db.exec('ROLLBACK');
