@@ -108,6 +108,54 @@ if (!monitorColumns.some((c) => c.name === 'target_id')) {
 if (!monitorColumns.some((c) => c.name === 'target_access_hash')) {
   db.exec('ALTER TABLE monitors ADD COLUMN target_access_hash TEXT');
 }
+// Installs created before v1.35.5 declared target_username NOT NULL. A
+// monitored account that removes its username must be storable with no label
+// (the caption then falls back to the account id), and SQLite cannot drop a
+// NOT NULL in place, so rebuild the table once without it. Indexes are
+// recreated below; the Stars safety triggers are installed later at startup,
+// so nothing depending on this table exists yet when this runs.
+const legacyUsernameColumn = monitorColumns.find((c) => c.name === 'target_username');
+if (legacyUsernameColumn && Number(legacyUsernameColumn.notnull) === 1) {
+  const wanted = [
+    'id',
+    'telegram_id',
+    'target_id',
+    'target_username',
+    'target_access_hash',
+    'last_checked',
+    'last_photo_id',
+    'created_at',
+  ];
+  const present = new Set(
+    (db.prepare('PRAGMA table_info(monitors)').all() as any[]).map((c) => String(c.name)),
+  );
+  const columns = wanted.filter((c) => present.has(c)).join(', ');
+  try {
+    db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE monitors_migrated (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id TEXT NOT NULL,
+        target_id TEXT,
+        target_username TEXT,
+        target_access_hash TEXT,
+        last_checked INTEGER,
+        last_photo_id TEXT,
+        created_at INTEGER DEFAULT (strftime('%s','now'))
+      );
+      INSERT INTO monitors_migrated (${columns}) SELECT ${columns} FROM monitors;
+      DROP TABLE monitors;
+      ALTER TABLE monitors_migrated RENAME TO monitors;
+      COMMIT;
+    `);
+    console.log('[DB] monitors.target_username is now nullable (legacy NOT NULL dropped).');
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
+    console.error('[DB] Failed to relax monitors.target_username NOT NULL:', error);
+  }
+}
 db.exec('DROP INDEX IF EXISTS monitor_unique_idx');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_unique_idx ON monitors (telegram_id, target_id)');
 

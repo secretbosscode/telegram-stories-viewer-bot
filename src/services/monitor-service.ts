@@ -284,30 +284,37 @@ function isPermanentDeliveryFailure(error: unknown): boolean {
 }
 
 /**
- * Sends the notice first and persists the new label only once it went out,
- * so a transient send failure leaves the stored username untouched and the
- * next refresh (an hour later) observes the same difference and retries.
- * Previously the label was cleared before sending, and a single failed send
- * silenced the notice for good.
+ * Records the new label, then sends the notice. A transient send failure
+ * restores the previous label so the next refresh (an hour later) observes
+ * the same difference and retries the notice; a permanent one (blocked bot,
+ * dead chat) keeps the change. Persisting first means a failing write can
+ * never leave a subscriber receiving the same notice every hour, which is
+ * what happened when a legacy NOT NULL on the column rejected the update
+ * after the notice had already gone out.
  */
 async function persistUsernameAfterNotice(
   monitor: MonitorRow,
   newUsername: string | null,
   notice: string | null,
 ): Promise<void> {
-  if (notice && !hasBlockedBot(monitor.telegram_id)) {
-    try {
-      await bot.telegram.sendMessage(monitor.telegram_id, notice);
-    } catch (err) {
-      if (!isPermanentDeliveryFailure(err)) throw err;
-      console.warn(
-        `[Monitor] Username notice for ${formatMonitorTarget(monitor)} undeliverable; recording the change anyway:`,
-        (err as any)?.message ?? err,
-      );
-    }
-  }
+  const previous = monitor.target_username;
   updateMonitorUsername(monitor.id, newUsername);
   monitor.target_username = newUsername;
+  if (!notice || hasBlockedBot(monitor.telegram_id)) return;
+  try {
+    await bot.telegram.sendMessage(monitor.telegram_id, notice);
+  } catch (err) {
+    if (isPermanentDeliveryFailure(err)) {
+      console.warn(
+        `[Monitor] Username notice for ${formatMonitorTarget(monitor)} undeliverable; keeping the recorded change:`,
+        (err as any)?.message ?? err,
+      );
+      return;
+    }
+    updateMonitorUsername(monitor.id, previous);
+    monitor.target_username = previous;
+    throw err;
+  }
 }
 
 /**
