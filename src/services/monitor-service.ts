@@ -311,6 +311,13 @@ const inFlightNotices = new Set<number>();
  * that assumption made the next refresh send the very same notice a second
  * time. The deadline only bounds how long the cycle waits; the outcome is
  * reconciled whenever the send actually settles.
+ *
+ * While such an abandoned notice is still pending, an observation that would
+ * need a notice of its own is deferred whole: nothing is recorded and nothing
+ * is sent, so the next refresh observes the very same difference and
+ * announces it once the earlier send has settled. Recording the new label
+ * without sending anything (what this did before) lost the transition for
+ * good, because later refreshes then saw no difference to report.
  */
 async function persistUsernameAfterNotice(
   monitor: MonitorRow,
@@ -318,18 +325,20 @@ async function persistUsernameAfterNotice(
   notice: string | null,
 ): Promise<void> {
   const previous = monitor.target_username;
-  updateMonitorUsername(monitor.id, newUsername);
-  monitor.target_username = newUsername;
-  if (!notice || hasBlockedBot(monitor.telegram_id)) return;
-  if (inFlightNotices.has(monitor.id)) {
-    // The pending send will either be delivered or roll its own label back,
-    // and the next refresh then observes whatever is left. The new label is
-    // still recorded above; only the duplicate message is skipped.
+  const blocked = hasBlockedBot(monitor.telegram_id);
+  if (notice && !blocked && inFlightNotices.has(monitor.id)) {
+    // A notice from an earlier cycle is still pending, so this one cannot be
+    // sent yet. Leave the stored label alone as well: the difference must
+    // stay observable, or the next refresh would find nothing to report and
+    // this change would never reach the subscriber.
     console.log(
-      `[Monitor] A username notice for ${formatMonitorTarget(monitor)} from an earlier cycle is still in flight; recording the new label without sending another notice.`,
+      `[Monitor] A username notice for ${formatMonitorTarget(monitor)} from an earlier cycle is still in flight; deferring this observation to the next refresh.`,
     );
     return;
   }
+  updateMonitorUsername(monitor.id, newUsername);
+  monitor.target_username = newUsername;
+  if (!notice || blocked) return;
   inFlightNotices.add(monitor.id);
   const settled = (async () => {
     try {

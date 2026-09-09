@@ -684,3 +684,61 @@ test('a late send failure does not overwrite a username recorded by a later refr
   expect(getMonitor(row.id)!.target_username).toBe('newer');
   removeMonitor('tester', '2300');
 });
+
+test('an observation made while a notice is in flight is deferred, not recorded silently', async () => {
+  const row = addMonitor('tester', '2600', 'firsthandle', '2600111', null);
+  let reported = 'secondhandle';
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(2600), accessHash: bigInt(2600111), username: reported }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  let resolveSend: (value: unknown) => void = () => {};
+  send.mockReturnValueOnce(new Promise((resolve) => { resolveSend = resolve; }));
+  process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
+  try {
+    await refreshMonitorUsername(row);
+  } finally {
+    delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
+  }
+  expect(getMonitor(row.id)!.target_username).toBe('secondhandle');
+  expect(send).toHaveBeenCalledTimes(1);
+
+  // An hour later the account has changed handle again, while that first
+  // notice is still pending. The observation must be deferred whole: were
+  // the new label recorded without a notice, every later refresh would see
+  // no difference and the change would never reach the subscriber.
+  const hour = 60 * 60 * 1000 + 1;
+  reported = 'later';
+  const secondAt = Date.now() + hour;
+  jest.spyOn(Date, 'now').mockImplementation(() => secondAt);
+  try {
+    await refreshMonitorUsername(getMonitor(row.id)!);
+  } finally {
+    (Date.now as jest.Mock<any>).mockRestore();
+  }
+  expect(getMonitor(row.id)!.target_username).toBe('secondhandle');
+  expect(send).toHaveBeenCalledTimes(1);
+
+  // Once the earlier send settles, the difference left in place is observed
+  // again and announced.
+  resolveSend({ message_id: 1 });
+  await new Promise((r) => setImmediate(r));
+
+  send.mockResolvedValueOnce({ message_id: 2 } as any);
+  const thirdAt = secondAt + hour;
+  jest.spyOn(Date, 'now').mockImplementation(() => thirdAt);
+  try {
+    await refreshMonitorUsername(getMonitor(row.id)!);
+  } finally {
+    (Date.now as jest.Mock<any>).mockRestore();
+  }
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(getMonitor(row.id)!.target_username).toBe('later');
+
+  removeMonitor('tester', '2600');
+});

@@ -26,15 +26,47 @@ concurrency:
   group: pr-validation-${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.ref }}
   cancel-in-progress: true
 
+# Nothing beyond reading the repository by default. The commit statuses that a
+# dispatched run reports are written by the announce/report jobs below, which
+# never check out or execute the commit under validation; the job that does run
+# that code gets no write scope at all, so it cannot forge its own result.
 permissions:
   contents: read
-  # Needed only by the dispatched path, to report the result on the PR commit.
-  statuses: write
 
 jobs:
+  # A dispatched run belongs to the branch it was dispatched on (the base
+  # branch), so its check runs are attached to that branch's head and the PR
+  # commit would show no validation at all. Mirror the outcome onto the merged
+  # commit as a commit status instead.
+  announce:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Report validation as pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ inputs.sha }}" \
+            -f state=pending \
+            -f context=test \
+            -f description="Validate pull request (dispatched for a base-branch merge)" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # The only job that checks out and runs the commit under validation. Its name
+  # is what branch protection sees for pull_request runs, so it must not change.
   test:
+    needs: announce
+    # announce is skipped for pull_request and push events, and a skipped
+    # dependency would otherwise skip this job too. Run unless the whole run
+    # was cancelled, so a failure to post the pending status still validates.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     env:
       NODE_ENV: test
       PROD_BOT_TOKEN: test-token
@@ -46,27 +78,15 @@ jobs:
       USERBOT_PHONE_CODE: ""
       BOT_ADMIN_ID: 999
     steps:
-      # A dispatched run belongs to the branch it was dispatched on (the base
-      # branch), so its check runs are attached to that branch's head and the
-      # PR commit would show no validation at all. Mirror the outcome onto the
-      # merged commit as a commit status instead.
-      - name: Report validation as pending
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api "repos/${{ github.repository }}/statuses/${{ inputs.sha }}" \
-            -f state=pending \
-            -f context=test \
-            -f description="Validate pull request (dispatched for a base-branch merge)" \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
       - uses: actions/checkout@v4
         with:
           # An empty ref means "the default for this event" (the pull request
           # merge ref, or the pushed commit); a dispatched run instead checks
           # out exactly the commit it was asked to validate.
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.sha || '' }}
+          # The steps below execute that commit's code (install scripts, tests).
+          # Leaving the job token in .git/config would hand it to them.
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -109,14 +129,24 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
+  # Reports the dispatched run's outcome. Like announce, it holds the only
+  # write scope in this workflow and never checks out the validated commit.
+  report:
+    needs: test
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
       - name: Report validation result
-        if: always() && github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TEST_RESULT: ${{ needs.test.result }}
         run: |
-          state=success
-          if [ "${{ job.status }}" != "success" ]; then
-            state=failure
+          state=failure
+          if [ "$TEST_RESULT" = "success" ]; then
+            state=success
           fi
           gh api "repos/${{ github.repository }}/statuses/${{ inputs.sha }}" \
             -f state="$state" \
