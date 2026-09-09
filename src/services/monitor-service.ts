@@ -24,7 +24,6 @@ import {
   deletePendingUsernameNotice,
   listPendingUsernameNotices,
   markPendingUsernameNoticeAttempted,
-  updateMonitorUsernameClearingNotice,
   updateMonitorUsernameWithPendingNotice,
   type MonitorRow,
   type PendingUsernameNotice,
@@ -446,6 +445,18 @@ function maxNoticeReplaysPerCycle(): number {
   return Number(process.env.MONITOR_NOTICE_REPLAY_BATCH) || 50;
 }
 
+// A second, independent bound on the same work: how long a cycle may spend
+// replaying before it stops and leaves the rest for the next one. The attempt
+// cap alone bounds the number of sends, not the time they take, and a batch of
+// rows that each sit until the send deadline can stretch a cycle far past
+// anything the target loop budgets for. Read per call so tests can shrink it;
+// 0 is honoured (the first row is still attempted, nothing after it).
+function noticeReplayBudgetMs(): number {
+  const raw = process.env.MONITOR_NOTICE_REPLAY_BUDGET_MS;
+  const configured = raw === undefined || raw.trim() === '' ? NaN : Number(raw);
+  return Number.isFinite(configured) && configured >= 0 ? configured : 60 * 1000;
+}
+
 // Strictly increasing stamps for the claim a send writes before it starts.
 // Date.now() alone is not enough: several attempts in one cycle can land in
 // the same millisecond, and the replay order would then no longer rotate them.
@@ -489,13 +500,16 @@ function isMonitorSubscriberEligible(
  *   early every time, so a replay placed after the gate would never run until
  *   the rows aged out and were discarded unsent.
  * - Userbot healthy: after the target loop, so every monitor's
- *   refreshMonitorUsername has already run. A leftover row can describe a
+ *   refreshMonitorUsername has already run and a row it superseded is never
+ *   replayed from the stale snapshot. A leftover row can still describe a
  *   state the account has since left — a pending "dropped their username"
- *   notice for an account that has a handle again — and that refresh is what
- *   clears it, silently, on the null-to-handle transition. Replaying first
- *   would send the obsolete notice, and the silent transition means nothing
- *   would ever correct it. Notices created during the cycle are attempted
- *   immediately by the persist path, so only leftovers wait for this.
+ *   notice for an account that has a handle again — but that is now
+ *   self-correcting: every transition is announced, the null-to-handle one
+ *   included, so a stale removal notice that does go out is followed by an
+ *   accurate "now has the username" notice for the same monitor. No gating on
+ *   how fresh an observation is is needed here. Notices created during the
+ *   cycle are attempted immediately by the persist path, so only leftovers
+ *   wait for this.
  *
  * Each row is only sent to a subscriber still entitled to monitoring: on the
  * unhealthy path the cycle's own entitlement reconciliation never runs, and
@@ -520,9 +534,23 @@ export async function replayPendingUsernameNotices(): Promise<void> {
   // batch without ever touching last_attempt_at, so they were re-selected each
   // cycle and the deliverable rows behind them waited until they aged out.
   const budget = maxNoticeReplaysPerCycle();
+  const budgetMs = noticeReplayBudgetMs();
+  const startedAt = Date.now();
   let attempted = 0;
-  for (const row of pending) {
+  for (let index = 0; index < pending.length; index += 1) {
+    const row = pending[index];
     if (attempted >= budget) break;
+    // The second bound: sends that each run to their deadline cost time the
+    // attempt cap cannot see, so a cycle stops replaying once it has spent
+    // its share and leaves the rest of the backlog for the next one.
+    if (Date.now() - startedAt > budgetMs) {
+      console.log(
+        `[Monitor] Stopping the username notice replay after ${Math.round(
+          (Date.now() - startedAt) / 1000,
+        )}s (budget ${Math.round(budgetMs / 1000)}s); ${pending.length - index} row(s) wait for the next cycle.`,
+      );
+      break;
+    }
     // One bad row must never abort the cycle for everyone else.
     try {
       // A send started by this process is still running; it will clear the row.
@@ -587,10 +615,6 @@ export async function replayPendingUsernameNotices(): Promise<void> {
  * when a legacy NOT NULL on the column rejected the update after the notice
  * had already gone out.
  *
- * A transition worth no notice (a label acquired where there was none)
- * clears whatever was pending instead: a "dropped their username" notice
- * describes a state the account has already left.
- *
  * Each observation supersedes the last, so the newest row always carries the
  * newest text under a fresh attempt token; an older send still in flight can
  * no longer affect it, because every delete it makes is scoped to its own
@@ -601,13 +625,8 @@ export async function replayPendingUsernameNotices(): Promise<void> {
 async function persistUsernameAfterNotice(
   monitor: MonitorRow,
   newUsername: string | null,
-  notice: string | null,
+  notice: string,
 ): Promise<void> {
-  if (!notice) {
-    updateMonitorUsernameClearingNotice(monitor.id, newUsername);
-    monitor.target_username = newUsername;
-    return;
-  }
   const createdAt = Date.now();
   const attempt = updateMonitorUsernameWithPendingNotice(
     monitor.id,
@@ -688,10 +707,9 @@ async function stopUnresolvableMonitor(monitor: MonitorRow): Promise<void> {
 
 async function notifyUsernameRemoved(monitor: MonitorRow): Promise<void> {
   const oldUsername = monitor.target_username;
-  if (!oldUsername) {
-    await persistUsernameAfterNotice(monitor, null, null);
-    return;
-  }
+  // Defensive only: applyUsernameObservation reaches this with a label in
+  // hand. Without one there is nothing to clear and nothing to announce.
+  if (!oldUsername) return;
   const language = findUserById(monitor.telegram_id)?.language;
   const notice = t(language, 'monitor.usernameRemoved', {
     old: `@${oldUsername}`,
@@ -735,11 +753,20 @@ async function notifyUsernameChange(
   newUsername: string,
 ): Promise<void> {
   const oldUsername = monitor.target_username;
+  const language = findUserById(monitor.telegram_id)?.language;
   if (!oldUsername) {
-    await persistUsernameAfterNotice(monitor, newUsername, null);
+    // A monitor with no label announces the handle it has just acquired
+    // rather than recording it silently. Silence here was what left a
+    // replayed "dropped their username" notice as the subscriber's last word
+    // on an account that already has a handle again: nothing would ever
+    // observe this transition a second time, so nothing would correct it.
+    const notice = t(language, 'monitor.usernameAcquired', {
+      user: formatMonitorTarget({ ...monitor, target_username: null }),
+      new: `@${newUsername}`,
+    });
+    await persistUsernameAfterNotice(monitor, newUsername, notice);
     return;
   }
-  const language = findUserById(monitor.telegram_id)?.language;
   const format = (username: string) => (username.startsWith('+') ? username : `@${username}`);
   const notice = t(language, 'monitor.usernameChanged', {
     old: format(oldUsername),

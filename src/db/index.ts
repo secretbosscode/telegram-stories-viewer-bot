@@ -1117,31 +1117,6 @@ export function updateMonitorUsernameWithPendingNotice(
   }
 }
 
-/**
- * Writes a label whose transition is not worth announcing and drops whatever
- * notice was still owed, in one transaction. The pending text describes a
- * state this observation has just superseded (a "dropped their username"
- * notice once the account has one again), so sending it later would tell the
- * subscriber something that is no longer true; the two writes have to land
- * together or a crash between them would leave exactly that.
- */
-export function updateMonitorUsernameClearingNotice(
-  id: number,
-  username: string | null,
-): void {
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    updateMonitorUsername(id, username);
-    deletePendingUsernameNoticesForMonitor(id);
-    db.exec('COMMIT');
-  } catch (error) {
-    try {
-      db.exec('ROLLBACK');
-    } catch {}
-    throw error;
-  }
-}
-
 export function updateMonitorTarget(id: number, target_id: string): void {
   db.prepare(`UPDATE monitors SET target_id = ? WHERE id = ?`).run(target_id, id);
 }

@@ -66,6 +66,7 @@ import {
   stopMonitorLoop,
 } from '../src/services/monitor-service';
 import { isUserPremium } from '../src/services/premium-service';
+import { t } from '../src/lib/i18n';
 import { bot } from '../src/index';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
@@ -925,7 +926,7 @@ test('a second observation whose first send fails late still leaves the newer ro
   removeMonitor('tester', '3200');
 });
 
-test('a handle acquired again clears the removal notice that was still pending', async () => {
+test('a handle acquired again is announced and supersedes the pending removal notice', async () => {
   clearOutbox();
   const row = addMonitor('tester', '3600', 'goneforawhile', '3600111', null);
   let reported: string | null = null;
@@ -937,17 +938,21 @@ test('a handle acquired again clears the removal notice that was still pending',
   });
   (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
   const send = bot.telegram.sendMessage as jest.Mock<any>;
-  send.mockClear();
+  send.mockReset();
+  send.mockResolvedValue(undefined);
   send.mockRejectedValueOnce(new Error('ETIMEDOUT'));
 
   await refreshMonitorUsername(row);
   expect(getMonitor(row.id)!.target_username).toBeNull();
-  expect(pendingFor(row.id)).toBeDefined();
+  const owed = pendingFor(row.id);
+  expect(owed).toBeDefined();
 
-  // An hour later the account has a handle again. Nothing is announced (there
-  // is no stored handle to compare against), and the pending "dropped their
-  // username" notice now describes a state the account has left.
+  // An hour later the account has a handle again. The transition is announced
+  // rather than recorded silently: the pending "dropped their username" notice
+  // describes a state the account has left, and only an announcement of its own
+  // can correct that if the stale one was already replayed.
   reported = 'backagain';
+  (t as jest.Mock).mockClear();
   const later = Date.now() + 60 * 60 * 1000 + 1;
   jest.spyOn(Date, 'now').mockImplementation(() => later);
   try {
@@ -956,10 +961,52 @@ test('a handle acquired again clears the removal notice that was still pending',
     (Date.now as jest.Mock<any>).mockRestore();
   }
   expect(getMonitor(row.id)!.target_username).toBe('backagain');
+  expect((t as jest.Mock).mock.calls.map((c: any[]) => c[1])).toContain(
+    'monitor.usernameAcquired',
+  );
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(send).toHaveBeenLastCalledWith('tester', 'translated');
+  // The observation replaced the owed row under a fresh attempt token, and the
+  // send that followed it settled, so nothing is left owed.
   expect(pendingFor(row.id)).toBeUndefined();
-  expect(send).toHaveBeenCalledTimes(1);
 
+  send.mockReset();
   removeMonitor('tester', '3600');
+});
+
+test('a phone-number label that gains a handle is announced as a change', async () => {
+  clearOutbox();
+  const row = addMonitor('tester', '3610', '+15555550111', '3610111', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(3610), accessHash: bigInt(3610111), username: 'phonehandle' }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockReset();
+  send.mockResolvedValue(undefined);
+  (t as jest.Mock).mockClear();
+
+  await refreshMonitorUsername(row);
+
+  // A '+…' label is a label like any other, so this is a change, not an
+  // acquisition: the subscriber is told what the target used to be called.
+  expect(getMonitor(row.id)!.target_username).toBe('phonehandle');
+  expect(send).toHaveBeenCalledWith('tester', 'translated');
+  const changed = (t as jest.Mock).mock.calls.find(
+    (c: any[]) => c[1] === 'monitor.usernameChanged',
+  );
+  expect(changed).toBeDefined();
+  expect((changed as any[])[2]).toEqual({ old: '+15555550111', user: '@phonehandle' });
+  expect(
+    (t as jest.Mock).mock.calls.map((c: any[]) => c[1]),
+  ).not.toContain('monitor.usernameAcquired');
+  expect(pendingFor(row.id)).toBeUndefined();
+
+  send.mockReset();
+  removeMonitor('tester', '3610');
 });
 
 test('a notice pending past the deadline is held in the outbox until the send settles', async () => {
@@ -1186,7 +1233,7 @@ test('pending notices are replayed even while the userbot connection is unhealth
   removeMonitor('tester', '3500');
 });
 
-test('a leftover removal notice is dropped when the refresh finds a handle again', async () => {
+test('a leftover removal notice is superseded and the regained handle announced instead', async () => {
   clearOutbox();
   // forceCheckMonitors walks every monitor; leave it only this one to check.
   for (const stale of listAllMonitors()) removeMonitor(stale.telegram_id, stale.target_id);
@@ -1216,13 +1263,16 @@ test('a leftover removal notice is dropped when the refresh finds a handle again
   }
 
   // On a healthy cycle the replay runs after the target loop, so the refresh
-  // has already cleared this row on the silent null-to-handle transition.
-  // Replaying first sent the obsolete notice, and nothing would ever correct
-  // it, because that transition announces nothing of its own.
+  // has already superseded this row: its observation replaced the leftover
+  // text under a fresh attempt token and announced the regained handle, so the
+  // obsolete removal notice is never sent and the post-loop replay finds
+  // nothing left to send.
   expect(send.mock.calls.map((c: any[]) => c[1])).not.toContain('removal notice');
+  expect(send.mock.calls.map((c: any[]) => c[1])).toContain('translated');
   expect(pendingFor(row.id)).toBeUndefined();
   expect(getMonitor(row.id)!.target_username).toBe('backagain');
 
+  send.mockReset();
   removeMonitor('tester', '3800');
 });
 
@@ -1255,6 +1305,47 @@ test('the replay cap counts attempts, so held rows do not starve deliverable one
   setBotBlocked('blocker', false);
   removeMonitor('blocker', '3900');
   removeMonitor('tester', '3901');
+});
+
+test('the replay stops once it has spent its time budget and leaves the rest for the next cycle', async () => {
+  clearOutbox();
+  const first = addMonitor('tester', '4200', 'firstbudget', '4200111', null);
+  const second = addMonitor('tester', '4201', 'secondbudget', '4201111', null);
+  const base = Date.now();
+  upsertPendingUsernameNotice(first.id, 'tester', 'first budget notice', base - 60 * 60 * 1000);
+  upsertPendingUsernameNotice(second.id, 'tester', 'second budget notice', base - 59 * 60 * 1000);
+
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockReset();
+  // Deterministic elapsed time: the clock only moves once a notice has gone
+  // out, so the check before the first row sees nothing spent (a budget of 0
+  // still allows one attempt) and the check before the second one stops it.
+  let elapsed = 0;
+  send.mockImplementation(async () => {
+    elapsed = 5000;
+    return undefined;
+  });
+  jest.spyOn(Date, 'now').mockImplementation(() => base + elapsed);
+  process.env.MONITOR_NOTICE_REPLAY_BUDGET_MS = '0';
+  try {
+    await replayPendingUsernameNotices();
+  } finally {
+    delete process.env.MONITOR_NOTICE_REPLAY_BUDGET_MS;
+    (Date.now as jest.Mock<any>).mockRestore();
+  }
+
+  // The attempt cap alone bounds the number of sends, not the time they take;
+  // a backlog of slow sends would otherwise stretch the cycle far past it.
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls.map((c: any[]) => c[1])).toEqual(['first budget notice']);
+  expect(pendingFor(first.id)).toBeUndefined();
+  expect(pendingFor(second.id)?.text).toBe('second budget notice');
+  // Left untouched, so the next cycle picks it up as an untried row.
+  expect(pendingFor(second.id)?.last_attempt_at).toBeNull();
+
+  send.mockReset();
+  removeMonitor('tester', '4200');
+  removeMonitor('tester', '4201');
 });
 
 test('a row deleted while an earlier notice was being sent is not sent from the stale snapshot', async () => {
