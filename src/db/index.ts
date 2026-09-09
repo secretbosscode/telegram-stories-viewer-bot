@@ -108,6 +108,89 @@ if (!monitorColumns.some((c) => c.name === 'target_id')) {
 if (!monitorColumns.some((c) => c.name === 'target_access_hash')) {
   db.exec('ALTER TABLE monitors ADD COLUMN target_access_hash TEXT');
 }
+// Installs created before v1.35.5 declared target_username NOT NULL. A
+// monitored account that removes its username must be storable with no label
+// (the caption then falls back to the account id), and SQLite cannot drop a
+// NOT NULL in place, so rebuild the table once without it. Indexes are
+// recreated below; the Stars safety triggers are installed later at startup,
+// so nothing depending on this table exists yet when this runs.
+const legacyUsernameColumn = monitorColumns.find((c) => c.name === 'target_username');
+if (legacyUsernameColumn && Number(legacyUsernameColumn.notnull) === 1) {
+  const wanted = [
+    'id',
+    'telegram_id',
+    'target_id',
+    'target_username',
+    'target_access_hash',
+    'last_checked',
+    'last_photo_id',
+    'created_at',
+  ];
+  const present = new Set(
+    (db.prepare('PRAGMA table_info(monitors)').all() as any[]).map((c) => String(c.name)),
+  );
+  const columns = wanted.filter((c) => present.has(c)).join(', ');
+  // Triggers and views that mention this table (the Stars safety triggers,
+  // one of which lives on star_payments and references monitors) would make
+  // the rename fail with "no such table: main.monitors" once the old table is
+  // dropped. Drop them first and recreate them verbatim afterwards.
+  const dependents = db
+    .prepare(
+      `SELECT type, name, sql FROM sqlite_master
+       WHERE type IN ('trigger', 'view') AND sql IS NOT NULL
+         AND (tbl_name = 'monitors' OR sql LIKE '%monitors%')`,
+    )
+    .all() as { type: string; name: string; sql: string }[];
+  // AUTOINCREMENT keeps a high-water mark in sqlite_sequence so deleted ids
+  // are never reused (monitor_sent_stories rows are keyed by monitor id).
+  // Copying only live rows would reset it to the largest live id.
+  let previousSeq = 0;
+  try {
+    const row = db
+      .prepare(`SELECT seq FROM sqlite_sequence WHERE name = 'monitors'`)
+      .get() as { seq: number } | undefined;
+    previousSeq = Number(row?.seq ?? 0);
+  } catch {
+    previousSeq = 0;
+  }
+  const quote = (name: string) => `"${name.replace(/"/g, '""')}"`;
+  const dropDependents = dependents
+    .map((d) => `DROP ${d.type.toUpperCase()} IF EXISTS ${quote(d.name)};`)
+    .join('\n');
+  const recreateDependents = dependents.map((d) => `${d.sql};`).join('\n');
+  try {
+    db.exec(`
+      BEGIN IMMEDIATE;
+      ${dropDependents}
+      CREATE TABLE monitors_migrated (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id TEXT NOT NULL,
+        target_id TEXT,
+        target_username TEXT,
+        target_access_hash TEXT,
+        last_checked INTEGER,
+        last_photo_id TEXT,
+        created_at INTEGER DEFAULT (strftime('%s','now'))
+      );
+      INSERT INTO monitors_migrated (${columns}) SELECT ${columns} FROM monitors;
+      DROP TABLE monitors;
+      ALTER TABLE monitors_migrated RENAME TO monitors;
+      DELETE FROM sqlite_sequence WHERE name = 'monitors';
+      INSERT INTO sqlite_sequence (name, seq)
+        VALUES ('monitors', MAX(${Math.floor(previousSeq)}, (SELECT COALESCE(MAX(id), 0) FROM monitors)));
+      ${recreateDependents}
+      COMMIT;
+    `);
+    console.log(
+      `[DB] monitors.target_username is now nullable (legacy NOT NULL dropped; ${dependents.length} dependent trigger(s)/view(s) recreated).`,
+    );
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
+    console.error('[DB] Failed to relax monitors.target_username NOT NULL:', error);
+  }
+}
 db.exec('DROP INDEX IF EXISTS monitor_unique_idx');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_unique_idx ON monitors (telegram_id, target_id)');
 
@@ -237,6 +320,40 @@ if (needsSentStoryMigration) {
 
 db.exec('DROP INDEX IF EXISTS monitor_sent_idx');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_sent_idx ON monitor_sent_stories (monitor_id, story_key, story_type)');
+
+// Durable outbox for "the target changed / dropped its username" notices, and
+// the only record that one is owed. The row is written in the same
+// transaction as the new label, so a process that dies between the label
+// write and Telegram's confirmation does not lose the notification intent:
+// the label is stored (later refreshes see no difference to report) but the
+// pending row makes the next monitor cycle send the notice anyway. One notice
+// per monitor is enough: only the latest transition is worth announcing, so
+// each observation replaces whatever was pending.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS monitor_username_notices (
+    monitor_id INTEGER PRIMARY KEY,
+    telegram_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    attempt TEXT NOT NULL DEFAULT '',
+    last_attempt_at INTEGER
+  );
+`);
+// `attempt` identifies the write that produced the row, so a send that
+// settles late can only ever delete the row it created and never a newer
+// notice recorded in the meantime. `last_attempt_at` rotates rows whose send
+// keeps failing to the back of the replay batch, so a large backlog does not
+// starve its newer entries. Both are added in place for a table created by an
+// earlier build, following the pattern used for `monitors` above.
+const noticeColumns = db
+  .prepare('PRAGMA table_info(monitor_username_notices)')
+  .all() as any[];
+if (!noticeColumns.some((c) => c.name === 'attempt')) {
+  db.exec("ALTER TABLE monitor_username_notices ADD COLUMN attempt TEXT NOT NULL DEFAULT ''");
+}
+if (!noticeColumns.some((c) => c.name === 'last_attempt_at')) {
+  db.exec('ALTER TABLE monitor_username_notices ADD COLUMN last_attempt_at INTEGER');
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS hidden_story_cache (
@@ -777,6 +894,8 @@ export function removeMonitor(
     // Monitor ids are never reused, so delivery records for a removed monitor
     // are unreachable; drop them together with the monitor.
     db.prepare(`DELETE FROM monitor_sent_stories WHERE monitor_id = ?`).run(id);
+    // A notice about a monitor that no longer exists must never be replayed.
+    deletePendingUsernameNoticesForMonitor(id);
   }
   db.prepare(
     `DELETE FROM monitors WHERE telegram_id = ? AND target_id = ?`
@@ -857,6 +976,145 @@ export function updateMonitorPhoto(id: number, last_photo_id: string | null): vo
 
 export function updateMonitorUsername(id: number, username: string | null): void {
   db.prepare(`UPDATE monitors SET target_username = ? WHERE id = ?`).run(username, id);
+}
+
+// ----- Pending username notices (durable outbox) -----
+export interface PendingUsernameNotice {
+  monitor_id: number;
+  telegram_id: string;
+  text: string;
+  created_at: number;
+  /** Identifies the write that produced this row; see upsertPendingUsernameNotice. */
+  attempt: string;
+  /** When a replay last tried (and failed) to deliver it; null while untried. */
+  last_attempt_at: number | null;
+}
+
+let noticeAttemptCounter = 0;
+
+/**
+ * A token unique to one outbox write. Only the send started for that write
+ * may delete the row: a send abandoned at its deadline can settle long after
+ * a later observation replaced the row, and an unconditional delete then
+ * threw away a notice nobody had sent yet.
+ */
+function newNoticeAttempt(): string {
+  noticeAttemptCounter += 1;
+  return `${Date.now().toString(36)}-${noticeAttemptCounter.toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+}
+
+/**
+ * Records (or replaces) the notice still owed to this monitor's subscriber
+ * and returns the attempt token identifying this write. A newer observation
+ * always supersedes whatever was pending, so replacing a row also resets
+ * last_attempt_at: the new text has never been tried, and it goes to the
+ * front of the replay order rather than inheriting the old row's place.
+ */
+export function upsertPendingUsernameNotice(
+  monitor_id: number,
+  telegram_id: string,
+  text: string,
+  created_at: number,
+): string {
+  const attempt = newNoticeAttempt();
+  db.prepare(
+    `INSERT INTO monitor_username_notices (monitor_id, telegram_id, text, created_at, attempt, last_attempt_at)
+     VALUES (?, ?, ?, ?, ?, NULL)
+     ON CONFLICT(monitor_id) DO UPDATE SET
+       telegram_id = excluded.telegram_id,
+       text = excluded.text,
+       created_at = excluded.created_at,
+       attempt = excluded.attempt,
+       last_attempt_at = NULL`,
+  ).run(monitor_id, telegram_id, text, created_at, attempt);
+  return attempt;
+}
+
+/**
+ * Drops the row written by one attempt. Every delete a send performs is
+ * scoped this way, so a settlement that arrives after a later observation
+ * replaced the row can only ever remove its own work.
+ */
+export function deletePendingUsernameNotice(monitor_id: number, attempt: string): void {
+  db.prepare(
+    `DELETE FROM monitor_username_notices WHERE monitor_id = ? AND attempt = ?`,
+  ).run(monitor_id, attempt);
+}
+
+/**
+ * Drops whatever notice is owed for this monitor, whichever attempt wrote it.
+ * Used where no send is being reconciled: the monitor is going away, or a new
+ * observation made the pending text obsolete without owing one of its own.
+ */
+export function deletePendingUsernameNoticesForMonitor(monitor_id: number): void {
+  db.prepare(`DELETE FROM monitor_username_notices WHERE monitor_id = ?`).run(monitor_id);
+}
+
+/**
+ * Claims the row for the send that is about to start: the stamp rotates it
+ * behind rows nothing has tried yet (or that were tried longer ago), so a
+ * send that never settles cannot fill every capped batch from now on. Scoped
+ * to the attempt for the same reason the delete is.
+ *
+ * Returns how many rows the claim matched: 0 means the row this send holds is
+ * no longer the one owed — it was already settled, or a newer observation
+ * replaced it under a fresh token — and the caller must not send it.
+ */
+export function markPendingUsernameNoticeAttempted(
+  monitor_id: number,
+  attempt: string,
+  at: number,
+): number {
+  const result = db.prepare(
+    `UPDATE monitor_username_notices SET last_attempt_at = ?
+     WHERE monitor_id = ? AND attempt = ?`,
+  ).run(at, monitor_id, attempt);
+  return result.changes as number;
+}
+
+export function listPendingUsernameNotices(): PendingUsernameNotice[] {
+  return db
+    .prepare(
+      // Untried rows first, then the least recently tried. Ordering by
+      // created_at alone let a handful of persistently failing old rows fill
+      // every capped replay batch while newer ones aged out untried.
+      `SELECT monitor_id, telegram_id, text, created_at, attempt, last_attempt_at
+       FROM monitor_username_notices
+       ORDER BY COALESCE(last_attempt_at, 0) ASC, created_at ASC, monitor_id ASC`,
+    )
+    .all() as PendingUsernameNotice[];
+}
+
+/**
+ * Writes the new label and the notice still owed for it in one transaction,
+ * returning the attempt token of the outbox row so the send it starts can
+ * later delete exactly that row and no other.
+ * Split across two statements a crash in between would either lose the notice
+ * (label stored, nothing left to replay) or announce a change that was never
+ * recorded, so both must land together. The shim exposes no transaction
+ * helper; BEGIN IMMEDIATE takes the write lock up front, as elsewhere here.
+ */
+export function updateMonitorUsernameWithPendingNotice(
+  id: number,
+  username: string | null,
+  telegram_id: string,
+  text: string,
+  created_at: number,
+): string {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    updateMonitorUsername(id, username);
+    const attempt = upsertPendingUsernameNotice(id, telegram_id, text, created_at);
+    db.exec('COMMIT');
+    return attempt;
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
+    throw error;
+  }
 }
 
 export function updateMonitorTarget(id: number, target_id: string): void {
