@@ -10,7 +10,6 @@ import {
   countMonitors,
   listMonitors,
   getMonitor,
-  updateMonitorUsername,
   updateMonitorAccessHash,
   updateMonitorTarget,
   updateMonitorChecked,
@@ -24,6 +23,7 @@ import {
   deletePendingUsernameNotice,
   listPendingUsernameNotices,
   markPendingUsernameNoticeAttempted,
+  updateMonitorUsernameClearingNotice,
   updateMonitorUsernameWithPendingNotice,
   type MonitorRow,
   type PendingUsernameNotice,
@@ -297,12 +297,12 @@ function isPermanentDeliveryFailure(error: unknown): boolean {
 }
 
 // Notices that a previous cycle abandoned at its deadline but that are still
-// pending underneath (the race cannot cancel the Telegram call). A later
-// cycle must not start a second notice for the same monitor while one is in
-// flight, or a late success plus the retry would tell the subscriber twice.
-// The value is when the attempt started: a send that never settles at all
-// would otherwise pin its monitor for the life of the process and every later
-// observation for it would be deferred forever (see noticeInFlight).
+// pending underneath (the race cannot cancel the Telegram call). No second
+// send may start for the same monitor while one is in flight, or a late
+// success plus the retry would tell the subscriber twice; the pending row is
+// simply left for the next replay. The value is when the attempt started: a
+// send that never settles at all would otherwise pin its monitor for the life
+// of the process and its row would never be retried (see noticeInFlight).
 const inFlightNotices = new Map<number, number>();
 
 // Read per call so tests can shorten it; 30s is well inside the target deadline.
@@ -312,7 +312,8 @@ function noticeSendTimeoutMs(): number {
 
 // How long an unsettled send may hold its monitor's slot. Long enough that a
 // merely slow Telegram call is never treated as gone, short enough that a
-// send which never settles costs at most one deferred refresh.
+// send which never settles delays its monitor's next notice by one cycle
+// rather than for good.
 function noticeInFlightMaxMs(): number {
   return Number(process.env.MONITOR_NOTICE_INFLIGHT_MAX_MS) || 10 * 60 * 1000;
 }
@@ -321,7 +322,7 @@ function noticeInFlightMaxMs(): number {
  * Whether a notice for this monitor is still genuinely in flight. An entry
  * older than the bound above is abandoned: its promise may never settle (a
  * Telegram call can hang indefinitely), and keeping it would block every
- * later notice for that monitor for good. The entry is dropped so the caller
+ * later send for that monitor for good. The entry is dropped so the caller
  * can proceed as if nothing were pending.
  */
 function noticeInFlight(monitorId: number): boolean {
@@ -337,68 +338,55 @@ function noticeInFlight(monitorId: number): boolean {
   return false;
 }
 
-/** What a failed send has to undo. The replay path passes none: it has not written a label. */
-interface NoticeRollback {
-  monitor: MonitorRow;
-  /** The label this attempt wrote, and so the only one it may restore. */
-  applied: string | null;
-  previous: string | null;
+/** A label for the logs; the monitor may already be gone when a send settles. */
+function noticeTargetLabel(monitorId: number, telegramId: string): string {
+  const monitor = getMonitor(monitorId);
+  return monitor ? formatMonitorTarget(monitor) : `monitor ${monitorId} (${telegramId})`;
 }
 
 /**
- * Sends one username notice under the shared deadline / in-flight /
- * settlement machinery, and clears the outbox row once the outcome is known.
- * Both the persist path and the restart replay go through here so the two can
- * never drift apart.
+ * Delivers one outbox row: the single place a username notice is ever sent.
+ * The row is the intent; this only reconciles it with what Telegram says.
+ *
+ * The row is claimed (stamped as tried) before the send starts, so a send
+ * that hangs rotates its row behind the untried ones instead of filling every
+ * capped replay batch from now on. The send is then raced against a deadline
+ * that only bounds how long the caller waits: an abandoned send can still be
+ * accepted by Telegram, so the row survives until the send actually settles,
+ * and the settlement below clears it whichever way it goes.
+ *
+ * Every delete is scoped to this attempt. A newer observation replaces the
+ * row with a fresh token, so a late settlement can never discard a notice
+ * nobody has sent yet.
  */
-async function sendUsernameNotice(
-  monitorId: number,
-  telegramId: string,
-  text: string,
-  label: string,
-  rollback: NoticeRollback | null,
-  attempt: string,
-): Promise<void> {
+async function attemptPendingNotice(row: PendingUsernameNotice): Promise<void> {
+  const monitorId = row.monitor_id;
+  const label = noticeTargetLabel(monitorId, row.telegram_id);
+  markPendingUsernameNoticeAttempted(monitorId, row.attempt, nextNoticeAttemptStamp());
   const startedAt = Date.now();
   inFlightNotices.set(monitorId, startedAt);
   const settled = (async () => {
     try {
-      await bot.telegram.sendMessage(telegramId, text);
-      // Delivered: the intent is discharged. Only the row this attempt wrote
-      // may go: a send abandoned at its deadline can settle after a later
-      // observation has already recorded a newer notice here.
-      deletePendingUsernameNotice(monitorId, attempt);
+      await bot.telegram.sendMessage(row.telegram_id, row.text);
+      // Delivered: the intent is discharged.
+      deletePendingUsernameNotice(monitorId, row.attempt);
     } catch (err) {
       if (isPermanentDeliveryFailure(err)) {
+        // Nothing will ever deliver it; replaying it every cycle would only
+        // hammer a chat that is gone. The label stays as recorded.
         console.warn(
-          `[Monitor] Username notice for ${label} undeliverable; keeping the recorded change:`,
+          `[Monitor] Username notice for ${label} is undeliverable; dropping it and keeping the recorded change:`,
           (err as any)?.message ?? err,
         );
-        // Nothing will ever deliver it; replaying it every cycle would only
-        // hammer a chat that is gone.
-        deletePendingUsernameNotice(monitorId, attempt);
+        deletePendingUsernameNotice(monitorId, row.attempt);
         return;
       }
-      if (rollback) {
-        // Restore only what this attempt wrote. A send abandoned by an earlier
-        // cycle can fail late, after a later refresh already recorded a newer
-        // observation; that newer value must win.
-        const stored = getMonitor(monitorId);
-        if (stored && stored.target_username === rollback.applied) {
-          updateMonitorUsername(monitorId, rollback.previous);
-        }
-        if (rollback.monitor.target_username === rollback.applied) {
-          rollback.monitor.target_username = rollback.previous;
-        }
-        // The restored label makes the next refresh observe the same
-        // difference and compose the notice again, so the row is redundant;
-        // keeping it would announce the change twice. A newer row written by
-        // a later observation carries a different attempt and survives.
-        deletePendingUsernameNotice(monitorId, attempt);
-      }
-      // The replay path has no label to restore: the row simply stays for the
-      // next cycle to retry.
-      throw err;
+      // Transient: the row stays, carrying the stamp written above, and the
+      // next replay picks it up.
+      console.warn(
+        `[Monitor] Username notice for ${label} could not be delivered; it stays in the outbox for the next cycle:`,
+        (err as any)?.message ?? err,
+      );
     }
   })().finally(() => {
     // Only this attempt's entry may be cleared. If the entry was already
@@ -406,22 +394,22 @@ async function sendUsernameNotice(
     // slot and let a duplicate go out alongside it.
     if (inFlightNotices.get(monitorId) === startedAt) inFlightNotices.delete(monitorId);
   });
-  // If the deadline wins the race below, the rejection handled inside the
-  // settlement above must not resurface as an unhandled rejection.
+  // A failure inside the settlement (a database error, say) must not resurface
+  // as an unhandled rejection once the deadline has won the race below.
   settled.catch(() => undefined);
   try {
-    await withDeadline(settled, noticeSendTimeoutMs(), `[Monitor] Username notice to ${telegramId}`);
+    await withDeadline(
+      settled,
+      noticeSendTimeoutMs(),
+      `[Monitor] Username notice to ${row.telegram_id}`,
+    );
   } catch (err) {
     if (err instanceof DeadlineExceeded) {
-      // Still pending: the label stays as recorded, so a late success does
-      // not produce a duplicate, and the outbox row stays too — the
-      // settlement handler above clears it whichever way it goes.
       console.warn(
-        `[Monitor] Username notice for ${label} is still pending after the send deadline; keeping the recorded label and reconciling when it settles.`,
+        `[Monitor] Username notice for ${label} is still pending after the send deadline; it stays in the outbox until the send settles.`,
       );
       return;
     }
-    // The send failed before the deadline; the rollback already ran above.
     throw err;
   }
 }
@@ -436,9 +424,9 @@ function maxNoticeReplaysPerCycle(): number {
   return Number(process.env.MONITOR_NOTICE_REPLAY_BATCH) || 50;
 }
 
-// Strictly increasing stamps for replay attempts. Date.now() alone is not
-// enough: several attempts in one cycle can land in the same millisecond, and
-// the replay order below would then no longer rotate them.
+// Strictly increasing stamps for the claim a send writes before it starts.
+// Date.now() alone is not enough: several attempts in one cycle can land in
+// the same millisecond, and the replay order would then no longer rotate them.
 let lastNoticeAttemptStamp = 0;
 function nextNoticeAttemptStamp(): number {
   const now = Date.now();
@@ -506,7 +494,12 @@ export async function replayPendingUsernameNotices(): Promise<void> {
         continue;
       }
       if (hasBlockedBot(row.telegram_id)) {
-        deletePendingUsernameNotice(row.monitor_id, row.attempt);
+        // Nothing can reach this subscriber right now. The row is kept, as
+        // for an ineligible one: they may unblock, removeMonitor takes the
+        // row with it if they do not, and the give-up above bounds the wait.
+        console.log(
+          `[Monitor] Holding the username notice for ${formatMonitorTarget(monitor)}: ${row.telegram_id} has blocked the bot.`,
+        );
         continue;
       }
       if (!isMonitorSubscriberEligible(row.telegram_id)) {
@@ -521,102 +514,75 @@ export async function replayPendingUsernameNotices(): Promise<void> {
         );
         continue;
       }
-      await sendUsernameNotice(
-        row.monitor_id,
-        row.telegram_id,
-        row.text,
-        formatMonitorTarget(monitor),
-        // No label to roll back: it was persisted by an earlier run, and a
-        // transient failure just leaves the row for the next cycle.
-        null,
-        row.attempt,
-      );
+      await attemptPendingNotice(row);
     } catch (error) {
       console.error(
         `[Monitor] Could not replay the username notice for monitor ${row.monitor_id}:`,
         (error as any)?.message ?? error,
       );
-      // Stamp the failed attempt so the next batch tries the rows that have
-      // waited longest without a try before coming back to this one.
-      try {
-        markPendingUsernameNoticeAttempted(
-          row.monitor_id,
-          row.attempt,
-          nextNoticeAttemptStamp(),
-        );
-      } catch (stampError) {
-        console.error(
-          `[Monitor] Could not record the failed replay attempt for monitor ${row.monitor_id}:`,
-          stampError,
-        );
-      }
     }
   }
 }
 
 /**
- * Records the new label, then sends the notice. A transient send failure
- * restores the previous label so the next refresh (an hour later) observes
- * the same difference and retries the notice; a permanent one (blocked bot,
- * dead chat) keeps the change. Persisting first means a failing write can
- * never leave a subscriber receiving the same notice every hour, which is
- * what happened when a legacy NOT NULL on the column rejected the update
- * after the notice had already gone out.
+ * Records what was observed. The label is written unconditionally, together
+ * with the notice owed for it, and nothing here is ever undone: the outbox
+ * row, not the label, is what remembers that a subscriber still has to be
+ * told, so a send that fails, hangs or is abandoned costs nothing but a
+ * retry. Persisting first also means a failing write can never leave a
+ * subscriber receiving the same notice every hour, which is what happened
+ * when a legacy NOT NULL on the column rejected the update after the notice
+ * had already gone out.
  *
- * The send itself is not raced against the deadline: a send abandoned at the
- * deadline can still be accepted by Telegram, and rolling the label back on
- * that assumption made the next refresh send the very same notice a second
- * time. The deadline only bounds how long the cycle waits; the outcome is
- * reconciled whenever the send actually settles.
+ * A notice-less transition (the label was empty, or only its spelling
+ * changed) clears whatever was pending instead: a "dropped their username"
+ * notice describes a state the account has already left.
  *
- * While such an abandoned notice is still pending, an observation that would
- * need a notice of its own is deferred whole: nothing is recorded and nothing
- * is sent, so the next refresh observes the very same difference and
- * announces it once the earlier send has settled. Recording the new label
- * without sending anything (what this did before) lost the transition for
- * good, because later refreshes then saw no difference to report.
+ * Each observation supersedes the last, so the newest row always carries the
+ * newest text under a fresh attempt token; an older send still in flight can
+ * no longer affect it, because every delete it makes is scoped to its own
+ * attempt. The immediate send below is only for promptness — if one is
+ * already in flight for this monitor, the next cycle's replay delivers the
+ * new row instead.
  */
 async function persistUsernameAfterNotice(
   monitor: MonitorRow,
   newUsername: string | null,
   notice: string | null,
 ): Promise<void> {
-  const previous = monitor.target_username;
-  const blocked = hasBlockedBot(monitor.telegram_id);
-  if (notice && !blocked && noticeInFlight(monitor.id)) {
-    // A notice from an earlier cycle is still pending, so this one cannot be
-    // sent yet. Leave the stored label alone as well: the difference must
-    // stay observable, or the next refresh would find nothing to report and
-    // this change would never reach the subscriber.
-    console.log(
-      `[Monitor] A username notice for ${formatMonitorTarget(monitor)} from an earlier cycle is still in flight; deferring this observation to the next refresh.`,
-    );
-    return;
-  }
-  if (!notice || blocked) {
-    updateMonitorUsername(monitor.id, newUsername);
+  if (!notice) {
+    updateMonitorUsernameClearingNotice(monitor.id, newUsername);
     monitor.target_username = newUsername;
     return;
   }
-  // The label and the notice owed for it go in together: the in-memory record
-  // of "a notice is still owed here" dies with the process, so it is written
-  // to the outbox before the send starts and cleared once the send settles.
+  const createdAt = Date.now();
   const attempt = updateMonitorUsernameWithPendingNotice(
     monitor.id,
     newUsername,
     monitor.telegram_id,
     notice,
-    Date.now(),
+    createdAt,
   );
   monitor.target_username = newUsername;
-  await sendUsernameNotice(
-    monitor.id,
-    monitor.telegram_id,
-    notice,
-    formatMonitorTarget(monitor),
-    { monitor, applied: newUsername, previous },
+  if (hasBlockedBot(monitor.telegram_id)) {
+    // The row waits in the outbox for them to unblock, exactly as replay
+    // treats one it finds for a blocked subscriber.
+    return;
+  }
+  if (noticeInFlight(monitor.id)) {
+    console.log(
+      `[Monitor] A username notice for ${formatMonitorTarget(monitor)} is still in flight; the next replay delivers the one recorded now.`,
+    );
+    return;
+  }
+  await attemptPendingNotice({
+    monitor_id: monitor.id,
+    telegram_id: monitor.telegram_id,
+    text: notice,
+    created_at: createdAt,
     attempt,
-  );
+    last_attempt_at: null,
+  });
 }
 
 /**
@@ -695,8 +661,7 @@ async function applyUsernameObservation(
     if (username === monitor.target_username) return;
     if (username.toLowerCase() === (monitor.target_username ?? '').toLowerCase()) {
       // Same handle, different casing: record Telegram's spelling quietly.
-      updateMonitorUsername(monitor.id, username);
-      monitor.target_username = username;
+      await persistUsernameAfterNotice(monitor, username, null);
       return;
     }
     await notifyUsernameChange(monitor, username);

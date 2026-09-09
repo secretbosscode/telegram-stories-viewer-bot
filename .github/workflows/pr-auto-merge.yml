@@ -84,7 +84,13 @@ jobs:
                 # workflow either. Same reasoning as in the resolve job: run
                 # main's (trusted) copy of pr-validation.yml and pass the
                 # merged commit by SHA rather than dispatching on "$branch".
-                gh workflow run pr-validation.yml --ref main -f sha="$(git rev-parse HEAD)"
+                # A dispatch that fails leaves the merged commit unvalidated,
+                # so it must fail the job rather than pass unnoticed; the loop
+                # still finishes the remaining branches first.
+                if ! gh workflow run pr-validation.yml --ref main -f sha="$(git rev-parse HEAD)"; then
+                  echo "::error::Validation dispatch failed for $branch"
+                  dispatch_failed=1
+                fi
               else
                 echo "::warning::Could not push the merge into $branch; skipping validation."
               fi
@@ -93,3 +99,6 @@ jobs:
               echo "::warning::$branch conflicts with main; skipping automatic merge."
             fi
           done
+          if [ "${dispatch_failed:-0}" = "1" ]; then
+            exit 1
+          fi

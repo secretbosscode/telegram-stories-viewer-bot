@@ -321,13 +321,14 @@ if (needsSentStoryMigration) {
 db.exec('DROP INDEX IF EXISTS monitor_sent_idx');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS monitor_sent_idx ON monitor_sent_stories (monitor_id, story_key, story_type)');
 
-// Durable outbox for "the target changed / dropped its username" notices.
-// The row is written in the same transaction as the new label, so a process
-// that dies between the label write and Telegram's confirmation does not lose
-// the notification intent: the label is stored (later refreshes see no
-// difference to report) but the pending row makes the next monitor cycle send
-// the notice anyway. One notice per monitor is enough: only the latest
-// transition is worth announcing.
+// Durable outbox for "the target changed / dropped its username" notices, and
+// the only record that one is owed. The row is written in the same
+// transaction as the new label, so a process that dies between the label
+// write and Telegram's confirmation does not lose the notification intent:
+// the label is stored (later refreshes see no difference to report) but the
+// pending row makes the next monitor cycle send the notice anyway. One notice
+// per monitor is enough: only the latest transition is worth announcing, so
+// each observation replaces whatever was pending.
 db.exec(`
   CREATE TABLE IF NOT EXISTS monitor_username_notices (
     monitor_id INTEGER PRIMARY KEY,
@@ -894,7 +895,7 @@ export function removeMonitor(
     // are unreachable; drop them together with the monitor.
     db.prepare(`DELETE FROM monitor_sent_stories WHERE monitor_id = ?`).run(id);
     // A notice about a monitor that no longer exists must never be replayed.
-    db.prepare(`DELETE FROM monitor_username_notices WHERE monitor_id = ?`).run(id);
+    deletePendingUsernameNoticesForMonitor(id);
   }
   db.prepare(
     `DELETE FROM monitors WHERE telegram_id = ? AND target_id = ?`
@@ -1006,8 +1007,10 @@ function newNoticeAttempt(): string {
 
 /**
  * Records (or replaces) the notice still owed to this monitor's subscriber
- * and returns the attempt token identifying this write. Replacing a row
- * clears last_attempt_at: the new text has never been tried.
+ * and returns the attempt token identifying this write. A newer observation
+ * always supersedes whatever was pending, so replacing a row also resets
+ * last_attempt_at: the new text has never been tried, and it goes to the
+ * front of the replay order rather than inheriting the old row's place.
  */
 export function upsertPendingUsernameNotice(
   monitor_id: number,
@@ -1030,24 +1033,30 @@ export function upsertPendingUsernameNotice(
 }
 
 /**
- * Drops the owed notice. With an attempt token only the row written by that
- * attempt is removed, so a late settlement cannot discard a newer notice;
- * without one (monitor removal, test cleanup) whatever is stored goes.
+ * Drops the row written by one attempt. Every delete a send performs is
+ * scoped this way, so a settlement that arrives after a later observation
+ * replaced the row can only ever remove its own work.
  */
-export function deletePendingUsernameNotice(monitor_id: number, attempt?: string): void {
-  if (attempt === undefined) {
-    db.prepare(`DELETE FROM monitor_username_notices WHERE monitor_id = ?`).run(monitor_id);
-    return;
-  }
+export function deletePendingUsernameNotice(monitor_id: number, attempt: string): void {
   db.prepare(
     `DELETE FROM monitor_username_notices WHERE monitor_id = ? AND attempt = ?`,
   ).run(monitor_id, attempt);
 }
 
 /**
- * Stamps a replay attempt on the row, so the ordering below rotates it behind
- * rows that have not been tried (or were tried longer ago). Scoped to the
- * attempt for the same reason the delete is.
+ * Drops whatever notice is owed for this monitor, whichever attempt wrote it.
+ * Used where no send is being reconciled: the monitor is going away, or a new
+ * observation made the pending text obsolete without owing one of its own.
+ */
+export function deletePendingUsernameNoticesForMonitor(monitor_id: number): void {
+  db.prepare(`DELETE FROM monitor_username_notices WHERE monitor_id = ?`).run(monitor_id);
+}
+
+/**
+ * Claims the row for the send that is about to start: the stamp rotates it
+ * behind rows nothing has tried yet (or that were tried longer ago), so a
+ * send that never settles cannot fill every capped batch from now on. Scoped
+ * to the attempt for the same reason the delete is.
  */
 export function markPendingUsernameNoticeAttempted(
   monitor_id: number,
@@ -1095,6 +1104,31 @@ export function updateMonitorUsernameWithPendingNotice(
     const attempt = upsertPendingUsernameNotice(id, telegram_id, text, created_at);
     db.exec('COMMIT');
     return attempt;
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
+    throw error;
+  }
+}
+
+/**
+ * Writes a label whose transition is not worth announcing and drops whatever
+ * notice was still owed, in one transaction. The pending text describes a
+ * state this observation has just superseded (a "dropped their username"
+ * notice once the account has one again), so sending it later would tell the
+ * subscriber something that is no longer true; the two writes have to land
+ * together or a crash between them would leave exactly that.
+ */
+export function updateMonitorUsernameClearingNotice(
+  id: number,
+  username: string | null,
+): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    updateMonitorUsername(id, username);
+    deletePendingUsernameNoticesForMonitor(id);
+    db.exec('COMMIT');
   } catch (error) {
     try {
       db.exec('ROLLBACK');
