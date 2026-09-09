@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 
 jest.mock('../src/config/userbot', () => ({
-  Userbot: { getInstance: jest.fn() },
+  Userbot: { getInstance: jest.fn(), isHealthy: jest.fn(() => true) },
 }));
 jest.mock('../src/index', () => ({
   bot: { telegram: { sendMessage: jest.fn(), sendPhoto: jest.fn() } },
@@ -24,6 +24,12 @@ jest.mock('../src/config/env-config', () => ({
 jest.mock('../src/repositories/user-repository', () => ({
   findUserById: jest.fn(() => ({ language: 'en' })),
 }));
+// Monitoring output only reaches an entitled subscriber; every test here is
+// about the notice itself, so the subscriber is premium unless a test says
+// otherwise.
+jest.mock('../src/services/premium-service', () => ({
+  isUserPremium: jest.fn(() => true),
+}));
 
 import { Userbot } from '../src/config/userbot';
 import { getEntityWithTempContact } from '../src/lib';
@@ -39,11 +45,14 @@ import {
 import {
   addProfileMonitor,
   checkSingleMonitor,
+  forceCheckMonitors,
   refreshMonitorUsername,
   removeProfileMonitor,
   replayPendingUsernameNotices,
   listUserMonitors,
+  stopMonitorLoop,
 } from '../src/services/monitor-service';
+import { isUserPremium } from '../src/services/premium-service';
 import { bot } from '../src/index';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
@@ -914,4 +923,156 @@ test('removing a monitor drops the username notice it still owed', () => {
   removeMonitor('tester', '3100');
 
   expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(false);
+});
+
+test('a late settlement only deletes the outbox row its own attempt wrote', async () => {
+  const row = addMonitor('tester', '3200', 'firstlabel', '3200111', null);
+  let reported: string | null = 'secondlabel';
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(3200), accessHash: bigInt(3200111), username: reported }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  let rejectFirst: (error: Error) => void = () => {};
+  send.mockReturnValueOnce(new Promise((_, reject) => { rejectFirst = reject; }));
+  process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
+  try {
+    await refreshMonitorUsername(row);
+  } finally {
+    delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
+  }
+  expect(getMonitor(row.id)!.target_username).toBe('secondlabel');
+  const firstAttempt = listPendingUsernameNotices().find((p) => p.monitor_id === row.id)?.attempt;
+  expect(firstAttempt).toBeTruthy();
+
+  // An hour later the handle changes again. The first send has outlived the
+  // in-flight bound, so this observation is recorded and announced in its own
+  // right; its send stays pending too, so the outbox now holds its row.
+  reported = 'thirdlabel';
+  const later = Date.now() + 60 * 60 * 1000 + 1;
+  jest.spyOn(Date, 'now').mockImplementation(() => later);
+  process.env.MONITOR_NOTICE_INFLIGHT_MAX_MS = '1';
+  process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
+  send.mockReturnValueOnce(new Promise(() => {})); // still in flight
+  try {
+    await refreshMonitorUsername(getMonitor(row.id)!);
+  } finally {
+    (Date.now as jest.Mock<any>).mockRestore();
+    delete process.env.MONITOR_NOTICE_INFLIGHT_MAX_MS;
+    delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
+  }
+  expect(getMonitor(row.id)!.target_username).toBe('thirdlabel');
+  const secondAttempt = listPendingUsernameNotices().find((p) => p.monitor_id === row.id)?.attempt;
+  expect(secondAttempt).toBeTruthy();
+  expect(secondAttempt).not.toBe(firstAttempt);
+
+  // The abandoned first send finally fails. It may only clean up after
+  // itself: the notice the second observation is still owed must survive.
+  rejectFirst(new Error('ETIMEDOUT'));
+  await new Promise((r) => setImmediate(r));
+  const stillPending = listPendingUsernameNotices().find((p) => p.monitor_id === row.id);
+  expect(stillPending?.attempt).toBe(secondAttempt);
+  expect(stillPending?.text).toBe('translated');
+  expect(getMonitor(row.id)!.target_username).toBe('thirdlabel');
+
+  deletePendingUsernameNotice(row.id);
+  removeMonitor('tester', '3200');
+});
+
+test('a replay that keeps failing rotates behind the rows nothing has tried yet', async () => {
+  for (const stale of listPendingUsernameNotices()) deletePendingUsernameNotice(stale.monitor_id);
+  const oldest = addMonitor('tester', '3300', 'oldest', '3300111', null);
+  const middle = addMonitor('tester', '3301', 'middle', '3301111', null);
+  const newest = addMonitor('tester', '3302', 'newest', '3302111', null);
+  const base = Date.now() - 60 * 60 * 1000;
+  upsertPendingUsernameNotice(oldest.id, 'tester', 'oldest notice', base);
+  upsertPendingUsernameNotice(middle.id, 'tester', 'middle notice', base + 1000);
+  upsertPendingUsernameNotice(newest.id, 'tester', 'newest notice', base + 2000);
+
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  send.mockRejectedValueOnce(new Error('ETIMEDOUT'));
+  // Only one row fits in this cycle's batch, and its send fails.
+  process.env.MONITOR_NOTICE_REPLAY_BATCH = '1';
+  try {
+    await replayPendingUsernameNotices();
+  } finally {
+    delete process.env.MONITOR_NOTICE_REPLAY_BATCH;
+  }
+  expect(send.mock.calls.map((c: any[]) => c[1])).toEqual(['oldest notice']);
+  const tried = listPendingUsernameNotices().find((p) => p.monitor_id === oldest.id);
+  expect(tried?.last_attempt_at).toBeGreaterThan(0);
+
+  // Next cycle the untried rows go first; ordering by age alone let the
+  // failing row fill every batch while the others aged out unsent.
+  send.mockClear();
+  await replayPendingUsernameNotices();
+  expect(send.mock.calls.map((c: any[]) => c[1])).toEqual([
+    'middle notice',
+    'newest notice',
+    'oldest notice',
+  ]);
+  expect(listPendingUsernameNotices()).toHaveLength(0);
+
+  removeMonitor('tester', '3300');
+  removeMonitor('tester', '3301');
+  removeMonitor('tester', '3302');
+});
+
+test('a pending notice is held, not sent, while its subscriber is no longer entitled', async () => {
+  for (const stale of listPendingUsernameNotices()) deletePendingUsernameNotice(stale.monitor_id);
+  const row = addMonitor('lapsed-user', '3400', 'lapsedhandle', '3400111', null);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  upsertPendingUsernameNotice(row.id, 'lapsed-user', 'lapsed notice', Date.now());
+
+  // Replay runs before the cycle reconciles entitlements, so it has to make
+  // the same judgement itself.
+  (isUserPremium as jest.Mock).mockReturnValue(false);
+  try {
+    await replayPendingUsernameNotices();
+  } finally {
+    (isUserPremium as jest.Mock).mockReturnValue(true);
+  }
+  expect(send).not.toHaveBeenCalled();
+  // The row stays: the reconciliation that follows removes the monitor and
+  // takes the owed notice with it, and a subscriber who renews is still told.
+  expect(listPendingUsernameNotices().find((p) => p.monitor_id === row.id)?.text).toBe(
+    'lapsed notice',
+  );
+
+  await replayPendingUsernameNotices();
+  expect(send).toHaveBeenCalledWith('lapsed-user', 'lapsed notice');
+  expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(false);
+
+  removeMonitor('lapsed-user', '3400');
+});
+
+test('pending notices are replayed even while the userbot connection is unhealthy', async () => {
+  for (const stale of listPendingUsernameNotices()) deletePendingUsernameNotice(stale.monitor_id);
+  const row = addMonitor('tester', '3500', 'offlinehandle', '3500111', null);
+  const invoke = jest.fn(async () => ({ stories: { stories: [] } }));
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  upsertPendingUsernameNotice(row.id, 'tester', 'outage notice', Date.now());
+
+  (Userbot as any).isHealthy.mockReturnValue(false);
+  try {
+    // The cycle still gives up on the targets, but a notice needing only the
+    // bot API must not wait for the userbot to come back and age out.
+    expect(await forceCheckMonitors()).toBe(0);
+  } finally {
+    (Userbot as any).isHealthy.mockReturnValue(true);
+    stopMonitorLoop();
+  }
+  expect(send).toHaveBeenCalledWith('tester', 'outage notice');
+  expect(invoke).not.toHaveBeenCalled();
+  expect(listPendingUsernameNotices().some((p) => p.monitor_id === row.id)).toBe(false);
+
+  removeMonitor('tester', '3500');
 });

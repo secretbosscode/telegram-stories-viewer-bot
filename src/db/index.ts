@@ -333,9 +333,26 @@ db.exec(`
     monitor_id INTEGER PRIMARY KEY,
     telegram_id TEXT NOT NULL,
     text TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    attempt TEXT NOT NULL DEFAULT '',
+    last_attempt_at INTEGER
   );
 `);
+// `attempt` identifies the write that produced the row, so a send that
+// settles late can only ever delete the row it created and never a newer
+// notice recorded in the meantime. `last_attempt_at` rotates rows whose send
+// keeps failing to the back of the replay batch, so a large backlog does not
+// starve its newer entries. Both are added in place for a table created by an
+// earlier build, following the pattern used for `monitors` above.
+const noticeColumns = db
+  .prepare('PRAGMA table_info(monitor_username_notices)')
+  .all() as any[];
+if (!noticeColumns.some((c) => c.name === 'attempt')) {
+  db.exec("ALTER TABLE monitor_username_notices ADD COLUMN attempt TEXT NOT NULL DEFAULT ''");
+}
+if (!noticeColumns.some((c) => c.name === 'last_attempt_at')) {
+  db.exec('ALTER TABLE monitor_username_notices ADD COLUMN last_attempt_at INTEGER');
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS hidden_story_cache (
@@ -966,40 +983,100 @@ export interface PendingUsernameNotice {
   telegram_id: string;
   text: string;
   created_at: number;
+  /** Identifies the write that produced this row; see upsertPendingUsernameNotice. */
+  attempt: string;
+  /** When a replay last tried (and failed) to deliver it; null while untried. */
+  last_attempt_at: number | null;
 }
 
-/** Records (or replaces) the notice still owed to this monitor's subscriber. */
+let noticeAttemptCounter = 0;
+
+/**
+ * A token unique to one outbox write. Only the send started for that write
+ * may delete the row: a send abandoned at its deadline can settle long after
+ * a later observation replaced the row, and an unconditional delete then
+ * threw away a notice nobody had sent yet.
+ */
+function newNoticeAttempt(): string {
+  noticeAttemptCounter += 1;
+  return `${Date.now().toString(36)}-${noticeAttemptCounter.toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+}
+
+/**
+ * Records (or replaces) the notice still owed to this monitor's subscriber
+ * and returns the attempt token identifying this write. Replacing a row
+ * clears last_attempt_at: the new text has never been tried.
+ */
 export function upsertPendingUsernameNotice(
   monitor_id: number,
   telegram_id: string,
   text: string,
   created_at: number,
-): void {
+): string {
+  const attempt = newNoticeAttempt();
   db.prepare(
-    `INSERT INTO monitor_username_notices (monitor_id, telegram_id, text, created_at)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO monitor_username_notices (monitor_id, telegram_id, text, created_at, attempt, last_attempt_at)
+     VALUES (?, ?, ?, ?, ?, NULL)
      ON CONFLICT(monitor_id) DO UPDATE SET
        telegram_id = excluded.telegram_id,
        text = excluded.text,
-       created_at = excluded.created_at`,
-  ).run(monitor_id, telegram_id, text, created_at);
+       created_at = excluded.created_at,
+       attempt = excluded.attempt,
+       last_attempt_at = NULL`,
+  ).run(monitor_id, telegram_id, text, created_at, attempt);
+  return attempt;
 }
 
-export function deletePendingUsernameNotice(monitor_id: number): void {
-  db.prepare(`DELETE FROM monitor_username_notices WHERE monitor_id = ?`).run(monitor_id);
+/**
+ * Drops the owed notice. With an attempt token only the row written by that
+ * attempt is removed, so a late settlement cannot discard a newer notice;
+ * without one (monitor removal, test cleanup) whatever is stored goes.
+ */
+export function deletePendingUsernameNotice(monitor_id: number, attempt?: string): void {
+  if (attempt === undefined) {
+    db.prepare(`DELETE FROM monitor_username_notices WHERE monitor_id = ?`).run(monitor_id);
+    return;
+  }
+  db.prepare(
+    `DELETE FROM monitor_username_notices WHERE monitor_id = ? AND attempt = ?`,
+  ).run(monitor_id, attempt);
+}
+
+/**
+ * Stamps a replay attempt on the row, so the ordering below rotates it behind
+ * rows that have not been tried (or were tried longer ago). Scoped to the
+ * attempt for the same reason the delete is.
+ */
+export function markPendingUsernameNoticeAttempted(
+  monitor_id: number,
+  attempt: string,
+  at: number,
+): void {
+  db.prepare(
+    `UPDATE monitor_username_notices SET last_attempt_at = ?
+     WHERE monitor_id = ? AND attempt = ?`,
+  ).run(at, monitor_id, attempt);
 }
 
 export function listPendingUsernameNotices(): PendingUsernameNotice[] {
   return db
     .prepare(
-      `SELECT monitor_id, telegram_id, text, created_at FROM monitor_username_notices
-       ORDER BY created_at ASC, monitor_id ASC`,
+      // Untried rows first, then the least recently tried. Ordering by
+      // created_at alone let a handful of persistently failing old rows fill
+      // every capped replay batch while newer ones aged out untried.
+      `SELECT monitor_id, telegram_id, text, created_at, attempt, last_attempt_at
+       FROM monitor_username_notices
+       ORDER BY COALESCE(last_attempt_at, 0) ASC, created_at ASC, monitor_id ASC`,
     )
     .all() as PendingUsernameNotice[];
 }
 
 /**
- * Writes the new label and the notice still owed for it in one transaction.
+ * Writes the new label and the notice still owed for it in one transaction,
+ * returning the attempt token of the outbox row so the send it starts can
+ * later delete exactly that row and no other.
  * Split across two statements a crash in between would either lose the notice
  * (label stored, nothing left to replay) or announce a change that was never
  * recorded, so both must land together. The shim exposes no transaction
@@ -1011,12 +1088,13 @@ export function updateMonitorUsernameWithPendingNotice(
   telegram_id: string,
   text: string,
   created_at: number,
-): void {
+): string {
   db.exec('BEGIN IMMEDIATE');
   try {
     updateMonitorUsername(id, username);
-    upsertPendingUsernameNotice(id, telegram_id, text, created_at);
+    const attempt = upsertPendingUsernameNotice(id, telegram_id, text, created_at);
     db.exec('COMMIT');
+    return attempt;
   } catch (error) {
     try {
       db.exec('ROLLBACK');
