@@ -554,7 +554,7 @@ test('monitoring an account again through another of its handles reports it as a
   removeMonitor('tester', '2100');
 });
 
-test('a notice send that never settles is treated as a transient failure and rolled back', async () => {
+test('a notice send that never settles leaves the recorded label in place', async () => {
   const row = addMonitor('tester', '2200', 'hanging', '777', null);
   const invoke = jest.fn(async (query: any) => {
     if (query instanceof Api.users.GetUsers) return [{ id: bigInt(2200), accessHash: bigInt(777) }];
@@ -566,12 +566,98 @@ test('a notice send that never settles is treated as a transient failure and rol
   send.mockReturnValueOnce(new Promise(() => {})); // never settles
   process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
   try {
+    // The deadline only bounds the wait; it must not decide that the send
+    // failed, because the message may still be delivered.
+    expect(await refreshMonitorUsername(row)).toBe(true);
+  } finally {
+    delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
+  }
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+  expect(send).toHaveBeenCalledTimes(1);
+  removeMonitor('tester', '2200');
+});
+
+test('a notice that times out and then succeeds late is not sent a second time', async () => {
+  const row = addMonitor('tester', '2400', 'slowsend', '2400111', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(2400), accessHash: bigInt(2400111) }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  let resolveSend: (value: unknown) => void = () => {};
+  send.mockReturnValueOnce(new Promise((resolve) => { resolveSend = resolve; }));
+  process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
+  try {
     await refreshMonitorUsername(row);
   } finally {
     delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
   }
-  expect(getMonitor(row.id)!.target_username).toBe('hanging');
-  removeMonitor('tester', '2200');
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+  expect(send).toHaveBeenCalledTimes(1);
+
+  // Telegram accepted the abandoned message after all: nothing is rolled back.
+  resolveSend({ message_id: 1 });
+  await new Promise((r) => setImmediate(r));
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+
+  // So an hour later the refresh observes no difference and stays silent
+  // instead of telling the subscriber the same thing twice.
+  const later = Date.now() + 60 * 60 * 1000 + 1;
+  jest.spyOn(Date, 'now').mockImplementation(() => later);
+  try {
+    await refreshMonitorUsername(getMonitor(row.id)!);
+  } finally {
+    (Date.now as jest.Mock<any>).mockRestore();
+  }
+  expect(send).toHaveBeenCalledTimes(1);
+
+  removeMonitor('tester', '2400');
+});
+
+test('a notice that times out and then fails late restores the label so the next refresh retries', async () => {
+  const row = addMonitor('tester', '2500', 'latefail', '2500111', null);
+  const invoke = jest.fn(async (query: any) => {
+    if (query instanceof Api.users.GetUsers) {
+      return [{ id: bigInt(2500), accessHash: bigInt(2500111) }];
+    }
+    return null;
+  });
+  (Userbot.getInstance as any).mockResolvedValue({ invoke } as any);
+  const send = bot.telegram.sendMessage as jest.Mock<any>;
+  send.mockClear();
+  let rejectSend: (error: Error) => void = () => {};
+  send.mockReturnValueOnce(new Promise((_, reject) => { rejectSend = reject; }));
+  process.env.MONITOR_NOTICE_TIMEOUT_MS = '50';
+  try {
+    await refreshMonitorUsername(row);
+  } finally {
+    delete process.env.MONITOR_NOTICE_TIMEOUT_MS;
+  }
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+  expect(send).toHaveBeenCalledTimes(1);
+
+  // The abandoned send fails late, so the label goes back and the difference
+  // is observable again.
+  rejectSend(new Error('ETIMEDOUT'));
+  await new Promise((r) => setImmediate(r));
+  expect(getMonitor(row.id)!.target_username).toBe('latefail');
+
+  send.mockResolvedValueOnce({ message_id: 1 } as any);
+  const later = Date.now() + 60 * 60 * 1000 + 1;
+  jest.spyOn(Date, 'now').mockImplementation(() => later);
+  try {
+    await refreshMonitorUsername(getMonitor(row.id)!);
+  } finally {
+    (Date.now as jest.Mock<any>).mockRestore();
+  }
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(getMonitor(row.id)!.target_username).toBeNull();
+
+  removeMonitor('tester', '2500');
 });
 
 test('a late send failure does not overwrite a username recorded by a later refresh', async () => {

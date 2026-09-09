@@ -9,15 +9,27 @@ on:
       - main
   # Dispatched by pr-auto-merge.yml after it pushes a base-branch merge into a
   # PR head: pushes made with the Actions token never trigger other workflows,
-  # so without this the merged head would carry no CI at all.
+  # so without this the merged head would carry no CI at all. The dispatch
+  # always targets the base branch so that the *trusted* copy of this file
+  # runs; the commit to validate arrives as an input instead of as the ref,
+  # because dispatching on the PR branch would run whatever definition that
+  # branch contains (permissions and secrets included).
   workflow_dispatch:
+    inputs:
+      sha:
+        description: commit to validate
+        required: true
 
 concurrency:
-  group: pr-validation-${{ github.ref }}
+  # A dispatched run and a push-to-main run must not share a group: both would
+  # otherwise land in pr-validation-refs/heads/main and cancel each other.
+  group: pr-validation-${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
+  # Needed only by the dispatched path, to report the result on the PR commit.
+  statuses: write
 
 jobs:
   test:
@@ -34,7 +46,27 @@ jobs:
       USERBOT_PHONE_CODE: ""
       BOT_ADMIN_ID: 999
     steps:
+      # A dispatched run belongs to the branch it was dispatched on (the base
+      # branch), so its check runs are attached to that branch's head and the
+      # PR commit would show no validation at all. Mirror the outcome onto the
+      # merged commit as a commit status instead.
+      - name: Report validation as pending
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ inputs.sha }}" \
+            -f state=pending \
+            -f context=test \
+            -f description="Validate pull request (dispatched for a base-branch merge)" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
       - uses: actions/checkout@v4
+        with:
+          # An empty ref means "the default for this event" (the pull request
+          # merge ref, or the pushed commit); a dispatched run instead checks
+          # out exactly the commit it was asked to validate.
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.sha || '' }}
 
       - uses: actions/setup-node@v4
         with:
@@ -76,3 +108,18 @@ jobs:
             jest.log
           if-no-files-found: ignore
           retention-days: 3
+
+      - name: Report validation result
+        if: always() && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          state=success
+          if [ "${{ job.status }}" != "success" ]; then
+            state=failure
+          fi
+          gh api "repos/${{ github.repository }}/statuses/${{ inputs.sha }}" \
+            -f state="$state" \
+            -f context=test \
+            -f description="Validate pull request (dispatched for a base-branch merge)" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

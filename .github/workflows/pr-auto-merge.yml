@@ -47,8 +47,12 @@ jobs:
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
           # A push made with the Actions token does not trigger other
           # workflows, so the merged head would otherwise have no CI and the
-          # PR could be merged untested. Run the validation workflow on it.
-          gh workflow run pr-validation.yml --ref "${{ github.event.pull_request.head.ref }}"
+          # PR could be merged untested. Dispatch the validation workflow on
+          # the *base* branch, which holds the trusted definition, and hand it
+          # the merged commit as an input: dispatching on the PR branch would
+          # run that branch's copy of the workflow file, which a contributor
+          # can edit (permissions, secrets) before the PR syncs.
+          gh workflow run pr-validation.yml --ref "${{ github.event.pull_request.base.ref }}" -f sha="$(git rev-parse HEAD)"
 
   update-open-prs:
     if: github.event_name == 'push'
@@ -67,13 +71,25 @@ jobs:
           for branch in $(gh pr list --state open --json headRefName --jq '.[].headRefName'); do
             git fetch origin "$branch"
             git checkout "$branch"
+            before=$(git rev-parse HEAD)
             # See the note above: -X ours would discard main's side of any
             # conflicting hunk, silently reverting fixes when the PR merges.
             if git merge --no-edit origin/main; then
-              git push origin HEAD:"$branch"
+              if [ "$(git rev-parse HEAD)" = "$before" ]; then
+                echo "$branch is already up to date with main; nothing to validate."
+                continue
+              fi
+              if git push origin HEAD:"$branch"; then
+                # This push carries the Actions token too, so it triggers no
+                # workflow either. Same reasoning as in the resolve job: run
+                # main's (trusted) copy of pr-validation.yml and pass the
+                # merged commit by SHA rather than dispatching on "$branch".
+                gh workflow run pr-validation.yml --ref main -f sha="$(git rev-parse HEAD)"
+              else
+                echo "::warning::Could not push the merge into $branch; skipping validation."
+              fi
             else
               git merge --abort || true
               echo "::warning::$branch conflicts with main; skipping automatic merge."
             fi
           done
-

@@ -98,11 +98,19 @@ let monitorTimer: NodeJS.Timeout | null = null;
 // timeout; this is the backstop for anything else. Overridable for tests.
 const TARGET_CHECK_DEADLINE_MS = Number(process.env.MONITOR_TARGET_DEADLINE_MS) || 15 * 60 * 1000;
 
+/**
+ * Thrown by withDeadline() when the deadline, rather than the awaited work,
+ * won the race. Callers that must tell the two apart (the notice send, whose
+ * underlying request may still be delivered) check for this class; the others
+ * only log, so the change is invisible to them.
+ */
+class DeadlineExceeded extends Error {}
+
 function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error(`${label} exceeded ${Math.round(ms / 1000)}s and was abandoned for this cycle`)),
+      () => reject(new DeadlineExceeded(`${label} exceeded ${Math.round(ms / 1000)}s and was abandoned for this cycle`)),
       ms,
     );
     timer.unref?.();
@@ -283,6 +291,12 @@ function isPermanentDeliveryFailure(error: unknown): boolean {
   );
 }
 
+// Notices that a previous cycle abandoned at its deadline but that are still
+// pending underneath (the race cannot cancel the Telegram call). A later
+// cycle must not start a second notice for the same monitor while one is in
+// flight, or a late success plus the retry would tell the subscriber twice.
+const inFlightNotices = new Set<number>();
+
 /**
  * Records the new label, then sends the notice. A transient send failure
  * restores the previous label so the next refresh (an hour later) observes
@@ -291,6 +305,12 @@ function isPermanentDeliveryFailure(error: unknown): boolean {
  * never leave a subscriber receiving the same notice every hour, which is
  * what happened when a legacy NOT NULL on the column rejected the update
  * after the notice had already gone out.
+ *
+ * The send itself is not raced against the deadline: a send abandoned at the
+ * deadline can still be accepted by Telegram, and rolling the label back on
+ * that assumption made the next refresh send the very same notice a second
+ * time. The deadline only bounds how long the cycle waits; the outcome is
+ * reconciled whenever the send actually settles.
  */
 async function persistUsernameAfterNotice(
   monitor: MonitorRow,
@@ -301,31 +321,60 @@ async function persistUsernameAfterNotice(
   updateMonitorUsername(monitor.id, newUsername);
   monitor.target_username = newUsername;
   if (!notice || hasBlockedBot(monitor.telegram_id)) return;
+  if (inFlightNotices.has(monitor.id)) {
+    // The pending send will either be delivered or roll its own label back,
+    // and the next refresh then observes whatever is left. The new label is
+    // still recorded above; only the duplicate message is skipped.
+    console.log(
+      `[Monitor] A username notice for ${formatMonitorTarget(monitor)} from an earlier cycle is still in flight; recording the new label without sending another notice.`,
+    );
+    return;
+  }
+  inFlightNotices.add(monitor.id);
+  const settled = (async () => {
+    try {
+      await bot.telegram.sendMessage(monitor.telegram_id, notice);
+    } catch (err) {
+      if (isPermanentDeliveryFailure(err)) {
+        console.warn(
+          `[Monitor] Username notice for ${formatMonitorTarget(monitor)} undeliverable; keeping the recorded change:`,
+          (err as any)?.message ?? err,
+        );
+        return;
+      }
+      // Restore only what this attempt wrote. A send abandoned by an earlier
+      // cycle can fail late, after a later refresh already recorded a newer
+      // observation; that newer value must win.
+      const stored = getMonitor(monitor.id);
+      if (stored && stored.target_username === newUsername) {
+        updateMonitorUsername(monitor.id, previous);
+      }
+      if (monitor.target_username === newUsername) monitor.target_username = previous;
+      throw err;
+    }
+  })().finally(() => {
+    inFlightNotices.delete(monitor.id);
+  });
+  // If the deadline wins the race below, the rejection handled inside the
+  // settlement above must not resurface as an unhandled rejection.
+  settled.catch(() => undefined);
   try {
-    // Bounded on its own: the target deadline abandons this refresh without
-    // cancelling the send, and a send that never settles must still count as
-    // a failure here so the label is restored and the notice retried.
     await withDeadline(
-      bot.telegram.sendMessage(monitor.telegram_id, notice),
+      settled,
       noticeSendTimeoutMs(),
       `[Monitor] Username notice to ${monitor.telegram_id}`,
     );
   } catch (err) {
-    if (isPermanentDeliveryFailure(err)) {
+    if (err instanceof DeadlineExceeded) {
+      // Still pending: the label stays as recorded, so a late success does
+      // not produce a duplicate. A late failure rolls it back itself and the
+      // next refresh sees the same difference again.
       console.warn(
-        `[Monitor] Username notice for ${formatMonitorTarget(monitor)} undeliverable; keeping the recorded change:`,
-        (err as any)?.message ?? err,
+        `[Monitor] Username notice for ${formatMonitorTarget(monitor)} is still pending after the send deadline; keeping the recorded label and reconciling when it settles.`,
       );
       return;
     }
-    // Restore only what this attempt wrote. A send abandoned by an earlier
-    // cycle can fail late, after a later refresh already recorded a newer
-    // observation; that newer value must win.
-    const stored = getMonitor(monitor.id);
-    if (stored && stored.target_username === newUsername) {
-      updateMonitorUsername(monitor.id, previous);
-    }
-    if (monitor.target_username === newUsername) monitor.target_username = previous;
+    // The send failed before the deadline; the rollback already ran above.
     throw err;
   }
 }
