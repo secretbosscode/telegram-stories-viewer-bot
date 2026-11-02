@@ -11,7 +11,8 @@ concurrency:
 
 jobs:
   bump-and-release:
-    runs-on: secretbosscode
+    # Trusted: runs only on pushes to main, never on pull request code.
+    runs-on: [self-hosted, linux, x64]
     permissions:
       contents: write
     steps:

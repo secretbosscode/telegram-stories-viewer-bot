@@ -15,8 +15,17 @@ permissions:
 
 jobs:
   resolve:
-    if: github.event_name == 'pull_request_target'
-    runs-on: secretbosscode
+    # Same-repository branches only. For a fork PR, head.ref names a branch in
+    # the fork, so the checkout below could only fail or, worse, pick up an
+    # unrelated base-repository branch of the same name; skipping keeps
+    # fork-triggered pull_request_target runs off the self-hosted runners.
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    # pull_request_target runs this file from the base branch. The job only
+    # runs git merge/push on the checked-out tree and never executes it, so it
+    # may use the self-hosted runners.
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,26 +34,29 @@ jobs:
       - name: Merge base branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Branch names reach the script as data, never as interpolated shell.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git fetch origin "$BASE_REF"
           before=$(git rev-parse HEAD)
           # No -X ours: that strategy silently resolves conflicting hunks in
           # favour of the PR branch, discarding the base's change, so a merged
           # stale PR could revert a fix already on main. A real conflict must
           # fail here and be resolved by a human.
-          if ! git merge --no-edit origin/${{ github.event.pull_request.base.ref }}; then
+          if ! git merge --no-edit "origin/$BASE_REF"; then
             git merge --abort || true
-            echo "::warning::Conflict with ${{ github.event.pull_request.base.ref }}; resolve it manually."
+            echo "::warning::Conflict with $BASE_REF; resolve it manually."
             exit 0
           fi
           if [ "$(git rev-parse HEAD)" = "$before" ]; then
-            echo "Already up to date with ${{ github.event.pull_request.base.ref }}."
+            echo "Already up to date with $BASE_REF."
             exit 0
           fi
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin "HEAD:$HEAD_REF"
           # A push made with the Actions token does not trigger other
           # workflows, so the merged head would otherwise have no CI and the
           # PR could be merged untested. Dispatch the validation workflow on
@@ -52,11 +64,11 @@ jobs:
           # the merged commit as an input: dispatching on the PR branch would
           # run that branch's copy of the workflow file, which a contributor
           # can edit (permissions, secrets) before the PR syncs.
-          gh workflow run pr-validation.yml --ref "${{ github.event.pull_request.base.ref }}" -f sha="$(git rev-parse HEAD)"
+          gh workflow run pr-validation.yml --ref "$BASE_REF" -f sha="$(git rev-parse HEAD)"
 
   update-open-prs:
     if: github.event_name == 'push'
-    runs-on: secretbosscode
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,6 +77,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Without gh the `for` list below would expand to nothing and the
+          # job would pass without updating any PR, so check for it first.
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "::error::GitHub CLI (gh) is not installed on runner $RUNNER_NAME"
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
