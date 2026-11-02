@@ -57,6 +57,11 @@ jobs:
 
   # The only job that checks out and runs the commit under validation. Its name
   # is what branch protection sees for pull_request runs, so it must not change.
+  # It stays on GitHub-hosted runners: it executes pull request code (directly,
+  # or by SHA when dispatched), and the self-hosted runners hold the TrueNAS
+  # Docker socket. The suite also writes to /data, which must never be a path
+  # on a persistent runner. Trusted refs are tested on the self-hosted runners
+  # by docker-publish.yml, inside the image build.
   test:
     needs: announce
     # announce is skipped for pull_request and push events, and a skipped

@@ -21,35 +21,12 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      BUILD_CACHE_DIR: /mnt/ssd/docker/github-action/cache/telegram-story-bot
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # TrueNAS runner checkout permissions may differ from GitHub-hosted
-      # runners. Normalize before BuildKit reads the build context.
-      - name: Fix and verify Docker entrypoint permissions
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          for script in entrypoint.sh healthcheck.sh; do
-            if [ ! -f "$script" ]; then
-              echo "::error::Missing required script: $script"
-              exit 1
-            fi
-
-            chmod 0755 "$script"
-
-            mode=$(stat -c '%a' "$script")
-            echo "$script permissions: $mode"
-
-            if [ "$mode" != "755" ]; then
-              echo "::error::$script must have permissions 755"
-              exit 1
-            fi
-          done
-
-          echo "Both scripts are readable and executable by UID 568."
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -67,6 +44,20 @@ jobs:
           docker info --format 'Docker: {{.ServerVersion}}'
           docker buildx version
           nproc
+
+      # The BuildKit cache lives on the TrueNAS SSD, shared by all four runner
+      # containers and scoped to this repository by its directory name. Fail
+      # loudly if the mount is missing instead of silently building cold.
+      - name: Check repository build cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$BUILD_CACHE_DIR"
+          if [ ! -w "$BUILD_CACHE_DIR" ]; then
+            echo "::error::$BUILD_CACHE_DIR is not writable on $RUNNER_NAME"
+            exit 1
+          fi
+          echo "Cache: $BUILD_CACHE_DIR ($(du -sh "$BUILD_CACHE_DIR" | cut -f1))"
 
       - name: Login to DockerHub
         uses: docker/login-action@v4
@@ -103,7 +94,27 @@ jobs:
           echo "Version: $VERSION"
           echo "Secondary tag: $SECONDARY_TAG"
 
+      # Pre-publish gate: builds the Dockerfile's `verify` target, which runs
+      # the Jest suite against the exact node_modules/dist that ship and starts
+      # the real entrypoint under PUID/PGID 568. It runs inside the BuildKit
+      # sandbox, so test writes to /data never reach the runner or the host.
+      # Nothing is pushed if it fails. Its layers stay in this job's builder,
+      # so the publish step below reuses them instead of rebuilding.
+      - name: Run tests and verify entrypoint in image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: verify
+          platforms: linux/amd64
+          push: false
+          outputs: type=cacheonly
+          provenance: false
+          sbom: false
+          cache-from: type=local,src=${{ env.BUILD_CACHE_DIR }}
+
       - name: Build and push with local SSD cache
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -115,8 +126,34 @@ jobs:
             telix5000/telegram-story-bot:${{ steps.vars.outputs.version }}
             telix5000/telegram-story-bot:${{ steps.vars.outputs.secondary_tag }}
 
-          cache-from: type=local,src=/mnt/ssd/docker/github-action/cache/telegram-story-bot
-          cache-to: type=local,dest=/mnt/ssd/docker/github-action/cache/telegram-story-bot,mode=max,reset=true
+          # Exports are serialized by the workflow-level concurrency group, so
+          # only one run writes this repository's cache directory at a time.
+          cache-from: type=local,src=${{ env.BUILD_CACHE_DIR }}
+          cache-to: type=local,dest=${{ env.BUILD_CACHE_DIR }},mode=max
 
           provenance: true
           sbom: true
+
+      - name: Verify published tags and image config
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: telix5000/telegram-story-bot
+          TAGS: ${{ steps.vars.outputs.version }} ${{ steps.vars.outputs.secondary_tag }}
+        run: |
+          set -euo pipefail
+          for tag in $TAGS; do
+            got=$(docker buildx imagetools inspect "$IMAGE:$tag" --format '{{.Manifest.Digest}}')
+            echo "$IMAGE:$tag -> $got"
+            if [ "$got" != "$DIGEST" ]; then
+              echo "::error::$IMAGE:$tag points to $got, expected $DIGEST"
+              exit 1
+            fi
+          done
+          config=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" \
+            --format '{{json .Image.Config.Entrypoint}}|{{json .Image.Config.Cmd}}|{{.Image.Config.User}}' | tr -d ' \n')
+          echo "Entrypoint|Cmd|User: $config"
+          if [ "$config" != '["entrypoint.sh"]|["node","dist/index.js"]|' ]; then
+            echo "::error::Unexpected entrypoint, command or user in the published image"
+            exit 1
+          fi
