@@ -10,7 +10,6 @@ on:
       - 'v*'
   workflow_dispatch:
 
-# Prevent two builds from writing the same local cache
 concurrency:
   group: telegram-story-bot-docker
   cancel-in-progress: false
@@ -23,7 +22,34 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # TrueNAS runner checkout permissions may differ from GitHub-hosted
+      # runners. Normalize before BuildKit reads the build context.
+      - name: Fix and verify Docker entrypoint permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for script in entrypoint.sh healthcheck.sh; do
+            if [ ! -f "$script" ]; then
+              echo "::error::Missing required script: $script"
+              exit 1
+            fi
+
+            chmod 0755 "$script"
+
+            mode=$(stat -c '%a' "$script")
+            echo "$script permissions: $mode"
+
+            if [ "$mode" != "755" ]; then
+              echo "::error::$script must have permissions 755"
+              exit 1
+            fi
+          done
+
+          echo "Both scripts are readable and executable by UID 568."
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -31,8 +57,13 @@ jobs:
           version: latest
 
       - name: Verify TrueNAS builder
+        shell: bash
         run: |
+          set -euo pipefail
+
           echo "Runner: $RUNNER_NAME"
+          echo "Repository: $GITHUB_REPOSITORY"
+
           docker info --format 'Docker: {{.ServerVersion}}'
           docker buildx version
           nproc
@@ -45,7 +76,10 @@ jobs:
 
       - name: Extract version and target tag
         id: vars
+        shell: bash
         run: |
+          set -euo pipefail
+
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
             SECONDARY_TAG="latest"
@@ -58,18 +92,25 @@ jobs:
             elif [[ "$BRANCH_NAME" == "development" ]]; then
               SECONDARY_TAG="dev"
             else
-              SECONDARY_TAG=""
+              echo "::error::Unsupported branch: $BRANCH_NAME"
+              exit 1
             fi
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "secondary_tag=$SECONDARY_TAG" >> "$GITHUB_OUTPUT"
 
+          echo "Version: $VERSION"
+          echo "Secondary tag: $SECONDARY_TAG"
+
       - name: Build and push with local SSD cache
         uses: docker/build-push-action@v7
         with:
           context: .
+          file: ./Dockerfile
           push: true
+          platforms: linux/amd64
+
           tags: |
             telix5000/telegram-story-bot:${{ steps.vars.outputs.version }}
             telix5000/telegram-story-bot:${{ steps.vars.outputs.secondary_tag }}
