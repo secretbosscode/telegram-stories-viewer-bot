@@ -160,7 +160,7 @@
   "pinned.error": "Ocurrió un error procesando historias fijadas. El administrador ha sido notificado.",
   "active.downloading": "⏳ Descargando historias activas de {{user}}...",
   "active.uploading": "📥 {{count}} historias activas de {{user}} descargadas con éxito!\n⏳ Subiendo historias a Telegram...",
-  "active.none": "❌ No se pueden descargar historias activas, probablemente sean demasiado grandes para enviarlas vía bot.",
+  "active.none": "❌ No se pudo enviar ninguna de estas historias activas.",
   "active.uploadedBatch": "Subidas {{sent}}/{{total}} historias activas de {{user}} ✅",
   "active.error": "Ocurrió un error al enviar historias. El administrador ha sido notificado.",
   "profile.sent": "📸 Enviados {{count}} elementos de medios de perfil de {{user}}",

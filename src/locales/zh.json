@@ -160,7 +160,7 @@
   "pinned.error": "处理置顶故事时发生错误。管理员已获知。",
   "active.downloading": "⏳ 正在下载 {{user}} 的活跃故事...",
   "active.uploading": "📥 {{count}} 个 {{user}} 的活跃故事下载成功！\n⏳ 正在上传至 Telegram...",
-  "active.none": "❌ 无法下载活跃故事，可能文件过大，无法通过机器人发送。",
+  "active.none": "❌ 这些限时动态均未能发送。",
   "active.uploadedBatch": "已上传 {{sent}}/{{total}} 个 {{user}} 的活跃故事 ✅",
   "active.error": "发送故事时发生错误。管理员已获知。",
   "profile.sent": "📸 已发送 {{user}} 的 {{count}} 个头像媒体",

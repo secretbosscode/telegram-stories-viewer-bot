@@ -20,7 +20,7 @@ import { checkSingleMonitor } from '../src/services/monitor-service';
 import { Api } from 'telegram';
 import bigInt from 'big-integer';
 
-function createInvoke(active: any[], pinned: any[] = []) {
+function createInvoke(active: any[], pinned: any[] = [], byId: any[] = []) {
   return jest.fn(async (query: any) => {
     if (query instanceof Api.users.GetUsers) {
       return [{ id: bigInt(123), accessHash: bigInt(999), username: 'tester' }];
@@ -30,6 +30,9 @@ function createInvoke(active: any[], pinned: any[] = []) {
     }
     if (query instanceof Api.stories.GetPinnedStories) {
       return { stories: pinned } as any;
+    }
+    if (query instanceof Api.stories.GetStoriesByID) {
+      return { stories: byId };
     }
     if (query instanceof Api.photos.GetUserPhotos) {
       return { photos: [] } as any;
@@ -196,4 +199,57 @@ test('persists only the subset of stories confirmed delivered', async () => {
   expect(listSentStoryKeys(row.id, 'active')).not.toContain('12:120');
 
   removeMonitor('user', '791');
+});
+
+test('recovers a skipped story by ID and records only confirmed delivery', async () => {
+  const row = addMonitor('recovery-user', '793', 'tester', '999', null);
+  const placeholder = new Api.StoryItemSkipped({ id: 41, date: 410, expireDate: 2000000000 });
+  const recovered = { id: 41, date: 410, expireDate: 2000000000, media: { photo: {} } };
+  const invoke = createInvoke([placeholder], [], [recovered]);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke });
+  const sender = activeSenderMock().mockReset().mockResolvedValue([41]);
+  const mapper = require('../src/controllers/download-stories').mapStories;
+  const actual = jest.requireActual<typeof import('../src/controllers/download-stories')>(
+    '../src/controllers/download-stories',
+  );
+  mapper.mockImplementationOnce(actual.mapStories);
+
+  try {
+    await checkSingleMonitor(row.id);
+    const lookups = invoke.mock.calls.map(([q]) => q).filter(q => q instanceof Api.stories.GetStoriesByID);
+    expect(lookups).toHaveLength(1);
+    expect(lookups[0].id).toEqual([41]);
+    expect(sender.mock.calls[0][0].stories).toEqual([
+      expect.objectContaining({ id: 41, mediaType: 'photo' }),
+    ]);
+    expect(listSentStoryKeys(row.id, 'active')).toContain('41:410');
+  } finally {
+    removeMonitor('recovery-user', '793');
+  }
+});
+
+test('an omitted placeholder produces no alert and can still be delivered on a later check', async () => {
+  const row = addMonitor('omitted-user', '794', 'tester', '999', null);
+  const placeholder = new Api.StoryItemSkipped({ id: 42, date: 420, expireDate: 2000000000 });
+  const byId: any[] = [];
+  const invoke = createInvoke([placeholder], [], byId);
+  (Userbot.getInstance as any).mockResolvedValue({ invoke });
+  const sender = activeSenderMock().mockReset().mockResolvedValue([42]);
+  const mapper = require('../src/controllers/download-stories').mapStories;
+  const actual = jest.requireActual<typeof import('../src/controllers/download-stories')>(
+    '../src/controllers/download-stories',
+  );
+  mapper.mockImplementationOnce(actual.mapStories).mockImplementationOnce(actual.mapStories);
+
+  try {
+    await checkSingleMonitor(row.id);
+    expect(sender).not.toHaveBeenCalled();
+    expect(listSentStoryKeys(row.id, 'active')).not.toContain('42:420');
+    byId.push({ id: 42, date: 420, expireDate: 2000000000, media: { photo: {} } });
+    await checkSingleMonitor(row.id);
+    expect(sender).toHaveBeenCalledTimes(1);
+    expect(listSentStoryKeys(row.id, 'active')).toContain('42:420');
+  } finally {
+    removeMonitor('omitted-user', '794');
+  }
 });

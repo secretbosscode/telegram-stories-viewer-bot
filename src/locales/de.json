@@ -160,7 +160,7 @@
   "pinned.error": "Beim Verarbeiten der angehefteten Stories ist ein Fehler aufgetreten. Der Admin wurde benachrichtigt.",
   "active.downloading": "⏳ Aktive Stories von {{user}} werden heruntergeladen...",
   "active.uploading": "📥 {{count}} aktive Stories von {{user}} erfolgreich heruntergeladen!\n⏳ Lade Stories zu Telegram hoch...",
-  "active.none": "❌ Aktive Stories können nicht heruntergeladen werden, vermutlich sind sie zu groß, um über den Bot gesendet zu werden.",
+  "active.none": "❌ Keine dieser aktiven Storys konnte zugestellt werden.",
   "active.uploadedBatch": "{{sent}}/{{total}} aktive Stories von {{user}} hochgeladen ✅",
   "active.error": "Beim Senden der Stories ist ein Fehler aufgetreten. Der Admin wurde benachrichtigt.",
   "profile.sent": "📸 {{count}} Profilmedien von {{user}} gesendet",
