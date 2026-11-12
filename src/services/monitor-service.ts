@@ -1283,12 +1283,6 @@ function monitorTask(monitor: MonitorRow, language: string) {
   } as any;
 }
 
-async function sendMonitorStories(stories: Api.TypeStoryItem[], monitor: MonitorRow, language: string) {
-  const mapped = mapStories(stories);
-  if (mapped.length === 0) return [];
-  return sendActiveStories({ stories: mapped, task: monitorTask(monitor, language) });
-}
-
 /**
  * Compares a target snapshot against what this subscriber has already
  * received and delivers the difference.
@@ -1331,8 +1325,9 @@ async function deliverSnapshotToMonitor(
 
   if (newActive.length > 0) {
     console.log(`[Monitor] ${targetLabel}: ${newActive.length} new active stories queued for delivery.`);
-    const deliveredActiveIds = new Set(
-      await sendMonitorStories(newActive, monitor, language),
+    const mapped = mapStories(newActive);
+    const deliveredActiveIds = new Set<number>(
+      mapped.length ? await sendActiveStories({ stories: mapped, task: monitorTask(monitor, language) }) : [],
     );
     recordDeliveredStories(monitor.id, newActive, deliveredActiveIds, 'active');
 
@@ -1361,8 +1356,9 @@ async function deliverSnapshotToMonitor(
 
   if (newPinned.length > 0) {
     console.log(`[Monitor] ${targetLabel}: ${newPinned.length} new pinned stories queued for delivery.`);
-    const deliveredPinnedIds = new Set(
-      await sendMonitorStories(newPinned, monitor, language),
+    const mapped = mapStories(newPinned);
+    const deliveredPinnedIds = new Set<number>(
+      mapped.length ? await sendActiveStories({ stories: mapped, task: monitorTask(monitor, language) }) : [],
     );
     recordDeliveredStories(monitor.id, newPinned, deliveredPinnedIds, 'pinned');
     if (deliveredPinnedIds.size < newPinned.length) {
