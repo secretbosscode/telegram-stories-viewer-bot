@@ -2,7 +2,8 @@
 
 import { Userbot } from 'config/userbot';
 import { bot } from 'index';
-import { chunkMediafiles, sendTemporaryMessage } from 'lib';
+import { sendTemporaryMessage } from 'lib';
+import { uploadStoryMedia } from 'controllers/upload-story-media';
 import { t } from 'lib/i18n';
 import { Api } from 'telegram';
 
@@ -58,12 +59,10 @@ export async function sendArchivedStories({ stories, task }: SendStoriesArgs) {
 
     const downloadResult = await downloadStories(mapped, 'archived');
 
-    const uploadableStories: MappedStoryItem[] = mapped.filter(
-      (x: MappedStoryItem) => x.buffer && x.bufferSize! <= 47
-    );
+    const uploadableStories = mapped.filter((story) => story.buffer);
+    const fallbackCandidates = downloadResult.failed.filter((story) => !story.buffer);
 
-    const failedDownloads = downloadResult.failed.filter((story) => !story.buffer);
-
+    const deliveredIds = new Set<number>();
     if (uploadableStories.length > 0) {
       await sendTemporaryMessage(
         bot,
@@ -76,47 +75,26 @@ export async function sendArchivedStories({ stories, task }: SendStoriesArgs) {
         );
       });
 
-      const chunkedList = chunkMediafiles(uploadableStories);
-      for (const album of chunkedList) {
-        // A media group must carry 2-10 items; a chunk can legitimately hold one
-        // when a single story fills the size budget.
-        if (album.length === 1) {
-          const single = album[0];
-          const media = { source: single.buffer! };
-          const extra = {
-            caption: [single.caption, task.link].filter(Boolean).join('\n').slice(0, 1024),
-          };
-          if (single.mediaType === 'photo') {
-            await bot.telegram.sendPhoto(task.chatId, media, extra);
-          } else {
-            await bot.telegram.sendVideo(task.chatId, media, extra);
-          }
-          continue;
-        }
-        await bot.telegram.sendMediaGroup(
-          task.chatId,
-          album.map((x: MappedStoryItem) => ({
-            media: { source: x.buffer! },
-            type: x.mediaType,
-            caption: [x.caption, task.link].filter(Boolean).join('\n'),
-          })),
-        );
-      }
-    } else {
-      await bot.telegram.sendMessage(
-        task.chatId,
-        t(task.locale, 'archive.none')
+      const tooLarge = await uploadStoryMedia(
+        task.chatId, uploadableStories,
+        (story) => [story.caption, task.link].filter(Boolean).join('\n'),
+        deliveredIds,
       );
+      fallbackCandidates.push(...tooLarge);
     }
 
-    if (failedDownloads.length > 0) {
-      await sendStoryFallbacks(task, failedDownloads);
+    if (fallbackCandidates.length > 0) {
+      const fallbackIds = await sendStoryFallbacks(task, fallbackCandidates);
+      for (const id of fallbackIds) deliveredIds.add(id);
+    }
+    if (deliveredIds.size === 0) {
+      await bot.telegram.sendMessage(task.chatId, t(task.locale, 'archive.none'));
     }
 
     notifyAdmin({
       task,
       status: 'info',
-      baseInfo: `📥 ${uploadableStories.length} Archived stories uploaded to user!`,
+      baseInfo: `📥 ${deliveredIds.size} Archived stories delivered to user!`,
     } as NotifyAdminParams);
   } catch (error: any) {
     notifyAdmin({

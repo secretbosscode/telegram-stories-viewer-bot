@@ -43,6 +43,7 @@ jest.mock('index', () => ({ bot }));
 jest.mock('lib/i18n', () => ({ t: (_locale: string, key: string) => key }));
 
 import { sendActiveStories } from '../src/controllers/send-active-stories';
+import { sendArchivedStories } from '../src/controllers/send-archived-stories';
 import { MappedStoryItem, SendStoriesArgs } from '../src/types';
 
 function makeStory(overrides: Partial<MappedStoryItem> = {}): MappedStoryItem {
@@ -91,6 +92,43 @@ describe('sendActiveStories delivery accounting', () => {
     );
     expect(deliveredIds).toEqual([1]);
     expect(sendTemporaryMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test('uploads a 48 MiB video directly', async () => {
+    const video = makeStory({ mediaType: 'video', buffer: Buffer.alloc(48 * 1024 * 1024), bufferSize: 48 });
+    expect(await sendActiveStories(makeArgs([video]))).toEqual([1]);
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    expect(sendStoryFallbacks).not.toHaveBeenCalled();
+  });
+
+  test('attempts an archive upload above the old cutoff and delivers a link on size rejection', async () => {
+    const video = makeStory({ id: 6, mediaType: 'video', bufferSize: 55 });
+    bot.telegram.sendVideo.mockRejectedValueOnce({ response: { error_code: 413 } });
+    sendStoryFallbacks.mockResolvedValueOnce([6]);
+    await sendArchivedStories(makeArgs([video]));
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    expect(sendStoryFallbacks).toHaveBeenCalledWith(expect.anything(), [video]);
+    expect(bot.telegram.sendMessage).not.toHaveBeenCalledWith('1', 'archive.none');
+  });
+
+  test('isolates a size-rejected album and falls back only for the rejected member', async () => {
+    const photo = makeStory({ id: 2 });
+    const video = makeStory({ id: 3, mediaType: 'video' });
+    bot.telegram.sendMediaGroup.mockRejectedValueOnce({ response: { error_code: 413 } });
+    bot.telegram.sendPhoto.mockRejectedValueOnce({ response: { error_code: 400, description: 'Bad Request: file is too big' } });
+    sendStoryFallbacks.mockResolvedValueOnce([2]);
+
+    expect(await sendActiveStories(makeArgs([photo, video]))).toEqual([3, 2]);
+    expect(sendStoryFallbacks).toHaveBeenCalledWith(expect.anything(), [photo]);
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not resend a group after an ambiguous network failure', async () => {
+    bot.telegram.sendMediaGroup.mockRejectedValueOnce(new Error('Connection reset'));
+    await expect(sendActiveStories(makeArgs([makeStory(), makeStory({ id: 2 })])))
+      .rejects.toThrow('Connection reset');
+    expect(bot.telegram.sendPhoto).not.toHaveBeenCalled();
+    expect(sendStoryFallbacks).not.toHaveBeenCalled();
   });
 
   test('returns only IDs whose exported fallback links were sent', async () => {
