@@ -160,7 +160,7 @@
   "pinned.error": "Une erreur est survenue lors du traitement des histoires épinglées. L'administrateur a été notifié.",
   "active.downloading": "⏳ Téléchargement des histoires actives de {{user}}...",
   "active.uploading": "📥 {{count}} histoires actives de {{user}} téléchargées avec succès !\n⏳ Téléversement des histoires vers Telegram...",
-  "active.none": "❌ Impossible de télécharger les histoires actives, elles sont probablement trop volumineuses pour être envoyées par le bot.",
+  "active.none": "❌ Impossible d’envoyer ces stories actives.",
   "active.uploadedBatch": "Téléchargé {{sent}}/{{total}} histoires actives de {{user}} ✅",
   "active.error": "Une erreur est survenue lors de l'envoi des histoires. L'administrateur a été notifié.",
   "profile.sent": "📸 {{count}} média(s) de profil envoyés pour {{user}}",

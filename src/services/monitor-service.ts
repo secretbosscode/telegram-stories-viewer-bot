@@ -1156,6 +1156,57 @@ function buildPeer(monitor: MonitorRow): Api.InputUser {
   });
 }
 
+/** Resolve list placeholders once for all subscribers, using the target's saved peer. */
+async function recoverMonitorStories(
+  client: Awaited<ReturnType<typeof Userbot.getInstance>>,
+  peer: Api.InputUser,
+  targetLabel: string,
+  active: Api.TypeStoryItem[],
+  pinned: Api.TypeStoryItem[],
+) {
+  const complete = new Map<number, Api.TypeStoryItem>();
+  const missing = new Set<number>();
+  for (const story of [...active, ...pinned]) {
+    if (!story?.id || story instanceof Api.StoryItemDeleted) continue;
+    if ('media' in story && story.media && typeof story.date === 'number') {
+      complete.set(story.id, story);
+    } else {
+      missing.add(story.id);
+    }
+  }
+  const ids = [...missing].filter((id) => !complete.has(id));
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const batch = ids.slice(offset, offset + 100);
+    console.log(`[Monitor] ${targetLabel}: re-fetching incomplete story IDs ${batch.join(', ')}.`);
+    try {
+      const response = await client.invoke(new Api.stories.GetStoriesByID({ peer, id: batch }));
+      for (const story of response.stories) {
+        complete.set(story.id, story);
+        if (story instanceof Api.StoryItemDeleted) {
+          console.warn(`[Monitor] ${targetLabel}: re-fetch returned a deleted story for ID ${story.id}.`);
+        }
+      }
+      const omitted = batch.filter((id) => !complete.has(id));
+      if (omitted.length) {
+        console.warn(`[Monitor] ${targetLabel}: Telegram omitted story IDs ${omitted.join(', ')} from the re-fetch.`);
+      }
+    } catch (error) {
+      console.warn(`[Monitor] ${targetLabel}: failed to re-fetch story IDs ${batch.join(', ')}:`, error);
+      break;
+    }
+  }
+  // Keep the original list order. An omitted ID can be reconsidered next cycle.
+  function resolve(stories: Api.TypeStoryItem[]) {
+    return stories.flatMap((story) => {
+      if (!story || story instanceof Api.StoryItemDeleted) return [];
+      const resolved = missing.has(story.id) ? complete.get(story.id) ?? story : story;
+      if (resolved instanceof Api.StoryItemDeleted) return [];
+      return [resolved];
+    });
+  }
+  return { activeStories: resolve(active), pinnedStories: resolve(pinned) };
+}
+
 /**
  * Fetches everything the cycle needs for one target: active and pinned
  * stories, and (when due) the profile-photo history. Issued once per target
@@ -1190,8 +1241,9 @@ async function fetchTargetSnapshot(
 
   const response = responseResult.status === 'fulfilled' ? responseResult.value : null;
   const pinnedResponse = pinnedResult.status === 'fulfilled' ? pinnedResult.value : null;
-  const activeStories = (response as any)?.stories?.stories || [];
-  const pinnedStories = ((pinnedResponse as any)?.stories || []) as any[];
+  const { activeStories, pinnedStories } = await recoverMonitorStories(
+    client, peer, targetLabel, (response as any)?.stories?.stories ?? [], (pinnedResponse as any)?.stories ?? [],
+  );
 
   let photos: any[] | null = null;
   if (includePhotos) {
@@ -1273,8 +1325,9 @@ async function deliverSnapshotToMonitor(
 
   if (newActive.length > 0) {
     console.log(`[Monitor] ${targetLabel}: ${newActive.length} new active stories queued for delivery.`);
-    const deliveredActiveIds = new Set(
-      await sendActiveStories({ stories: mapStories(newActive), task: monitorTask(monitor, language) }),
+    const mapped = mapStories(newActive);
+    const deliveredActiveIds = new Set<number>(
+      mapped.length ? await sendActiveStories({ stories: mapped, task: monitorTask(monitor, language) }) : [],
     );
     recordDeliveredStories(monitor.id, newActive, deliveredActiveIds, 'active');
 
@@ -1303,8 +1356,9 @@ async function deliverSnapshotToMonitor(
 
   if (newPinned.length > 0) {
     console.log(`[Monitor] ${targetLabel}: ${newPinned.length} new pinned stories queued for delivery.`);
-    const deliveredPinnedIds = new Set(
-      await sendActiveStories({ stories: mapStories(newPinned), task: monitorTask(monitor, language) }),
+    const mapped = mapStories(newPinned);
+    const deliveredPinnedIds = new Set<number>(
+      mapped.length ? await sendActiveStories({ stories: mapped, task: monitorTask(monitor, language) }) : [],
     );
     recordDeliveredStories(monitor.id, newPinned, deliveredPinnedIds, 'pinned');
     if (deliveredPinnedIds.size < newPinned.length) {

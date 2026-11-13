@@ -229,10 +229,14 @@ export function mapStories(
         : (id: number) => storyOwnersById[id]
       : undefined;
 
-  stories.forEach((x: Api.TypeStoryItem) => { // Explicitly type x
-    if (!x || !('id' in x)) return;
+  function skip(item: Api.TypeStoryItem, reason: string): void {
+    console.warn(`[MapStories] Skipping story ${item?.id ?? 'unknown'} (${item?.className ?? 'unknown type'}): ${reason}.`);
+  }
 
-    if (!('media' in x) || !x.media || typeof x.media !== 'object') return;
+  stories.forEach((x: Api.TypeStoryItem) => {
+    if (!x?.id) return skip(x, 'missing story ID');
+
+    if (!('media' in x) || !x.media || typeof x.media !== 'object') return skip(x, 'missing media');
 
     const story: Partial<MappedStoryItem> = { id: x.id, media: x.media };
 
@@ -244,16 +248,16 @@ export function mapStories(
       if (doc.mimeType && typeof doc.mimeType === 'string' && doc.mimeType.startsWith('video/')) {
         story.mediaType = 'video';
       } else {
-        return; // Not a video document
+        return skip(x, `unsupported document MIME type ${doc.mimeType || 'unknown'}`);
       }
     } else {
-      return; // Unknown or unsupported media structure
+      return skip(x, `unsupported media ${x.media.className ?? 'unknown'}`);
     }
 
     if ('date' in x && typeof x.date === 'number') {
       story.date = new Date(x.date * 1000);
     } else {
-      return;
+      return skip(x, 'missing or invalid date');
     }
 
     if ('caption' in x && typeof x.caption === 'string') {

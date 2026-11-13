@@ -160,7 +160,7 @@
   "pinned.error": "An error occurred while processing pinned stories. The admin has been notified.",
   "active.downloading": "⏳ Downloading Active stories from {{user}}...",
   "active.uploading": "📥 {{count}} Active stories from {{user}} downloaded successfully!\n⏳ Uploading stories to Telegram...",
-  "active.none": "❌ Cannot download Active stories, most likely they are too large to send via bot.",
+  "active.none": "❌ Не вдалося надіслати жодну з цих активних історій.",
   "active.uploadedBatch": "Uploaded {{sent}}/{{total}} active stories from {{user}} ✅",
   "active.error": "An error occurred while sending stories. The admin has been notified.",
   "global.label": "глобальні історії",
